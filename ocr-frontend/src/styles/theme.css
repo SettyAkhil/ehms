@@ -1,0 +1,274 @@
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 15px;
+
+  /* Keppler AI Medical Design System -- recolored to match the host HMS
+     app's palette (src/index.css) so the embedded app reads as part of the
+     same product rather than a visibly different teal-branded tool. */
+  --background: #F0F2F5;
+  --foreground: #0F1624;
+  --card: #FFFFFF;
+  --card-foreground: #0F1624;
+  --popover: #FFFFFF;
+  --popover-foreground: #0F1624;
+  --primary: #1B4FD8;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E8EDF5;
+  --secondary-foreground: #1E3A6E;
+  --muted: #F5F7FA;
+  --muted-foreground: #64748B;
+  --accent: #0EA5E9;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #DDE2EC;
+  --input: #FFFFFF;
+  --input-background: #F8FAFC;
+  --switch-background: #CBD5E1;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #1B4FD8;
+
+  /* Extended medical palette */
+  --med-blue: #1B4FD8;
+  --med-sky: #0EA5E9;
+  --med-teal: #1B4FD8;
+  --med-success: #16A34A;
+  --med-warning: #D97706;
+  --med-error: #DC2626;
+  --med-surface: #FFFFFF;
+  --med-surface-alt: #F8FAFC;
+  --med-border: #DDE2EC;
+  --med-text-primary: #0F1624;
+  --med-text-secondary: #475569;
+  --med-text-tertiary: #94A3B8;
+
+  /* 
+   * Astra UI Internal Component Overrides
+   * These force the imported design system components (like SidebarNavigation and AstraLogo) 
+   * to respect our specific team design system variables rather than falling back to their defaults.
+   */
+  --brand-primary: var(--primary);
+  --brand-secondary: var(--secondary);
+  --brand-tertiary: var(--secondary);
+  --surface-bg: var(--card);
+  --surface-secondary-bg: var(--background);
+  --surface-hover: var(--muted);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --border-primary: var(--border);
+  --border-secondary: var(--border);
+
+  --chart-1: #1B4FD8;
+  --chart-2: #0EA5E9;
+  --chart-3: #2563EB;
+  --chart-4: #16A34A;
+  --chart-5: #D97706;
+  --radius: 0.5rem;
+
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0F1624;
+  --sidebar-primary: #1B4FD8;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E8EDF5;
+  --sidebar-accent-foreground: #1E3A6E;
+  --sidebar-border: #DDE2EC;
+  --sidebar-ring: #1B4FD8;
+}
+
+/* The host HMS app has no dark mode -- it's always the light palette above
+   (main.tsx also forces the theme to "light" and strips this class before
+   first paint). This block only exists as a fallback so that IF the ".dark"
+   class ever ends up applied some other way, the app still renders in the
+   same light HMS colors instead of the original near-black theme. */
+.dark {
+  --background: #F0F2F5;
+  --foreground: #0F1624;
+  --card: #FFFFFF;
+  --card-foreground: #0F1624;
+  --popover: #FFFFFF;
+  --popover-foreground: #0F1624;
+  --primary: #1B4FD8;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E8EDF5;
+  --secondary-foreground: #1E3A6E;
+  --muted: #F5F7FA;
+  --muted-foreground: #64748B;
+  --accent: #0EA5E9;
+  --accent-foreground: #FFFFFF;
+  --destructive: #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border: #DDE2EC;
+  --input: #FFFFFF;
+  --ring: #1B4FD8;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+
+  --brand-primary: var(--primary);
+  --brand-secondary: var(--secondary);
+  --brand-tertiary: var(--secondary);
+  --surface-bg: var(--card);
+  --surface-secondary-bg: var(--background);
+  --surface-hover: var(--muted);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --border-primary: var(--border);
+  --border-secondary: var(--border);
+
+  --chart-1: #1B4FD8;
+  --chart-2: #0EA5E9;
+  --chart-3: #2563EB;
+  --chart-4: #16A34A;
+  --chart-5: #D97706;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #0F1624;
+  --sidebar-primary: #1B4FD8;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E8EDF5;
+  --sidebar-accent-foreground: #1E3A6E;
+  --sidebar-border: #DDE2EC;
+  --sidebar-ring: #1B4FD8;
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-med-teal: var(--med-teal);
+  --color-med-sky: var(--med-sky);
+  --color-med-warning: var(--med-warning);
+  --color-med-text-tertiary: var(--med-text-tertiary);
+  --color-med-text-secondary: var(--med-text-secondary);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /**
+  * Default typography styles for HTML elements (h1-h4, p, label, button, input).
+  * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
+  */
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  h1 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h4 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  label {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  button {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  input {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+}
+
+@layer utilities {
+  .bg-\[\#F8FAFC\] { background-color: var(--background) !important; }
+  .text-\[\#0F172A\] { color: var(--foreground) !important; }
+  .bg-\[\#0F172A\] { background-color: var(--foreground) !important; }
+  .border-\[\#E2E8F0\] { border-color: var(--border) !important; }
+  .bg-\[\#E2E8F0\] { background-color: var(--border) !important; }
+  .text-\[\#64748B\] { color: var(--muted-foreground) !important; }
+  .text-\[\#94A3B8\] { color: var(--med-text-tertiary) !important; }
+  .bg-\[\#2563EB\] { background-color: var(--med-blue) !important; }
+  .text-\[\#2563EB\] { color: var(--med-blue) !important; }
+  .border-\[\#2563EB\] { border-color: var(--med-blue) !important; }
+  .ring-\[\#2563EB\] { --tw-ring-color: var(--med-blue) !important; }
+  .bg-\[\#EFF6FF\] { background-color: var(--secondary) !important; }
+  .text-\[\#475569\] { color: var(--med-text-secondary) !important; }
+  .divide-\[\#F1F5F9\] > :not([hidden]) ~ :not([hidden]) { border-color: var(--muted) !important; }
+  .bg-\[\#F1F5F9\] { background-color: var(--muted) !important; }
+  .border-\[\#BFDBFE\] { border-color: color-mix(in oklab, var(--primary) 30%, transparent) !important; }
+  .border-\[\#CBD5E1\] { border-color: var(--switch-background) !important; }
+  .bg-\[\#CBD5E1\] { background-color: var(--switch-background) !important; }
+  .text-\[\#CBD5E1\] { color: var(--switch-background) !important; }
+  .text-\[\#22C55E\] { color: var(--med-success) !important; }
+  .bg-\[\#22C55E\] { background-color: var(--med-success) !important; }
+  .text-\[\#F59E0B\] { color: var(--med-warning) !important; }
+  .bg-\[\#F59E0B\] { background-color: var(--med-warning) !important; }
+  .text-\[\#EF4444\] { color: var(--destructive) !important; }
+  .bg-\[\#EF4444\] { background-color: var(--destructive) !important; }
+  .text-\[\#14B8A6\] { color: var(--med-teal) !important; }
+  .bg-\[\#14B8A6\] { background-color: var(--med-teal) !important; }
+  .bg-\[\#1D4ED8\] { background-color: color-mix(in oklab, var(--primary) 80%, black) !important; }
+}
+
+

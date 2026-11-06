@@ -1,0 +1,396 @@
+{
+  "version": "1.0",
+  "name": "Comprehensive Inpatient Medical Case Summary Blueprint",
+  "rendering_rules": {
+    "missing_value_placeholder": "—",
+    "checkbox_checked": "[X]",
+    "checkbox_unchecked": "[ ]",
+    "missing_checkbox_placeholder": "[ ] (not recorded)"
+  },
+  "sections": [
+    {
+      "id": "patient_identification",
+      "title": "1. Patient Demographics & Encounter",
+      "fields": [
+        {
+          "key": "patient_name",
+          "label": "Patient Name",
+          "type": "string"
+        },
+        {
+          "key": "age",
+          "label": "Age",
+          "type": "string"
+        },
+        {
+          "key": "sex",
+          "label": "Sex",
+          "type": "string"
+        },
+        {
+          "key": "mrn",
+          "label": "Medical Record Number (MRN)",
+          "type": "string"
+        },
+        {
+          "key": "ip_no",
+          "label": "Inpatient Number (IP No.)",
+          "type": "string"
+        },
+        {
+          "key": "umr_no",
+          "label": "UMR Number",
+          "type": "string"
+        },
+        {
+          "key": "admission_date",
+          "label": "Date of Admission",
+          "type": "string"
+        },
+        {
+          "key": "discharge_date",
+          "label": "Date of Discharge",
+          "type": "string"
+        },
+        {
+          "key": "attending_physician",
+          "label": "Attending Physician",
+          "type": "string"
+        },
+        {
+          "key": "department",
+          "label": "Department",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "id": "chief_complaint_hpi",
+      "title": "2. Chief Complaint & History of Present Illness",
+      "fields": [
+        {
+          "key": "chief_complaint",
+          "label": "Chief Complaint(s)",
+          "type": "narrative"
+        },
+        {
+          "key": "history_of_present_illness",
+          "label": "History of Present Illness (HPI)",
+          "type": "narrative"
+        },
+        {
+          "key": "duration_of_symptoms",
+          "label": "Duration of Symptoms",
+          "type": "string"
+        },
+        {
+          "key": "onset_and_progression",
+          "label": "Onset and Progression",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "past_history",
+      "title": "3. Past Medical, Surgical & Family History",
+      "fields": [
+        {
+          "key": "past_medical_history",
+          "label": "Past Medical History",
+          "type": "narrative"
+        },
+        {
+          "key": "past_surgical_history",
+          "label": "Past Surgical History",
+          "type": "narrative"
+        },
+        {
+          "key": "allergies",
+          "label": "Allergies / Drug Sensitivities",
+          "type": "string"
+        },
+        {
+          "key": "family_history",
+          "label": "Family History",
+          "type": "narrative"
+        },
+        {
+          "key": "social_history",
+          "label": "Social History (Smoking/Alcohol)",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "admission_vitals_exam",
+      "title": "4. Admission Vitals & Physical Examination",
+      "fields": [
+        {
+          "key": "blood_pressure",
+          "label": "Blood Pressure (BP)",
+          "type": "string"
+        },
+        {
+          "key": "heart_rate",
+          "label": "Heart Rate / Pulse",
+          "type": "string"
+        },
+        {
+          "key": "respiratory_rate",
+          "label": "Respiratory Rate (RR)",
+          "type": "string"
+        },
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "type": "string"
+        },
+        {
+          "key": "sp02",
+          "label": "Oxygen Saturation (SpO2)",
+          "type": "string"
+        },
+        {
+          "key": "general_examination",
+          "label": "General Examination",
+          "type": "narrative"
+        },
+        {
+          "key": "systemic_examination",
+          "label": "Systemic Examination",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "diagnoses_problems",
+      "title": "5. Diagnoses & Clinical Problems",
+      "fields": [
+        {
+          "key": "primary_diagnosis",
+          "label": "Primary / Admission Diagnosis",
+          "type": "string"
+        },
+        {
+          "key": "secondary_diagnoses",
+          "label": "Secondary Diagnoses / Comorbidities",
+          "type": "string"
+        },
+        {
+          "key": "differential_diagnosis",
+          "label": "Differential Diagnosis",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "id": "medications",
+      "title": "6. Medications & Therapeutics",
+      "fields": [
+        {
+          "key": "inpatient_medications",
+          "label": "Inpatient / Hospital Medications",
+          "type": "table",
+          "columns": [
+            "Date",
+            "Medication",
+            "Dose",
+            "Route",
+            "Frequency",
+            "Indication"
+          ]
+        },
+        {
+          "key": "admission_medications",
+          "label": "Home / Admission Medications",
+          "type": "table",
+          "columns": [
+            "Date",
+            "Medication",
+            "Dose",
+            "Route",
+            "Frequency"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "procedures_interventions",
+      "title": "7. Procedures, Surgeries & Interventions",
+      "fields": [
+        {
+          "key": "surgical_procedures",
+          "label": "Procedures & Surgeries Performed",
+          "type": "table",
+          "columns": [
+            "Procedure Name",
+            "Date",
+            "Operator / Surgeon",
+            "Complications / Outcome"
+          ]
+        },
+        {
+          "key": "invasive_lines_devices",
+          "label": "Invasive Lines & Devices",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "investigations",
+      "title": "8. Laboratory Investigations & Diagnostics",
+      "fields": [
+        {
+          "key": "hematology_biochemistry",
+          "label": "Lab Investigations (Blood / Urine / Fluid)",
+          "type": "table",
+          "columns": [
+            "Investigation",
+            "Date",
+            "Observed Value",
+            "Reference Range",
+            "Interpretation"
+          ]
+        },
+        {
+          "key": "radiology_imaging",
+          "label": "Radiology & Imaging Reports",
+          "type": "table",
+          "columns": [
+            "Modality / Study",
+            "Date",
+            "Key Findings / Impression"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "clinical_course",
+      "title": "9. Hospital Course & Progress Notes",
+      "fields": [
+        {
+          "key": "hospital_course_summary",
+          "label": "Summary of Hospital Course",
+          "type": "narrative"
+        },
+        {
+          "key": "significant_clinical_events",
+          "label": "Significant Events / Complications",
+          "type": "narrative"
+        },
+        {
+          "key": "consultations",
+          "label": "Specialist Consultations",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "checklists_assessments",
+      "title": "10. Clinical Risk & Assessment Checklists",
+      "fields": [
+        {
+          "key": "fall_risk",
+          "label": "Morse Fall Risk Assessment",
+          "type": "checkbox"
+        },
+        {
+          "key": "vte_prophylaxis",
+          "label": "VTE Prophylaxis Administered",
+          "type": "checkbox"
+        },
+        {
+          "key": "pressure_ulcer_risk",
+          "label": "Braden Score / Pressure Ulcer Risk",
+          "type": "checkbox"
+        },
+        {
+          "key": "symptoms_checklist",
+          "label": "Admission Symptoms Checklist",
+          "type": "checklist",
+          "items": [
+            "Fever",
+            "Cough",
+            "Shortness of Breath",
+            "Chest Pain",
+            "Palpitations",
+            "Nausea/Vomiting",
+            "Abdominal Pain",
+            "Altered Sensorium",
+            "Bleeding"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "discharge_plan",
+      "title": "11. Discharge Plan, Medications & Follow-up",
+      "fields": [
+        {
+          "key": "discharge_condition",
+          "label": "Condition at Discharge",
+          "type": "string"
+        },
+        {
+          "key": "discharge_medications",
+          "label": "Discharge Medications",
+          "type": "table",
+          "columns": [
+            "Date",
+            "Medication",
+            "Dose",
+            "Route",
+            "Frequency",
+            "Duration"
+          ]
+        },
+        {
+          "key": "follow_up_instructions",
+          "label": "Follow-up Instructions & Appointments",
+          "type": "narrative"
+        },
+        {
+          "key": "diet_activity_advice",
+          "label": "Diet & Activity Recommendations",
+          "type": "narrative"
+        },
+        {
+          "key": "warning_signs",
+          "label": "Red Flag Symptoms / Warning Signs",
+          "type": "narrative"
+        }
+      ]
+    },
+    {
+      "id": "progress_notes_clinical_notes",
+      "title": "12. Progress Notes / Clinical Notes",
+      "fields": [
+        {
+          "key": "date_time",
+          "label": "Date & Time",
+          "type": "string"
+        },
+        {
+          "key": "pain_score",
+          "label": "Pain Score",
+          "type": "string"
+        },
+        {
+          "key": "examination",
+          "label": "Examination (O/E)",
+          "type": "narrative"
+        },
+        {
+          "key": "notes",
+          "label": "Clinical Notes",
+          "type": "narrative"
+        },
+        {
+          "key": "signature",
+          "label": "Signature",
+          "type": "string"
+        }
+      ]
+    }
+  ]
+}

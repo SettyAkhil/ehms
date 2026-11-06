@@ -1,0 +1,33 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Database (local runtime file)
+database/ai_portal.db
+database/ocr_debug.log
+database/rag_workspace_*/
+keppler_platform.db
+
+# Temp files
+temp_uploads/
+uploads/
+.summary_cache/
+
+
+# Environment secrets
+.env
+*.env
+
+# Datasets (large binary files — add to git-lfs if needed)
+datasets/*.joblib
+datasets/*.json
+# ...except the summary blueprint: 10 KB of config the summarizer cannot run
+# without, and it was being left out of every clone and image build.
+!datasets/case_summary_blueprint.json

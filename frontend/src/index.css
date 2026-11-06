@@ -1,0 +1,860 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+@import './styles/er-bed.css';
+
+@theme inline {
+  --color-background: #F0F2F5;
+  --color-foreground: #0F1624;
+  --color-card: #FFFFFF;
+  --color-card-foreground: #0F1624;
+  --color-primary: #1B4FD8;
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: #E8EDF5;
+  --color-secondary-foreground: #1E3A6E;
+  --color-muted: #F5F7FA;
+  --color-muted-foreground: #64748B;
+  --color-accent: #0EA5E9;
+  --color-accent-foreground: #FFFFFF;
+  --color-border: #DDE2EC;
+  --color-ring: #1B4FD8;
+  --color-sidebar: #0C1524;
+  --color-sidebar-active: #1B4FD8;
+  --color-sidebar-text: #94A3B8;
+  --color-sidebar-text-active: #FFFFFF;
+  --color-critical: #DC2626;
+  --color-warning: #D97706;
+  --color-success: #16A34A;
+  --color-info: #0284C7;
+  --radius: 3px;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
+
+  /* New Design Tokens */
+  --color-primary-blue: #3B6FF5;
+  --color-primary-violet: #7C3AED;
+  --color-ai-purple: #8B5CF6;
+  
+  --color-bg-main: #F5F7FB;
+  --color-bg-secondary: #F8FAFC;
+  --color-bg-card: #FFFFFF;
+  --color-bg-ai: #F5F3FF;
+  
+  --color-text-primary: #172033;
+  --color-text-heading: #1E293B;
+  --color-text-body: #334155;
+  --color-text-secondary: #64748B;
+  --color-text-muted: #94A3B8;
+  --color-text-disabled: #CBD5E1;
+  
+  --color-border-main: #E2E8F0;
+  --color-border-light: #EDF1F7;
+  --color-border-active: #818CF8;
+  
+  --color-status-success: #16A34A;
+  --color-status-success-bg: #DCFCE7;
+  --color-status-warning: #F59E0B;
+  --color-status-warning-bg: #FEF3C7;
+  --color-status-error: #EF4444;
+  --color-status-error-bg: #FEE2E2;
+  --color-status-info: #2563EB;
+  --color-status-info-bg: #DBEAFE;
+  
+  --radius-xl: 22px;
+  --radius-lg: 18px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --radius-button: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 13.5px;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-main);
+  color: var(--color-text-body);
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Mono font utility */
+.font-mono {
+  font-family: var(--font-mono) !important;
+}
+
+/* Status indicators */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+/* Table hover */
+.tr-hover:hover {
+  background-color: #F8FAFC;
+}
+
+/* Sidebar item */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #94A3B8;
+  transition: all 0.1s;
+  user-select: none;
+}
+.nav-item:hover {
+  background: rgba(255,255,255,0.07);
+  color: #CBD5E1;
+}
+.nav-item.active {
+  background: #1B4FD8;
+  color: #FFFFFF;
+}
+.nav-item.sub {
+  padding-left: 36px;
+  font-size: 12px;
+  color: #64748B;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nav-item.sub:hover {
+  color: #CBD5E1;
+  background: rgba(255,255,255,0.06);
+  transform: translateX(3px);
+}
+.nav-item.sub.active {
+  background: rgba(27, 79, 216, 0.25);
+  color: #93C5FD;
+}
+
+/* Category header in accordion menus (e.g. General Reports, Financial Reports) */
+.nav-item.category {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #94A3B8;
+}
+.nav-item.category:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #CBD5E1;
+}
+.nav-item.category.active {
+  background: rgba(27, 79, 216, 0.20);
+  color: #FFFFFF;
+}
+.nav-item.category.active:hover {
+  background: rgba(27, 79, 216, 0.28);
+}
+
+/* Nav icons must never be squeezed by the flex row & animate smoothly on cursor hover */
+.nav-item > svg,
+.nav-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  transform-origin: center;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+              filter 0.25s ease,
+              color 0.15s ease;
+  will-change: transform;
+}
+
+/* Micro-animation triggered when moving cursor over nav items */
+.nav-item:hover > svg,
+.nav-item:hover .nav-icon,
+.group:hover .nav-icon,
+.nav-item.category:hover > svg {
+  animation: navIconPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.55));
+}
+
+@keyframes navIconPop {
+  0% {
+    transform: scale(1) translateY(0) rotate(0deg);
+  }
+  30% {
+    transform: scale(1.22) translateY(-2px) rotate(-3deg);
+  }
+  65% {
+    transform: scale(1.13) translateY(-0.5px) rotate(1.5deg);
+  }
+  100% {
+    transform: scale(1.18) translateY(-1px) rotate(0deg);
+  }
+}
+
+/* Collapsed rail: icon-only rows, centered and legible */
+.nav-item.collapsed {
+  justify-content: center;
+  padding: 9px 0;
+  gap: 0;
+}
+.nav-item.collapsed > svg {
+  width: 20px;
+  height: 20px;
+}
+
+@keyframes sidebarFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sidebar-fade-in {
+  animation: sidebarFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Squared cards
+   Cards, panels, dialogs and tiles are square app-wide. Tailwind's card-sized
+   radii are neutralised here instead of being edited out of ~84 class strings,
+   so new cards come out square by default too. These rules are unlayered, so
+   they beat Tailwind's @layer utilities without !important.
+   Small chips keep their radius: rounded / -sm / -md / -lg (icon tiles, badges)
+   and rounded-full (pills, avatars, progress bars, status dots). */
+[class*="rounded-xl"],
+[class*="rounded-2xl"],
+[class*="rounded-3xl"] {
+  border-radius: 0;
+}
+
+/* Badge */
+.badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 10px;
+  line-height: 1.4;
+}
+
+/* Skeleton loading */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.skeleton {
+  background: #E2E8F0;
+  border-radius: 3px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* Focus styles */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #1B4FD8;
+  outline-offset: 1px;
+}
+
+/* Critical flash */
+@keyframes critical-pulse {
+  0%, 100% { border-color: #DC2626; }
+  50% { border-color: #FCA5A5; }
+}
+.critical-pulse {
+  animation: critical-pulse 1.5s ease-in-out infinite;
+}
+
+/* Print Optimization for Hospital OP Pass and Documents */
+@media print {
+  html, body, #root {
+    height: auto !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+
+  /* Hide all app chrome, sidebars, headers, buttons, notifications */
+  aside,
+  nav,
+  header,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Ensure card containers expand cleanly for the printer */
+  .overflow-y-auto,
+  .overflow-hidden,
+  .overflow-auto {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Target printable medical passes and records */
+  .printable-card {
+    border: 2px solid #1E293B !important;
+    box-shadow: none !important;
+    margin: 0 auto !important;
+    page-break-inside: avoid !important;
+    border-radius: 12px !important;
+    padding: 24px !important;
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+  }
+}
+
+/* AI insight reports (MarkdownReport.tsx) -- Symptom AI, Clinical RAG,
+   Clinical Summaries, etc. all render model output through this. None of
+   these classes had any CSS at all before, and the "prose" wrapper classes
+   used alongside them assume @tailwindcss/typography, which isn't installed
+   -- so every AI report in the app was rendering as unstyled, bullet-less,
+   heading-less plain text regardless of how well-structured the model's
+   markdown was. */
+.markdown-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--color-text-body);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.markdown-report p {
+  margin: 0;
+}
+.markdown-h1, .markdown-h2, .markdown-h3, .markdown-h4, .markdown-h5, .markdown-h6 {
+  margin: 4px 0 2px;
+  font-weight: 700;
+  color: var(--color-text-heading);
+  line-height: 1.35;
+}
+.markdown-h1 { font-size: 20px; }
+.markdown-h2 { font-size: 16px; color: var(--color-primary); }
+.markdown-h3 { font-size: 14.5px; }
+.markdown-h4, .markdown-h5, .markdown-h6 { font-size: 13.5px; }
+.markdown-list {
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.markdown-list li {
+  padding-left: 2px;
+}
+.markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 4px 0;
+  border: 1px solid var(--color-border-main);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.markdown-table th, .markdown-table td {
+  border: 1px solid var(--color-border-main);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-table th {
+  background: var(--color-bg-secondary);
+  font-weight: 700;
+  color: var(--color-text-heading);
+}
+.markdown-table tr:nth-child(even) td {
+  background: #FAFBFD;
+}
+
+/* Each "### Section Title" block in an AI report becomes one of these --
+   a distinct card instead of a heading that blends into the paragraph
+   above/below it. */
+.wellness-section {
+  border: 1px solid var(--color-border-main);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 4px;
+  background: var(--color-bg-secondary);
+  padding: 12px 14px;
+}
+.wellness-section + .wellness-section {
+  margin-top: 0;
+}
+.wellness-section-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+/* Tone variants (MarkdownReport.tsx's sectionTone) -- danger for red-flag
+   emergency guidance, success for actionable self-care, neutral for the
+   disclaimer; everything else stays the default info/blue above. */
+.wellness-section--danger {
+  border-left-color: var(--color-status-error);
+  background: var(--color-status-error-bg);
+}
+.wellness-section--danger .wellness-section-title {
+  color: var(--color-status-error);
+}
+.wellness-section--success {
+  border-left-color: var(--color-status-success);
+  background: var(--color-status-success-bg);
+}
+.wellness-section--success .wellness-section-title {
+  color: #15803D;
+}
+.wellness-section--neutral {
+  border-left-color: var(--color-text-muted);
+  background: var(--color-bg-secondary);
+}
+.wellness-section--neutral .wellness-section-title {
+  color: var(--color-text-secondary);
+}
+.wellness-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wellness-section-body .markdown-h1,
+.wellness-section-body .markdown-h2,
+.wellness-section-body .markdown-h3 {
+  font-size: 13.5px;
+  color: var(--color-text-heading);
+  margin: 0;
+}
+
+/* ── Universal Printable Hospital Documents Media Rules ─────────────────────────── */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  html, body, #root {
+    height: auto !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Hide app navigation chrome, sidebars, headers, and action buttons */
+  aside,
+  nav,
+  header,
+  button,
+  .print\:hidden,
+  .no-print,
+  .sidebar,
+  .app-header {
+    display: none !important;
+  }
+
+  /* Ensure card containers expand cleanly for printing */
+  .overflow-y-auto,
+  .overflow-hidden,
+  .overflow-auto {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  /* When printing specific reports, ensure ONLY the report element is displayed and all background app views are completely removed from flow */
+  body:has(#hospital-printable-receipt) #root > *:not(:has(#hospital-printable-receipt)),
+  body:has(#printable-receipt) #root > *:not(:has(#printable-receipt)),
+  body:has(#op-reports-printable) #root > *:not(:has(#op-reports-printable)),
+  body:has(#patient-journey-print-sheet) #root,
+  body:has(#printable-area) #root > *:not(:has(#printable-area)),
+  body:has(.printable-area) #root > *:not(:has(.printable-area)) {
+    display: none !important;
+  }
+
+  /* Reset modal backdrop wrappers so they introduce 0 extra height, margins, or blank pages */
+  body:has(#printable-area) .fixed.inset-0,
+  body:has(.printable-area) .fixed.inset-0 {
+    position: static !important;
+    display: block !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    inset: auto !important;
+  }
+
+  /* Target all printable medical passes, receipts, summaries, and census reports */
+  .printable-area,
+  .printable-card,
+  #hospital-printable-receipt,
+  #printable-receipt,
+  #printable-op-pass,
+  #printable-discharge-summary,
+  #printable-lab-report,
+  #printable-radiology-report,
+  #printable-bed-census,
+  #printable-prescription,
+  #printable-area,
+  #patient-journey-print-sheet,
+  .patient-journey-print-sheet,
+  .printable-handover-document {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0px !important;
+    background: #FFFFFF !important;
+    color: #0F172A !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  #hospital-printable-receipt,
+  #printable-receipt,
+  #printable-invoice {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 auto !important;
+  }
+
+  #patient-journey-print-sheet .break-inside-avoid,
+  #patient-journey-print-sheet table,
+  #patient-journey-print-sheet .border,
+  #printable-area .break-inside-avoid,
+  #printable-area table,
+  #printable-area .border {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  #op-reports-printable {
+    visibility: visible !important;
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .printable-area *,
+  .printable-card *,
+  #hospital-printable-receipt *,
+  #printable-receipt *,
+  #printable-op-pass *,
+  #printable-discharge-summary *,
+  #printable-lab-report *,
+  #printable-radiology-report *,
+  #printable-bed-census *,
+  #printable-prescription *,
+  #printable-invoice *,
+  #printable-area *,
+  #op-reports-printable *,
+  .printable-handover-document * {
+    visibility: visible !important;
+  }
+}
+
+/* ── Flow & Entrance Animations for Report Dashboards ─────────────────────── */
+@keyframes flowSlideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes flowDash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.animate-flow-in {
+  animation: flowSlideUp 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.animate-flow-line {
+  stroke-dasharray: 6 4;
+  animation: flowDash 1.2s linear infinite;
+}
+
+.delay-75 { animation-delay: 75ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-225 { animation-delay: 225ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-375 { animation-delay: 375ms; }
+.delay-450 { animation-delay: 450ms; }
+
+
+
+
+/* ── Responsive layer ─────────────────────────────────────────────────────────
+   Every screen was laid out for a desktop with a fixed sidebar, and ~200 of
+   them never got breakpoints. Rather than hand-editing each one, the patterns
+   that break on phones and tablets are corrected here, scoped to the workspace
+   (.app-main) and to modal overlays.
+
+   Two rules keep this from fighting deliberate designs:
+   - only classes with NO responsive variant on the same element are touched
+     (`grid-cols-4` alone, never `grid-cols-1 md:grid-cols-4`);
+   - rules live in max-width queries, so desktop rendering is unchanged.
+   These rules are unlayered, so they beat Tailwind's @layer utilities. */
+
+/* A table inside an overflow-hidden card (rounded corners) had its right-hand
+   columns cut off whenever the workspace was narrower than the table. At any
+   width it now scrolls sideways instead. Safe for sticky headers: an
+   overflow-hidden box is already the scroll container they stick to. */
+.app-main :is(div, section, article).overflow-hidden:is(:has(> table), :has(> div > table)) {
+  overflow-x: auto;
+}
+
+/* Icon + label buttons in page headers were squeezed into two- and three-line
+   blobs by long titles beside them. The label holds its line; the title wraps.
+   Stacked tile buttons (flex-col) keep wrapping. */
+@media (max-width: 1279px) {
+  .app-main button:not(.flex-col):has(> svg + span) {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
+
+/* Wide content scrolls inside its own card instead of being clipped by, or
+   dragging sideways, the whole page. Below lg only: on desktop the tables fit,
+   and a new scroll container here would detach `sticky top-0` table headers
+   from the scroller they were written against. */
+@media (max-width: 1023px) {
+  .app-main :is(div, section, article):has(> table) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .app-main th {
+    white-space: nowrap;
+  }
+  /* Tab strips and toolbars made of nowrap buttons scroll rather than spill. */
+  .app-main [role="tablist"] {
+    overflow-x: auto;
+  }
+  .app-main [role="tablist"] > :is(button, a, [role="tab"]) {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  /* Segmented controls -- a bordered, overflow-hidden row of buttons -- used
+     to cut their last options off; they scroll sideways instead. */
+  .app-main .flex.overflow-hidden:not(.flex-col):has(> button + button) {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .app-main .flex.overflow-hidden:not(.flex-col):has(> button + button) > button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .app-main img,
+  .app-main video,
+  .app-main canvas,
+  .app-main iframe {
+    max-width: 100%;
+  }
+}
+
+/* Phones (and the small side of tablets in portrait). */
+@media (max-width: 639px) {
+  /* Multi-column grids with no breakpoint of their own drop to two columns. */
+  .app-main :is(.grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6):not([class*=":grid-cols-"]),
+  .fixed.inset-0 :is(.grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6):not([class*=":grid-cols-"]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* 12-column page grids and fixed-track layouts stack. */
+  .app-main .grid-cols-12:not([class*=":grid-cols-"]),
+  .fixed.inset-0 .grid-cols-12:not([class*=":grid-cols-"]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* A child spanning more columns than its grid now has would otherwise mint
+     implicit columns and push the grid off-screen -- including in grids that
+     do have breakpoints but a one-column phone layout. */
+  .app-main .grid > [class*="col-span-"]:not(.col-span-1):not([class*=":col-span-"]),
+  .fixed.inset-0 .grid > [class*="col-span-"]:not(.col-span-1):not([class*=":col-span-"]) {
+    grid-column: 1 / -1;
+  }
+
+  /* Desktop gutters are a third of a phone screen. */
+  .app-main :is(.p-6, .p-7, .p-8, .p-10, .p-12) {
+    padding: 0.875rem;
+  }
+  .app-main :is(.px-6, .px-7, .px-8, .px-10, .px-12) {
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+  }
+  .app-main :is(.py-8, .py-10, .py-12) {
+    padding-top: 1.25rem;
+    padding-bottom: 1.25rem;
+  }
+  /* Full-bleed headers cancel their parent's gutter with a matching negative
+     margin (-mx-6 inside p-6); it has to shrink with the gutter or the header
+     overshoots the screen edge. */
+  .app-main :is(.-mx-6, .-mx-7, .-mx-8) {
+    margin-left: -0.875rem;
+    margin-right: -0.875rem;
+  }
+  .app-main :is(.-mt-6, .-mt-7, .-mt-8) {
+    margin-top: -0.875rem;
+  }
+  .app-main :is(.-m-6, .-m-8) {
+    margin: -0.875rem;
+  }
+  .app-main :is(.gap-6, .gap-8, .gap-10) {
+    gap: 0.875rem;
+  }
+  .app-main :is(.space-y-6, .space-y-8) > :not(:last-child) {
+    margin-block-end: 0.875rem;
+  }
+
+  .app-main .text-4xl:not([class*=":text-"]) {
+    font-size: 1.75rem;
+    line-height: 2.1rem;
+  }
+  .app-main .text-3xl:not([class*=":text-"]) {
+    font-size: 1.5rem;
+    line-height: 1.9rem;
+  }
+
+  /* Page headers and toolbars: title on one side, a row of actions on the
+     other. On a phone the actions wrap underneath instead of off the edge. */
+  .app-main .flex.justify-between:not(.flex-col):not(.flex-nowrap),
+  .app-main .flex.justify-end:not(.flex-col):not(.flex-nowrap) {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  /* Fixed-width panels and fields never exceed the screen. */
+  .app-main :is([class*=" w-["], [class^="w-["], .w-64, .w-72, .w-80, .w-96):not([class*=":w-"]) {
+    max-width: 100%;
+  }
+}
+
+/* Modals: on a short or narrow screen the dialog must stay reachable. A
+   centred flex child taller than the viewport loses its top edge (and the
+   close button with it), so the overlay scrolls and centres "safely". */
+@media (max-width: 1023px), (max-height: 700px) {
+  .fixed.inset-0.flex.items-center {
+    align-items: safe center;
+    overflow-y: auto;
+  }
+  .fixed.inset-0.flex.items-center > :not(.absolute):not(.fixed) {
+    max-width: 100%;
+    flex-shrink: 0;
+  }
+}
+@media (max-width: 639px) {
+  .fixed.inset-0.flex.items-center.p-4,
+  .fixed.inset-0.flex.items-center.p-6,
+  .fixed.inset-0.flex.items-center.p-8 {
+    padding: 0.5rem;
+  }
+}
+
+/* iOS zooms the page into any focused field under 16px and does not zoom
+   back out; on touch phones fields are 16px so typing never reflows the page. */
+@media (max-width: 767px) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Clinical Summaries: a summary fades in when a patient or stay is picked. */
+@keyframes ds-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.ds-fade-in { animation: ds-fade-in 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) { .ds-fade-in { animation: none; } }
+
+/* Global Print Layout Rules: Prevent h-screen and overflow:hidden containers from clipping invoices/bills */
+@media print {
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  #root, .app, .app-main, .pharmacy-module, main {
+    height: auto !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+  }
+  aside, nav, header, .app-sidebar, .print-hidden, .print\\:hidden {
+    display: none !important;
+  }
+}
