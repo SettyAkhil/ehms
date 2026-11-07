@@ -274,9 +274,6 @@ export default function CashlessCaseBoard({
                 </tr>
               )}
             </tbody>
-                </tr>
-              )}
-            </tbody>
           </table>
         </div>
       </div>

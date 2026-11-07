@@ -213,7 +213,7 @@ export default function Registration({
   const mismatches = matchResult.mismatches
 
   // 1. Handle New Patient Registration Flow -> Creates Record -> Generates Patient ID (UMR) & OP No -> Next Step
-  const handleRegisterNewPatient = (e: React.FormEvent) => {
+  const handleRegisterNewPatient = async (e: React.FormEvent) => {
     e.preventDefault()
     const firstName = formData.firstName.trim()
     const lastName = formData.lastName.trim()
@@ -254,11 +254,16 @@ export default function Registration({
 
     // If ALL entered details match an existing record -> Route through Revisit under existing UMR
     if (matchingExistingPatient) {
-      handleCreateRevisitEncounter(matchingExistingPatient)
-      toast.success(
-        `Revisit encounter generated for ${matchingExistingPatient.name} (${matchingExistingPatient.umr})`,
-      )
-      resetForm()
+      try {
+        await handleCreateRevisitEncounter(matchingExistingPatient)
+        toast.success(
+          `Revisit encounter generated for ${matchingExistingPatient.name} (${matchingExistingPatient.umr})`,
+        )
+        resetForm()
+      } catch (err: any) {
+        console.error("Revisit registration error:", err)
+        toast.error(err?.message || "Failed to create revisit encounter.")
+      }
       return
     }
 
@@ -266,7 +271,7 @@ export default function Registration({
 
     try {
       const { patient: createdPatient, encounter: createdEncounter } =
-        db.registerNewPatient({
+        await db.registerNewPatientConfirmed({
           firstName,
           middleName: formData.middleName.trim() || undefined,
           lastName,
@@ -328,8 +333,8 @@ export default function Registration({
   }
 
   // 2. Handle Existing Patient Workflow -> View Record -> Generate Visit Pass -> Show Digital Card
-  const handleCreateRevisitEncounter = (p: DBPatient) => {
-    const newEncounter = db.createRevisitEncounter(p.umr)
+  const handleCreateRevisitEncounter = async (p: DBPatient) => {
+    const newEncounter = await db.createRevisitEncounterConfirmed(p)
     // Registration message: sent by patientMessaging when db announces the
     // registration (after the server write), so every desk path is covered once.
 
@@ -351,6 +356,7 @@ export default function Registration({
         block: "start",
       })
     }, 100)
+    return newEncounter
   }
 
   const handleViewOpBook = (encounter: DBOPEncounter) => {

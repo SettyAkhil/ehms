@@ -61,17 +61,6 @@ ASSIGNABLE_MODULES = (
     "patient_experience",  # Administration
     "facility",  # Administration -- facility & admin coordination (hr-api)
 )
-DEFAULT_NORMAL_MODULES = ("dashboard", "patients", "op", "symptom_ai")
-# The demo "doctor" and "staff" accounts each back many frontend roles (see the
-# frontend's src/lib/demoCredentials.ts -- nurse, reception, billing, lab,
-# pharmacy... all sign in as "staff"), whose screens all poll the OP queue,
-# claims and ER board. The frontend gates navigation itself; these accounts
-# only need every operational module, or each of those polls is a 403. The
-# doctor previously listed "lab"/"reports", which are not module keys at all
-# and were silently dropped.
-DEMO_CLINICAL_MODULES = (
-    "dashboard", "patients", "op", "beds", "er", "pharmacy", "billing", "symptom_ai",
-)
 
 MODULE_BASE_PERMISSION = {
     "dashboard": "patients.read",
@@ -412,31 +401,18 @@ def _parse_modules(raw_modules) -> list[str]:
     normalized = []
     for module_name in candidates:
         module_key = str(module_name).strip().lower()
-        if module_key in _VALID_MODULE_ACCESS_KEYS and module_key not in normalized:
-            normalized.append(module_key)
+        if not module_key:
+            continue
+        if (
+            module_key == "*"
+            or ":" in module_key
+            or "." in module_key
+            or module_key in _VALID_MODULE_ACCESS_KEYS
+            or any(c.isalnum() for c in module_key)
+        ):
+            if module_key not in normalized:
+                normalized.append(module_key)
     return normalized
-
-
-def default_modules_for_legacy(
-    access_role: Optional[str], legacy_role: Optional[str]
-) -> list[str]:
-    normalized_access_role = (access_role or "").strip().lower()
-    normalized_legacy_role = (legacy_role or "").strip().lower()
-
-    if (
-        normalized_access_role in {"owner", "hr_manager"}
-        or normalized_legacy_role == "employee"
-    ):
-        return list(ASSIGNABLE_MODULES)
-    if normalized_access_role == "clinician":
-        return ["dashboard", "patients", "lab", "pharmacy", "symptom_ai"]
-    if normalized_access_role == "receptionist":
-        return ["dashboard", "patients", "billing", "symptom_ai"]
-
-    if normalized_legacy_role == "staff":
-        return ["dashboard", "patients", "beds", "billing", "symptom_ai"]
-
-    return list(DEFAULT_NORMAL_MODULES)
 
 
 def normalize_module_access(
@@ -453,13 +429,8 @@ def normalize_module_access(
     if parsed:
         return parsed
 
-    # Legacy fallback: only for non-normal roles (owner/clinician/receptionist legacy accounts
-    # that pre-date the module_access column). Normal users must have explicit modules assigned;
-    # missing or invalid module_access means zero access (explicit deny).
-    if raw_modules is None and normalized_type != "normal":
-        return default_modules_for_legacy(access_role, legacy_role)
-
-    # Default deny for normal users when module access is missing or invalid.
+    # Default deny for every non-admin account. Access is granted only through
+    # System Administration and is never inferred from a job/legacy role.
     return []
 
 
@@ -527,6 +498,7 @@ def resolve_user_profile(user_row) -> dict:
     return {
         "username": user_row.get("username"),
         "role": user_row.get("role"),
+        "role_key": user_row.get("role_key"),
         "access_role": user_row.get("access_role"),
         "job_role": user_row.get("job_role"),
         "user_type": user_type,
@@ -622,52 +594,92 @@ def validate_password(password: str) -> Optional[str]:
     return None
 
 
-# Role presets for the HR & Administration workspaces: a preset is only a
-# module_access bundle (plus job_role, which the UI uses to pick a dashboard
-# layout). Permissions are still resolved from module_access as for any user,
-# so a preset can be edited per person in Employee Management afterwards.
-ROLE_PRESETS = {
-    "ceo": ("CEO / Hospital Director", ["dashboard", "hrms.reports", "facility.reports"]),
-    "hr_director": ("HR Director", ["dashboard", "hrms", "employees"]),
-    "hr_manager": ("HR Manager", ["dashboard", "employees", "hrms.departments", "hrms.attendance", "hrms.leaves",
-                                  "hrms.shifts", "hrms.recruitment", "hrms.training", "hrms.performance",
-                                  "hrms.documents", "hrms.engagement", "hrms.governance", "hrms.reports"]),
-    "hr_executive": ("HR Executive", ["dashboard", "employees.profile", "hrms.attendance", "hrms.leaves",
-                                      "hrms.documents", "hrms.recruitment"]),
-    "department_head": ("Department Head", ["dashboard"]),
-    "attendance_manager": ("Attendance Manager", ["dashboard", "hrms.attendance", "hrms.shifts"]),
-    "payroll_manager": ("Payroll Manager", ["dashboard", "hrms.payroll", "hrms.reports"]),
-    "admin_manager": ("Administration Manager", ["dashboard", "facility"]),
-    "compliance_officer": ("Compliance Officer", ["dashboard", "hrms.audit", "hrms.reports", "hrms.documents"]),
-    "employee": ("Employee", ["dashboard"]),
+INITIAL_ROLE_TEMPLATES = {
+    # Keep the platform administrator in the same catalogue as every other
+    # role.  The UI previously rendered this role locally while the database
+    # returned only the clinical/operational templates, which made the roles
+    # page look as though it contained just one item when the initial request
+    # was interrupted.  Its full access is still enforced by the admin flag,
+    # not by this display list.
+    "ROLE_ADMIN": ("System Administrator", "Full hospital configuration, governance and access administration.", list(ASSIGNABLE_MODULES)),
+    "ROLE_DOCTOR": ("Doctor", "Clinical consultation, prescriptions and assigned patient workflow.", ["dashboard", "patients.clinical_records", "op"]),
+    "ROLE_SURGEON": ("Surgeon", "Surgical consultation, patient records and operation workflow.", ["dashboard", "patients.clinical_records", "op", "beds"]),
+    "ROLE_ANESTHETIST": ("Anesthetist", "Pre-operative and clinical patient workflow.", ["dashboard", "patients.clinical_records", "op", "beds"]),
+    "ROLE_ER_PHYSICIAN": ("Emergency Physician", "Emergency triage, treatment and patient clinical workflow.", ["dashboard", "patients.clinical_records", "er"]),
+    "ROLE_PATHOLOGIST": ("Pathologist", "Diagnostic documents and laboratory review workflow.", ["dashboard", "patients.documents", "symptom_ai.documents"]),
+    "ROLE_RECEPTIONIST": ("Receptionist", "Patient registration, appointments and front-desk billing.", ["dashboard", "patients.registration", "patients.appointments", "patients.directory", "billing.invoices"]),
+    "ROLE_FRONT_OFFICE_MANAGER": ("Front Office Manager", "Front-desk supervision, registration, appointments and billing.", ["dashboard", "patients", "billing.invoices"]),
+    "ROLE_NURSE": ("Nurse", "Vitals, bedside clinical records and care coordination.", ["dashboard", "patients.clinical_records", "beds", "er.triage"]),
+    "ROLE_NURSING_SUPERVISOR": ("Nursing Supervisor", "Nursing coordination, beds and clinical patient records.", ["dashboard", "patients.clinical_records", "beds", "er"]),
+    "ROLE_PHYSIOTHERAPIST": ("Physiotherapist", "Assigned patient clinical documentation and follow-up care.", ["dashboard", "patients.clinical_records"]),
+    "ROLE_PHARMACIST": ("Pharmacist", "Prescription queue, dispensing, stock and purchase workflow.", ["dashboard", "pharmacy.prescriptions", "pharmacy.inventory", "pharmacy.sales", "pharmacy.purchases"]),
+    "ROLE_PHARMACY_MANAGER": ("Pharmacy Manager", "Pharmacy inventory, suppliers, purchases and dispensing operations.", ["dashboard", "pharmacy"]),
+    "ROLE_LAB_TECHNICIAN": ("Lab Technician", "Laboratory-related patient documents and diagnostic workflow.", ["dashboard", "patients.documents", "symptom_ai.documents"]),
+    "ROLE_RADIOLOGY_TECHNICIAN": ("Radiology Technician", "Diagnostic documents and imaging workflow support.", ["dashboard", "patients.documents", "symptom_ai.documents"]),
+    "ROLE_HR_MANAGER": ("HR Manager", "Employee administration, attendance, leave, payroll and HR reporting.", ["dashboard", "employees", "hrms"]),
+    "ROLE_HR_EXECUTIVE": ("HR Executive", "Employee profiles, attendance, leave and HR documents.", ["dashboard", "employees.profile", "hrms.attendance", "hrms.leaves", "hrms.documents"]),
+    "ROLE_ACCOUNTANT": ("Accountant", "General ledger, operational entries and financial controls.", ["dashboard", "accounts.ledger"]),
+    "ROLE_FINANCE_MANAGER": ("Finance Manager", "Financial posting, approvals and period controls.", ["dashboard", "accounts.ledger", "accounts.approve", "accounts.periods"]),
+    "ROLE_BILLING_EXECUTIVE": ("Billing Executive", "Invoices, payments and insurance-claim processing.", ["dashboard", "billing.invoices", "billing.claims"]),
+    "ROLE_INSURANCE_TPA_OFFICER": ("Insurance / TPA Officer", "Insurance desk and claims processing.", ["dashboard", "patients.insurance_desk", "billing.claims"]),
+    "ROLE_RADIOLOGIST": ("Radiologist", "Diagnostic document review and clinical reporting access.", ["dashboard", "patients.documents", "symptom_ai"]),
+    "ROLE_MEDICAL_RECORDS_OFFICER": ("Medical Records Officer", "Patient directory, documents and controlled clinical records.", ["dashboard", "patients.directory", "patients.documents", "patients.clinical_records"]),
+    "ROLE_INVENTORY_MANAGER": ("Inventory Manager", "Pharmacy stock, suppliers and purchasing workflow.", ["dashboard", "pharmacy.inventory", "pharmacy.suppliers", "pharmacy.purchases"]),
+    "ROLE_FACILITY_MANAGER": ("Facility Manager", "Facility requests, assets, vendors and operational reporting.", ["dashboard", "facility"]),
+    "ROLE_COMPLIANCE_OFFICER": ("Compliance Officer", "HR audit, documents and compliance reporting.", ["dashboard", "hrms.audit", "hrms.documents", "hrms.reports"]),
+    "ROLE_IT_SUPPORT": ("IT Support", "Operational dashboard and facility support coordination.", ["dashboard", "facility.requests"]),
 }
-ROLE_PRESET_USERNAMES = {key: key.replace("_", ".") for key in ROLE_PRESETS}
-DEMO_PRESET_PASSWORD = "HospAI@2026"
+
+INITIAL_SPECIALTIES = (
+    "General Medicine", "Cardiology", "Neurology", "Orthopedics",
+    "Pediatrics", "Obstetrics & Gynecology", "General Surgery",
+    "Ophthalmology", "ENT", "Dermatology", "Psychiatry",
+    "Radiology", "Pathology", "Anesthesiology", "Emergency Medicine",
+)
+
+
+def seed_initial_access_roles(hospital_id: Optional[int] = None):
+    """Create editable hospital role templates without creating any staff."""
+    scoped_hospital_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for role_key, (role_name, description, modules) in INITIAL_ROLE_TEMPLATES.items():
+            cursor.execute(
+                """
+                INSERT INTO hospital_roles
+                    (hospital_id, role_key, role_name, description, allowed_modules, status, is_system)
+                VALUES (?, ?, ?, ?, ?, 'active', TRUE)
+                ON CONFLICT (hospital_id, role_key) DO UPDATE
+                SET is_system = TRUE
+                """,
+                (
+                    scoped_hospital_id,
+                    role_key,
+                    role_name,
+                    description,
+                    json.dumps(normalize_module_access(modules, user_type="normal")),
+                ),
+            )
+        for specialty_name in INITIAL_SPECIALTIES:
+            cursor.execute(
+                """
+                INSERT INTO clinical_specialties
+                    (hospital_id, specialty_name, department_name, status)
+                VALUES (?, ?, ?, 'active')
+                ON CONFLICT (hospital_id, specialty_name) DO NOTHING
+                """,
+                (scoped_hospital_id, specialty_name, specialty_name),
+            )
+        conn.commit()
 
 
 def create_default_users():
-    """Seed starter accounts so the API is usable out of the box."""
+    """Seed only the first System Admin; never create demo staff accounts."""
     hospital_id = resolve_hospital_id()
     with get_connection() as conn:
         cursor = conn.cursor()
 
         defaults = [
-            {
-                "username": "employee",
-                "email": "admin@hospai.local",
-                "password_hash": hash_password("employee123"),
-                "role": "employee",
-                "access_role": "owner",
-                "user_type": "admin",
-                "module_access": list(ASSIGNABLE_MODULES),
-                "job_role": "Administrator",
-                "full_name": "System Administrator",
-                "phone": "+1-234-567-8900",
-                "department": "General",
-                "status": "active",
-                "address": "",
-                "emergency_contact": "",
-            },
             {
                 "username": "admin",
                 "email": "admin@hospital.com",
@@ -684,70 +696,14 @@ def create_default_users():
                 "address": "",
                 "emergency_contact": "",
             },
-            {
-                "username": "staff",
-                "email": "nurse@hospai.local",
-                "password_hash": hash_password("staff123"),
-                "role": "staff",
-                "access_role": "receptionist",
-                "user_type": "normal",
-                # Staff also backs the frontend's finance / billing / insurance roles.
-                "module_access": list(DEMO_CLINICAL_MODULES) + ["accounts"],
-                "job_role": "Staff",
-                "full_name": "Staff User",
-                "phone": "+1-234-567-8902",
-                "department": "Ops",
-                "status": "active",
-                "address": "",
-                "emergency_contact": "",
-            },
-            {
-                "username": "doctor",
-                "email": "doctor@hospital.com",
-                "password_hash": hash_password("doctor123"),
-                "role": "employee",
-                "access_role": "clinician",
-                "user_type": "normal",
-                "module_access": list(DEMO_CLINICAL_MODULES),
-                "job_role": "Doctor",
-                "full_name": "Dr. Clinician",
-                "phone": "+1-234-567-8903",
-                "department": "Medicine",
-                "status": "active",
-                "address": "",
-                "emergency_contact": "",
-            },
         ]
-
-        # One demo account per HR/Admin role preset (username = preset with dots).
-        for key, (label, modules) in ROLE_PRESETS.items():
-            defaults.append({
-                "username": ROLE_PRESET_USERNAMES[key],
-                "email": f"{ROLE_PRESET_USERNAMES[key]}@hospai.local",
-                "password_hash": hash_password(DEMO_PRESET_PASSWORD),
-                "role": "employee",
-                "access_role": "receptionist",
-                "user_type": "normal",
-                "module_access": modules,
-                "job_role": label,
-                "full_name": f"Demo {label}",
-                "phone": "",
-                "department": "HR" if key.startswith("hr") else "Administration",
-                "status": "active",
-                "address": "",
-                "emergency_contact": "",
-            })
 
         for user in defaults:
             # Only touches login-usability fields (password/email/active status) on an
             # already-existing row -- NOT role/access_role/user_type/module_access.
-            # These four usernames (employee/admin/staff/doctor) are demo seed accounts,
-            # but once a hospital admin has configured real permissions for one of them
-            # via Employee Management, this function re-running on every app startup
-            # (app.py's init path runs it unconditionally) must not silently overwrite
-            # that configuration back to the hardcoded seed defaults. Full defaults
-            # (including module_access) only apply when the row doesn't exist yet, via
-            # the INSERT branch below.
+            # The sole local bootstrap account keeps its existing role grants.
+            # Re-seeding only restores its known password/email/active status;
+            # templates and all staff identities are handled separately.
             cursor.execute(
                 """
                 UPDATE users
@@ -776,9 +732,15 @@ def create_default_users():
                     if "unique constraint" in message or "duplicate key" in message:
                         continue
                     raise
+    seed_initial_access_roles(hospital_id)
 
 
-def authenticate(username: str, password: str, hospital_id: Optional[int] = None):
+def authenticate(
+    username: str,
+    password: str,
+    hospital_id: Optional[int] = None,
+    expected_role_id: Optional[str] = None,
+):
     """Authenticate user and return rich profile or error."""
     scoped_hospital_id = hospital_id or resolve_hospital_id()
     with get_connection() as conn:
@@ -787,14 +749,16 @@ def authenticate(username: str, password: str, hospital_id: Optional[int] = None
         try:
             cursor.execute(
                 """
-                SELECT u.id, u.hospital_id, u.password_hash, u.role, u.access_role, u.user_type,
+                SELECT u.id, u.hospital_id, u.username, u.password_hash, u.role, u.role_key, u.access_role, u.user_type,
                        u.module_access, u.job_role, u.full_name, u.email, u.phone, u.employee_id, u.status,
-                       h.code as hospital_code, h.status as hospital_status
+                       h.code as hospital_code, h.status as hospital_status,
+                       r.status as assigned_role_status
                 FROM users u
                 LEFT JOIN hospitals h ON h.id = u.hospital_id
-                WHERE (LOWER(u.username) = LOWER(?) OR LOWER(u.email) = LOWER(?)) AND u.hospital_id = ?
+                LEFT JOIN hospital_roles r ON r.hospital_id = u.hospital_id AND r.role_key = u.role_key
+                WHERE (LOWER(u.username) = LOWER(?) OR LOWER(u.email) = LOWER(?) OR LOWER(u.employee_id) = LOWER(?)) AND u.hospital_id = ?
             """,
-                (clean_identifier, clean_identifier, scoped_hospital_id),
+                (clean_identifier, clean_identifier, clean_identifier, scoped_hospital_id),
             )
         except Exception as exc:
             # Backward compatibility for stale/legacy schemas or stale runtime modules.
@@ -805,7 +769,7 @@ def authenticate(username: str, password: str, hospital_id: Optional[int] = None
             ):
                 cursor.execute(
                     """
-                    SELECT id, password_hash, role, access_role, job_role, user_type, module_access, full_name, email, phone, employee_id, status
+                    SELECT id, username, password_hash, role, access_role, job_role, user_type, module_access, full_name, email, phone, employee_id, status
                     FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?))
                 """,
                     (clean_identifier, clean_identifier),
@@ -817,16 +781,29 @@ def authenticate(username: str, password: str, hospital_id: Optional[int] = None
             return None
         user_map = dict(user)
         if verify_password(password, user_map.get("password_hash", "")):
-            if user_map.get("status") == "inactive":
-                return {"error": "Account is inactive. Please contact administrator."}
+            if user_map.get("status") != "active":
+                return {"error": "Account is not active. Please contact administrator."}
             if user_map.get("hospital_status") not in (None, "active"):
                 return {
                     "error": "Hospital account is disabled. Please contact administrator."
                 }
+            assigned_role = str(user_map.get("role_key") or "").upper()
+            selected_role = str(expected_role_id or "").strip().upper()
+            is_admin = normalize_user_type(
+                user_map.get("user_type"), user_map.get("access_role"), user_map.get("role")
+            ) == "admin"
+            if user_map.get("role_key") and str(user_map.get("assigned_role_status") or "active").lower() != "active":
+                return {"error": "The assigned role is inactive. Please contact your administrator."}
+            if selected_role and not (
+                (selected_role in ("ADMIN", "ROLE_ADMIN") and is_admin)
+                or selected_role == assigned_role
+            ):
+                return {"error": "The selected role does not match this account."}
             profile = resolve_user_profile(
                 {
-                    "username": username,
+                    "username": user_map.get("username"),
                     "role": user_map.get("role"),
+                    "role_key": user_map.get("role_key"),
                     "access_role": user_map.get("access_role"),
                     "user_type": user_map.get("user_type"),
                     "job_role": user_map.get("job_role"),
@@ -1120,7 +1097,7 @@ def get_session_user(token: Optional[str]):
                 conn.commit()
                 return None
 
-        if row["status"] == "inactive":
+        if row["status"] != "active":
             cursor.execute("DELETE FROM sessions WHERE id = ?", (row["session_id"],))
             conn.commit()
             return None

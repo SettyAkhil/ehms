@@ -1,0 +1,88 @@
+# ==========================================
+# HospAI Enterprise HMS - Root .gitignore
+# ==========================================
+
+# Dependencies
+node_modules/
+*/node_modules/
+.pnpm-store/
+
+# Production Build Artifacts
+dist/
+*/dist/
+build/
+*/build/
+out/
+*/out/
+
+# Development & Bundler Caches
+.vite/
+*/.vite/
+.cache/
+*/.cache/
+.parcel-cache/
+.rollup.cache/
+.tsbuildinfo
+*.tsbuildinfo
+
+# Python Virtual Environments & Bytecode
+.venv/
+venv/
+*/.venv/
+*/venv/
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# Environment Variables & Secrets (Keep .env.example tracked)
+.env
+.env.*
+*/.env
+*/.env.*
+!.env.example
+!*/.env.example
+
+# Temporary Logs & Process Files
+*.log
+*.log.*
+*.err.log
+logs/
+*/logs/
+.run/
+.hms-*.log
+*/.hms-*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Database & Runtime State
+.pgdata/
+*.sqlite
+*.sqlite3
+*.db
+.storage/
+
+# IDE & Editor Configuration
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.project
+.settings/
+
+# Operating System Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

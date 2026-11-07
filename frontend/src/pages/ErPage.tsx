@@ -2673,10 +2673,9 @@ function NewPatientIntakePanel({
   )
 
   // 6. MLC
-
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("No")
-
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const handleDobChange = (dobVal: string) => {
     setNewDob(dobVal)
@@ -2758,6 +2757,8 @@ function NewPatientIntakePanel({
   }, [newPhone, newName, newLastName])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     const missing: string[] = []
 
     if (!newName.trim()) missing.push("First Name")
@@ -2820,6 +2821,7 @@ function NewPatientIntakePanel({
       }
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -2859,6 +2861,8 @@ function NewPatientIntakePanel({
               consciousness: consciousnessLevel,
               info_provided_by: infoProvidedBy,
               police_involved: newMlc === "Yes",
+              triage_category: triageCategory,
+              triage_bed_label: triageBedLabel,
             },
             complaint: [
               {
@@ -2874,53 +2878,52 @@ function NewPatientIntakePanel({
 
       let visitId = regRes?.visit?.id ?? (regRes as any)?.id
       let visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
-      const patientId = regRes?.patient_id ?? regRes?.patient?.patient_id ?? `P-${Math.floor(100000 + Math.random() * 900000)}`
+      const patientId = regRes?.patient_id ?? regRes?.patient?.patient_id ?? detectedExistingPatient?.patient?.patient_id ?? undefined
 
+      // If backend / API call did not create the visit (fallback for offline mode)
       if (!visitId) {
-        visitId = Date.now()
-        visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
-      }
-
-      // Ensure patient and visit are persisted in ErDatabase
-      try {
-        ErDatabase.addPatient({
-          patient_id: patientId,
-          name: newName.trim(),
-          last_name: newLastName.trim(),
-          gender: newGender as any,
-          age: newAge.trim() ? parseInt(newAge) : 35,
-          phone: newPhone.trim() || undefined,
-          blood_group: newBloodGroup,
-          allergies: newAllergies.trim() || "No Known Allergies",
-          address: newAddress.trim() || undefined,
-          emergency_contact: newEmergencyContact.trim() || undefined,
-        })
-
-        await ErDatabase.createVisit({
-          patientId,
-          arrivalDate,
-          arrivalTime,
-          arrivalMode,
-          broughtBy,
-          conditionAtArrival,
-          consciousnessLevel,
-          triageCategory,
-          triageBedLabel,
-          complaint: complaint.trim(),
-          caseCategory,
-          mlc: newMlc,
-          attendantName: attendantName.trim() || undefined,
-          attendantRelation: attendantRelation || undefined,
-          patientDetails: {
+        try {
+          const addedPatient = ErDatabase.addPatient({
+            patient_id: patientId,
             name: newName.trim(),
             last_name: newLastName.trim(),
             gender: newGender as any,
             age: newAge.trim() ? parseInt(newAge) : 35,
             phone: newPhone.trim() || undefined,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not save to ErDatabase:", dbErr)
+            blood_group: newBloodGroup,
+            allergies: newAllergies.trim() || "No Known Allergies",
+            address: newAddress.trim() || undefined,
+            emergency_contact: newEmergencyContact.trim() || undefined,
+          })
+
+          const localRes = await ErDatabase.createVisit({
+            patientId: addedPatient.patient_id,
+            arrivalDate,
+            arrivalTime,
+            arrivalMode,
+            broughtBy,
+            conditionAtArrival,
+            consciousnessLevel,
+            triageCategory,
+            triageBedLabel,
+            complaintText: complaint.trim(),
+            caseCategory,
+            mlc: newMlc,
+            attendantName: attendantName.trim() || undefined,
+            attendantRelation: attendantRelation || undefined,
+            patientDetails: {
+              name: newName.trim(),
+              last_name: newLastName.trim(),
+              gender: newGender as any,
+              age: newAge.trim() ? parseInt(newAge) : 35,
+              phone: newPhone.trim() || undefined,
+            },
+          })
+          visitId = localRes.visit.id
+          visitNo = localRes.visit.visit_no
+        } catch (dbErr) {
+          console.warn("Could not save to ErDatabase:", dbErr)
+        }
       }
 
       // Manual Triage & Bed Allocation Assignment
@@ -2948,6 +2951,7 @@ function NewPatientIntakePanel({
       reportError(setNotice, error, "Failed to create ER encounter.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -3818,10 +3822,11 @@ function UnidentifiedPatientIntakePanel({
   const [assignedSpecialty, setAssignedSpecialty] = useState("")
 
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("Yes")
-
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
     if (!unknownLabel.trim()) {
       setNotice({
         type: "error",
@@ -3840,6 +3845,7 @@ function UnidentifiedPatientIntakePanel({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -3877,6 +3883,8 @@ function UnidentifiedPatientIntakePanel({
         unknown_patient_label: unknownLabel.trim(),
         assigned_doctor_name: finalDoctor || undefined,
         assigned_specialty: finalSpecialty || undefined,
+        triage_category: triageCategory,
+        triage_bed_label: triageBedLabel,
       }
 
       let visitRes: any
@@ -3892,48 +3900,46 @@ function UnidentifiedPatientIntakePanel({
       let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
       let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
 
+      // If backend / API call did not create the visit (fallback for offline mode)
       if (!visitId) {
-        visitId = Date.now()
-        visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
-      }
-
-      const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
-
-      // Persist unidentified patient and visit in local ErDatabase
-      try {
-        ErDatabase.addPatient({
-          patient_id: tempPatientId,
-          name: unknownLabel.trim(),
-          gender: apparentGender as any,
-          age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
-          allergies: "Unknown / Trauma Intake",
-        })
-
-        await ErDatabase.createVisit({
-          patientId: tempPatientId,
-          arrivalDate,
-          arrivalTime,
-          arrivalMode,
-          broughtBy,
-          conditionAtArrival,
-          consciousnessLevel,
-          triageCategory,
-          triageBedLabel,
-          complaint: complaintText,
-          caseCategory,
-          mlc: newMlc,
-          attendantName: emsOfficer.trim() || undefined,
-          attendantRelation: "EMS / Police",
-          assignedDoctorName: finalDoctor || undefined,
-          assignedSpecialty: finalSpecialty || undefined,
-          patientDetails: {
+        const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
+        try {
+          ErDatabase.addPatient({
+            patient_id: tempPatientId,
             name: unknownLabel.trim(),
             gender: apparentGender as any,
             age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not record unidentified visit in ErDatabase:", dbErr)
+            allergies: "Unknown / Trauma Intake",
+          })
+
+          const localRes = await ErDatabase.createVisit({
+            patientId: tempPatientId,
+            arrivalDate,
+            arrivalTime,
+            arrivalMode,
+            broughtBy,
+            conditionAtArrival,
+            consciousnessLevel,
+            triageCategory,
+            triageBedLabel,
+            complaint: complaintText,
+            caseCategory,
+            mlc: newMlc,
+            attendantName: emsOfficer.trim() || undefined,
+            attendantRelation: "EMS / Police",
+            assignedDoctorName: finalDoctor || undefined,
+            assignedSpecialty: finalSpecialty || undefined,
+            patientDetails: {
+              name: unknownLabel.trim(),
+              gender: apparentGender as any,
+              age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
+            },
+          })
+          visitId = localRes.visit.id
+          visitNo = localRes.visit.visit_no
+        } catch (dbErr) {
+          console.warn("Could not record unidentified visit in ErDatabase:", dbErr)
+        }
       }
 
       try {
@@ -3992,6 +3998,7 @@ function UnidentifiedPatientIntakePanel({
       )
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -4645,6 +4652,7 @@ function ExistingPatientIntakePanel({
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("No")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   // Historical data for selected existing patient (kept strictly separate from active form)
 
@@ -4728,6 +4736,8 @@ function ExistingPatientIntakePanel({
   }, [searchQuery])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     if (!selectedPatient) {
       setNotice({
         type: "error",
@@ -4743,6 +4753,7 @@ function ExistingPatientIntakePanel({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -4886,6 +4897,7 @@ function ExistingPatientIntakePanel({
       reportError(setNotice, error, "Failed to create ER encounter.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -6302,6 +6314,7 @@ function AddTimelineEventModal({
   )
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   // Auto-captured metadata
 
@@ -6539,6 +6552,7 @@ function AddTimelineEventModal({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -6849,6 +6863,7 @@ function AddTimelineEventModal({
       })
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16237,6 +16252,7 @@ function MergeUnknownPatient({
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   useEffect(() => {
     if (selectedPatient || !searchQuery.trim()) {
@@ -16261,6 +16277,8 @@ function MergeUnknownPatient({
   }, [searchQuery, selectedPatient])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     if (!selectedPatient) {
       setNotice({
         type: "error",
@@ -16270,6 +16288,7 @@ function MergeUnknownPatient({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16289,6 +16308,7 @@ function MergeUnknownPatient({
       reportError(setNotice, error, "Failed to merge this visit.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16424,6 +16444,7 @@ function AddComplaintForm({
   const [caseCategory, setCaseCategory] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
     if (!complaint.trim()) {
@@ -16432,6 +16453,7 @@ function AddComplaintForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16458,6 +16480,7 @@ function AddComplaintForm({
       reportError(setNotice, error, "Failed to add complaint.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16667,8 +16690,10 @@ function AddVitalsForm({
   const [consciousness, setConsciousness] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16719,6 +16744,7 @@ function AddVitalsForm({
       reportError(setNotice, error, "Failed to record vitals.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16893,6 +16919,7 @@ function TriageForm({
   const [reason, setReason] = useState(existing?.reason || "")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -16953,6 +16980,7 @@ function TriageForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16977,6 +17005,7 @@ function TriageForm({
       reportError(setNotice, error, "Failed to save triage.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -17487,6 +17516,7 @@ function AddTreatmentForm({
   const [description, setDescription] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -17513,6 +17543,7 @@ function AddTreatmentForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -17595,6 +17626,7 @@ function AddTreatmentForm({
       reportError(setNotice, error, "Failed to log intervention.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -17725,6 +17757,7 @@ function DoctorAssignForm({
   const [doctorName, setDoctorName] = useState(existingDoctor || "")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -17783,6 +17816,7 @@ function DoctorAssignForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -17824,6 +17858,7 @@ function DoctorAssignForm({
       reportError(setNotice, error, "Failed to assign a doctor.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -18931,6 +18966,7 @@ function AddNoteForm({
   const [content, setContent] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
     if (!content.trim()) {
@@ -18939,6 +18975,7 @@ function AddNoteForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -18955,6 +18992,7 @@ function AddNoteForm({
       reportError(setNotice, error, "Failed to add note.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -19007,6 +19045,7 @@ function DispositionForm({
   const [priority, setPriority] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const applyBedNeedSuggestion = () => {
     if (!bedNeed) return
@@ -19026,6 +19065,7 @@ function DispositionForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -19060,6 +19100,7 @@ function DispositionForm({
       reportError(setNotice, error, "Failed to record disposition.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 

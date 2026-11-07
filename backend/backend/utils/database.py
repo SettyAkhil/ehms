@@ -373,6 +373,7 @@ def init_database():
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL CHECK(role IN ('employee', 'staff')),
+                role_key TEXT,
                 access_role TEXT DEFAULT 'receptionist' CHECK(access_role IN ('receptionist', 'clinician', 'hr_manager', 'owner')),
                 user_type TEXT DEFAULT 'normal' CHECK(user_type IN ('admin', 'normal')),
                 module_access TEXT DEFAULT '[]',
@@ -486,6 +487,7 @@ def init_database():
         ensure_pharmacy_hospital_columns(conn)
         ensure_bed_billing_columns(conn)
         ensure_op_tables(conn)
+        ensure_admin_tables(conn)
 
         # General ledger (billing-service's accounts module). Imported here, not at
         # module top, so utils.database keeps no import-time dependency on modules/.
@@ -820,6 +822,7 @@ def ensure_user_columns(conn):
         "username": "TEXT",
         "password_hash": "TEXT",
         "role": "TEXT",
+        "role_key": "TEXT",
         "access_role": "TEXT DEFAULT 'receptionist'",
         "user_type": "TEXT DEFAULT 'normal'",
         "module_access": "TEXT DEFAULT '[]'",
@@ -5441,32 +5444,51 @@ def list_doctors(department=None, hospital_id=None):
     scoped_hospital_id = hospital_id or resolve_hospital_id()
     with get_connection() as conn:
         cursor = conn.cursor()
-        # Only return doctors added via the Employee Management (users table) for this hospital
         query = """
             SELECT
-                u.id as id,
+                COALESCE(d.staff_id, CAST(d.id AS TEXT)) as id,
+                d.doctor_name as doctor_name,
+                d.doctor_name as name,
+                d.department as department,
+                COALESCE(d.specialty, d.department) as specialty,
+                COALESCE(d.qualification, 'MBBS, MD') as qualification,
+                COALESCE(d.room, 'OPD-101') as room,
+                COALESCE(d.consultation_fee, 500.0) as consultation_fee,
+                COALESCE(d.review_fee, 250.0) as review_fee,
+                COALESCE(d.status, 'available') as status,
+                CASE WHEN d.status = 'available' THEN 1 ELSE 0 END as available
+            FROM doctors d
+            WHERE d.hospital_id = ? AND d.status != 'inactive'
+            UNION ALL
+            SELECT
+                COALESCE(u.employee_id, CAST(u.id AS TEXT)) as id,
                 u.full_name as doctor_name,
+                u.full_name as name,
                 u.department as department,
-                0.0 as consultation_fee,
-                0.0 as review_fee,
-                u.status as status,
-                'users' as source
+                u.department as specialty,
+                'MBBS, MD' as qualification,
+                'OPD-101' as room,
+                500.0 as consultation_fee,
+                250.0 as review_fee,
+                COALESCE(u.status, 'available') as status,
+                CASE WHEN u.status = 'active' THEN 1 ELSE 0 END as available
             FROM users u
-            WHERE u.job_role = 'Doctor' AND u.hospital_id = ?
+            WHERE u.hospital_id = ? AND u.job_role = 'Doctor' AND u.status = 'active'
+              AND NOT EXISTS (SELECT 1 FROM doctors doc WHERE doc.hospital_id = u.hospital_id AND (doc.staff_id = u.employee_id OR doc.username = u.username OR LOWER(doc.doctor_name) = LOWER(u.full_name)))
         """
-        if department:
+        if department and department != "all":
             cursor.execute(
                 _to_sql_params(
                     f"SELECT * FROM ({query}) AS combined WHERE department = ? ORDER BY doctor_name"
                 ),
-                (scoped_hospital_id, department),
+                (scoped_hospital_id, scoped_hospital_id, department),
             )
         else:
             cursor.execute(
                 _to_sql_params(
                     f"SELECT * FROM ({query}) AS combined ORDER BY doctor_name"
                 ),
-                (scoped_hospital_id,),
+                (scoped_hospital_id, scoped_hospital_id),
             )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -7433,8 +7455,8 @@ def add_manual_patient_vital(data):
         cursor.execute(
             """
             INSERT INTO patient_vitals (
-                patient_id, bp, pulse, temperature, spo2, respiratory_rate, notes, recorded_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                patient_id, bp, pulse, temperature, spo2, respiratory_rate, weight, notes, recorded_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["patient_id"],
@@ -7443,6 +7465,7 @@ def add_manual_patient_vital(data):
                 data.get("temperature"),
                 data.get("spo2"),
                 data.get("respiratory_rate"),
+                data.get("weight"),
                 data.get("notes"),
                 data.get("recorded_by"),
             ),
@@ -8227,6 +8250,22 @@ def update_er_visit_status(hospital_id, er_visit_id, new_status):
 
 def create_er_visit(data, hospital_id=None):
     scoped_hospital_id = hospital_id or resolve_hospital_id()
+    patient_id = data.get("patient_id")
+    if patient_id and not data.get("is_unknown_patient"):
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, visit_no FROM er_visits
+                WHERE hospital_id = ? AND patient_id = ? AND (status IS NULL OR status NOT IN ('closed', 'discharged'))
+                ORDER BY id DESC LIMIT 1
+                """,
+                (scoped_hospital_id, patient_id),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return {"id": existing[0], "visit_no": existing[1]}
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT nextval('er_visit_seq')")
@@ -11808,3 +11847,1254 @@ def ensure_ot_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ot_cases_patient ON ot_cases(patient_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_ot_cases_status ON ot_cases(status)")
     conn.commit()
+
+
+# ==================== Phase 2: Administration Department Enterprise Schema ====================
+
+def ensure_admin_tables(conn):
+    """Ensure complete Administration department schema tables, columns, indexes,
+    and multi-tenant isolation across all administrative submodules."""
+    cursor = conn.cursor()
+    id_column = "SERIAL PRIMARY KEY"
+
+    # 1. Doctors table schema upgrades
+    _ensure_column(cursor, "doctors", "hospital_id", "INTEGER")
+    _ensure_column(cursor, "doctors", "staff_id", "TEXT")
+    _ensure_column(cursor, "doctors", "qualification", "TEXT")
+    _ensure_column(cursor, "doctors", "specialty", "TEXT")
+    _ensure_column(cursor, "doctors", "specialty_note", "TEXT")
+    _ensure_column(cursor, "doctors", "section", "TEXT DEFAULT 'Main'")
+    _ensure_column(cursor, "doctors", "username", "TEXT")
+    _ensure_column(cursor, "doctors", "room", "TEXT")
+    _ensure_column(cursor, "doctors", "council_reg_no", "TEXT")
+    _ensure_column(cursor, "doctors", "experience_years", "INTEGER DEFAULT 5")
+    _ensure_column(cursor, "doctors", "email", "TEXT")
+    _ensure_column(cursor, "doctors", "phone", "TEXT")
+    _ensure_column(cursor, "doctors", "active", "BOOLEAN DEFAULT TRUE")
+    _ensure_column(cursor, "doctors", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_doctors_hospital ON doctors(hospital_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_doctors_dept ON doctors(department)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_doctors_status ON doctors(status)")
+
+    # 2. Department Master schema upgrades
+    _ensure_column(cursor, "department_master", "code", "TEXT")
+    _ensure_column(cursor, "department_master", "contact_phone", "TEXT")
+    _ensure_column(cursor, "department_master", "location", "TEXT")
+    _ensure_column(cursor, "department_master", "status", "TEXT DEFAULT 'active'")
+    _ensure_column(cursor, "department_master", "capacity", "INTEGER DEFAULT 50")
+    _ensure_column(cursor, "department_master", "description", "TEXT")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_dept_hospital ON department_master(hospital_id)")
+
+    # 3. Hospitals schema upgrades
+    _ensure_column(cursor, "hospitals", "address", "TEXT")
+    _ensure_column(cursor, "hospitals", "phone", "TEXT")
+    _ensure_column(cursor, "hospitals", "email", "TEXT")
+    _ensure_column(cursor, "hospitals", "timezone", "TEXT DEFAULT 'Asia/Kolkata'")
+    _ensure_column(cursor, "hospitals", "working_hours", "TEXT DEFAULT '24/7 Emergency & Inpatient, OP: 08:00 - 20:00'")
+    _ensure_column(cursor, "hospitals", "logo_url", "TEXT")
+    _ensure_column(cursor, "hospitals", "operational_status", "TEXT DEFAULT 'Operational'")
+    _ensure_column(cursor, "hospitals", "umr_prefix", "TEXT DEFAULT 'UMR'")
+    _ensure_column(cursor, "hospitals", "invoice_prefix", "TEXT DEFAULT 'INV'")
+    _ensure_column(cursor, "hospitals", "currency", "TEXT DEFAULT 'INR'")
+
+    # 4. Diagnostic Tariffs Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS diagnostic_tariffs (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            department TEXT NOT NULL,
+            modality TEXT,
+            body_region TEXT,
+            sub_category TEXT,
+            variant_protocol TEXT,
+            hospital_availability TEXT DEFAULT 'Enabled',
+            tariff_reference TEXT,
+            price REAL NOT NULL DEFAULT 0,
+            responsible_in_charge TEXT,
+            report_template TEXT,
+            tat TEXT DEFAULT '2-4 Hours',
+            unit TEXT,
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, code)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tariffs_hospital_dept ON diagnostic_tariffs(hospital_id, department)")
+
+    # 5. Hospital Roles Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS hospital_roles (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            role_key TEXT NOT NULL,
+            role_name TEXT NOT NULL,
+            description TEXT,
+            allowed_modules TEXT DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            is_system BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, role_key)
+        )
+    """)
+    _ensure_column(cursor, "hospital_roles", "status", "TEXT DEFAULT 'active'")
+    cursor.execute("UPDATE hospital_roles SET status = 'active' WHERE status IS NULL OR TRIM(status) = ''")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_roles_hospital ON hospital_roles(hospital_id)")
+
+    # 6. Hospital Settings Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS hospital_settings (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            setting_key TEXT NOT NULL,
+            setting_value TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, setting_key)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_settings_hospital ON hospital_settings(hospital_id)")
+
+    # 7. Clinical Specialties Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS clinical_specialties (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            specialty_name TEXT NOT NULL,
+            department_name TEXT,
+            sub_specialty TEXT,
+            consultation_types TEXT DEFAULT '["Standard", "Follow-up", "Emergency", "Video"]',
+            status TEXT DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, specialty_name)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_specialties_hospital ON clinical_specialties(hospital_id)")
+
+    # 8. Hospital Rooms Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS hospital_rooms (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            room_number TEXT NOT NULL,
+            room_type TEXT NOT NULL,
+            department TEXT,
+            block_building TEXT,
+            floor TEXT,
+            capacity INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'Available',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, room_number)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_rooms_hospital ON hospital_rooms(hospital_id)")
+
+    # 9. Scheduling Rules Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS scheduling_rules (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            slot_duration_minutes INTEGER DEFAULT 15,
+            max_advance_booking_days INTEGER DEFAULT 30,
+            allow_same_day_booking BOOLEAN DEFAULT TRUE,
+            cancellation_cutoff_hours INTEGER DEFAULT 2,
+            emergency_buffer_slots INTEGER DEFAULT 2,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id)
+        )
+    """)
+
+    # 10. Notification Configs Table
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS notification_configs (
+            id {id_column},
+            hospital_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            is_enabled BOOLEAN DEFAULT TRUE,
+            sender_id TEXT,
+            endpoint_or_host TEXT,
+            api_key_masked TEXT,
+            retry_count INTEGER DEFAULT 3,
+            template_config TEXT DEFAULT '{{}}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(hospital_id, channel)
+        )
+    """)
+    conn.commit()
+
+
+# ==================== Administration Department CRUD Functions ====================
+
+def get_hospital_profile(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM hospitals WHERE id = ?", (scoped_id,))
+        row = cursor.fetchone()
+        if not row:
+            cursor.execute("SELECT * FROM hospitals ORDER BY id ASC LIMIT 1")
+            row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_hospital_profile(hospital_id, data):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = [
+            "name", "address", "phone", "email", "timezone", "working_hours",
+            "logo_url", "operational_status", "umr_prefix", "invoice_prefix", "currency"
+        ]
+        updates = []
+        params = []
+        for key in allowed:
+            if key in data:
+                updates.append(f"{key} = ?")
+                params.append(data[key])
+        if not updates:
+            return False
+        params.append(hospital_id)
+        sql = _to_sql_params(f"UPDATE hospitals SET {', '.join(updates)} WHERE id = ?")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_departments(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            SELECT 
+                d.id, d.hospital_id, d.department_name, d.code, d.contact_phone,
+                d.location, d.status, d.capacity, d.description, d.mapped_head_employee_id,
+                d.created_at,
+                (SELECT COUNT(*) FROM doctors doc WHERE doc.department = d.department_name AND doc.hospital_id = d.hospital_id AND doc.status != 'inactive') as doctor_count
+            FROM department_master d
+            WHERE d.hospital_id = ?
+            ORDER BY d.department_name ASC
+        """)
+        cursor.execute(sql, (scoped_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def create_admin_department(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    dept_name = str(data.get("department_name", "")).strip()
+    if not dept_name:
+        raise ValueError("Department name is required")
+    code = str(data.get("code") or dept_name[:4].upper()).strip()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Check duplicate
+        cursor.execute("SELECT id FROM department_master WHERE hospital_id = ? AND LOWER(department_name) = LOWER(?)", (scoped_id, dept_name))
+        existing = cursor.fetchone()
+        if existing:
+            return existing["id"]
+
+        sql = _to_sql_params("""
+            INSERT INTO department_master (
+                hospital_id, department_name, code, contact_phone, location,
+                status, capacity, description, mapped_head_employee_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, dept_name, code,
+            data.get("contact_phone", ""),
+            data.get("location", ""),
+            data.get("status", "active"),
+            int(data.get("capacity", 50)),
+            data.get("description", ""),
+            data.get("mapped_head_employee_id", "")
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_admin_department(dept_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = [
+            "department_name", "code", "contact_phone", "location",
+            "status", "capacity", "description", "mapped_head_employee_id"
+        ]
+        updates = []
+        params = []
+        for key in allowed:
+            if key in data:
+                updates.append(f"{key} = ?")
+                params.append(data[key])
+        if not updates:
+            return False
+        params.extend([dept_id, scoped_id])
+        sql = _to_sql_params(f"UPDATE department_master SET {', '.join(updates)} WHERE id = ? AND hospital_id = ?")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_admin_department(dept_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Soft deactivate
+        cursor.execute("UPDATE department_master SET status = 'inactive' WHERE id = ? AND hospital_id = ?", (dept_id, scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_doctors(hospital_id=None, department=None, search=None, status=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        conditions = ["d.hospital_id = ?"]
+        params = [scoped_id]
+
+        if department and department != "all":
+            conditions.append("d.department = ?")
+            params.append(department)
+
+        if status and status != "all":
+            conditions.append("d.status = ?")
+            params.append(status)
+
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            conditions.append("(LOWER(d.doctor_name) LIKE ? OR LOWER(d.specialty) LIKE ? OR LOWER(d.staff_id) LIKE ?)")
+            params.extend([term, term, term])
+
+        where_clause = " AND ".join(conditions)
+        sql = _to_sql_params(f"""
+            SELECT 
+                d.id, d.hospital_id, d.doctor_name, d.name, d.department,
+                d.qualification, d.specialty, d.specialty_note, d.section,
+                d.staff_id, d.username, d.room, d.gender, d.council_reg_no,
+                d.experience_years, d.consultation_fee, d.review_fee,
+                d.status, d.created_at, d.email, d.phone
+            FROM doctors d
+            WHERE {where_clause}
+            ORDER BY d.doctor_name ASC
+        """)
+        cursor.execute(sql, tuple(params))
+        rows = [dict(r) for r in cursor.fetchall()]
+        # Normalise field names for frontend compatibility
+        for row in rows:
+            if not row.get("name"):
+                row["name"] = row.get("doctor_name", "")
+            if not row.get("id"):
+                row["id"] = row.get("staff_id") or str(row.get("doctor_name"))
+        return rows
+
+
+def create_admin_doctor(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    name = (data.get("name") or data.get("doctor_name") or "").strip()
+    if not name:
+        raise ValueError("Doctor name is required")
+    department = (data.get("department") or "General Medicine").strip()
+
+    # Generate authoritative ID DOC-xxxx
+    staff_id = (data.get("staffId") or data.get("staff_id") or "").strip()
+    if not staff_id or staff_id.startswith("IMP-"):
+        rand_num = random.randint(1001, 9999) if "random" in globals() else 1001 + int(datetime.now().timestamp()) % 8000
+        staff_id = f"DOC-{rand_num}"
+
+    username = (data.get("username") or f"dr.{name.lower().replace('dr.', '').strip().replace(' ', '.')}").strip()
+    fee = float(data.get("consultationFee") or data.get("consultation_fee") or 500)
+    review_fee = float(data.get("reviewFee") or data.get("review_fee") or (fee * 0.5))
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            INSERT INTO doctors (
+                hospital_id, doctor_name, department, qualification,
+                specialty, specialty_note, section, staff_id, username,
+                room, gender, council_reg_no, experience_years,
+                consultation_fee, review_fee, status, email, phone
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, name, department,
+            data.get("qualification", "MBBS, MD"),
+            data.get("specialty") or department,
+            data.get("specialtyNote", ""),
+            data.get("section", "Main"),
+            staff_id, username,
+            data.get("room", "OPD-101"),
+            data.get("gender", "Male"),
+            data.get("council_reg_no", f"MCI-{staff_id}"),
+            int(data.get("experience_years", 5)),
+            fee, review_fee,
+            data.get("status", "available"),
+            data.get("email", ""),
+            data.get("phone", "")
+        ))
+        doctor_db_id = cursor.lastrowid
+
+        # Create the linked clinician identity in a pending state.  A new doctor
+        # never receives a predictable default password: activation requires a
+        # deliberately supplied password (or the normal reset/invite flow).
+        cursor.execute("SELECT id FROM users WHERE hospital_id = ? AND (username = ? OR employee_id = ?)", (scoped_id, username, staff_id))
+        user_row = cursor.fetchone()
+        if not user_row:
+            try:
+                import bcrypt
+                requested_password = str(data.get("password") or "")
+                if requested_password and len(requested_password) < 8:
+                    raise ValueError("Doctor account password must be at least 8 characters long")
+                # Hash a one-time, non-disclosed random value when an account
+                # invitation has not supplied a password.  It is intentionally
+                # impossible to log in until a secure reset/activation happens.
+                initial_secret = requested_password or uuid_lib.uuid4().hex
+                pw_hash = bcrypt.hashpw(initial_secret.encode(), bcrypt.gensalt(10)).decode()
+            except ImportError as exc:
+                raise RuntimeError("Password hashing is unavailable") from exc
+
+            account_status = "active" if requested_password else "pending"
+
+            user_sql = _to_sql_params("""
+                INSERT INTO users (
+                    hospital_id, username, password_hash, role, access_role,
+                    user_type, module_access, job_role, full_name, email,
+                    phone, department, employee_id, status
+                ) VALUES (?, ?, ?, 'staff', 'clinician', 'normal', ?, 'Doctor', ?, ?, ?, ?, ?, ?)
+            """)
+            doc_modules = json.dumps([
+                "dashboard", "clinical", "doctor_workflow", "patients", "chart",
+                "inpatient", "emergency", "op_workflow", "appointments", "queue"
+            ])
+            cursor.execute(user_sql, (
+                scoped_id, username, pw_hash, doc_modules,
+                name, data.get("email", f"{username}@hospital.org"),
+                data.get("phone", ""), department, staff_id, account_status
+            ))
+        conn.commit()
+        return {
+            "id": staff_id,
+            "db_id": doctor_db_id,
+            "staff_id": staff_id,
+            "name": name,
+            "doctor_name": name,
+            "department": department,
+            "username": username,
+            "consultation_fee": fee,
+            "status": "available"
+        }
+
+
+def update_admin_doctor_profile(doctor_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = [
+            "doctor_name", "department", "qualification", "specialty",
+            "specialty_note", "section", "room", "gender", "council_reg_no",
+            "experience_years", "consultation_fee", "review_fee", "status",
+            "email", "phone"
+        ]
+        updates = []
+        params = []
+        for key in allowed:
+            val = data.get(key)
+            if val is not None:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if "name" in data and "doctor_name" not in data:
+            updates.append("doctor_name = ?")
+            params.append(data["name"])
+
+        if not updates:
+            return False
+
+        # doctor_id can be numeric or string staff_id
+        if str(doctor_id).isdigit():
+            where = "id = ? AND hospital_id = ?"
+        else:
+            where = "staff_id = ? AND hospital_id = ?"
+        params.extend([doctor_id, scoped_id])
+
+        sql = _to_sql_params(f"UPDATE doctors SET {', '.join(updates)} WHERE {where}")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_admin_doctor(doctor_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Soft deactivate
+        if str(doctor_id).isdigit():
+            cursor.execute("UPDATE doctors SET status = 'inactive' WHERE id = ? AND hospital_id = ?", (doctor_id, scoped_id))
+        else:
+            cursor.execute("UPDATE doctors SET status = 'inactive' WHERE staff_id = ? AND hospital_id = ?", (doctor_id, scoped_id))
+            cursor.execute("UPDATE users SET status = 'inactive' WHERE employee_id = ? AND hospital_id = ?", (doctor_id, scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_users(hospital_id=None, search=None, role=None, status=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        conditions = ["hospital_id = ?"]
+        params = [scoped_id]
+
+        if role and role != "all":
+            conditions.append("(role = ? OR access_role = ? OR job_role = ?)")
+            params.extend([role, role, role])
+
+        if status and status != "all":
+            conditions.append("status = ?")
+            params.append(status)
+
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            conditions.append("(LOWER(username) LIKE ? OR LOWER(full_name) LIKE ? OR LOWER(employee_id) LIKE ?)")
+            params.extend([term, term, term])
+
+        where_clause = " AND ".join(conditions)
+        sql = _to_sql_params(f"""
+            SELECT 
+                id, username, role, role_key, access_role, user_type, module_access,
+                job_role, full_name, email, phone, department, employee_id,
+                status, created_at
+            FROM users
+            WHERE {where_clause}
+            ORDER BY id DESC
+        """)
+        cursor.execute(sql, tuple(params))
+        users = [dict(r) for r in cursor.fetchall()]
+        for u in users:
+            try:
+                u["allowedModules"] = json.loads(u.get("module_access") or "[]")
+            except Exception:
+                u["allowedModules"] = []
+            u["name"] = u.get("full_name") or u.get("username")
+            u["staffId"] = u.get("employee_id") or f"STF-{u['id']}"
+            u["roleId"] = u.get("role_key") or f"ROLE_{str(u.get('access_role') or 'STAFF').upper()}"
+            u["status"] = "Active" if str(u.get("status") or "").lower() == "active" else "Inactive"
+        return users
+
+
+def create_admin_user(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    username = str(data.get("username", "")).strip().lower()
+    if not username:
+        raise ValueError("Username is required")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE hospital_id = ? AND username = ?", (scoped_id, username))
+        if cursor.fetchone():
+            raise ValueError(f"User '{username}' already exists")
+
+        password = str(data.get("password") or "")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        try:
+            import bcrypt
+            pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(10)).decode()
+        except ImportError as exc:
+            raise RuntimeError("Password hashing is unavailable") from exc
+
+        # New accounts begin with the exact grants chosen by the System
+        # Administrator.  An omitted grant list is deliberately no access.
+        modules = data.get("allowedModules") or data.get("module_access") or []
+        modules_json = json.dumps(modules)
+
+        sql = _to_sql_params("""
+            INSERT INTO users (
+                hospital_id, username, password_hash, role, role_key, access_role,
+                user_type, module_access, job_role, full_name, email,
+                phone, department, employee_id, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        staff_id = data.get("staffId") or data.get("employee_id") or f"STF-{random.randint(1000, 9999) if 'random' in globals() else 1001}"
+        role_id = data.get("roleId") or "ROLE_STAFF"
+        access_role = role_id.replace("ROLE_", "").lower()
+
+        cursor.execute(sql, (
+            scoped_id, username, pw_hash,
+            data.get("role", "staff"),
+            role_id,
+            "receptionist",
+            "normal",
+            modules_json,
+            data.get("job_role", access_role.title()),
+            data.get("name") or data.get("full_name") or username,
+            data.get("email", ""),
+            data.get("phone", ""),
+            data.get("department", "General"),
+            staff_id,
+            str(data.get("status", "active")).lower()
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_admin_user(user_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = ["full_name", "email", "phone", "department", "employee_id", "job_role", "role_key"]
+        updates = []
+        params = []
+        for key in allowed:
+            if key in data:
+                updates.append(f"{key} = ?")
+                params.append(data[key])
+        if "name" in data and "full_name" not in data:
+            updates.append("full_name = ?")
+            params.append(data["name"])
+        if "allowedModules" in data:
+            updates.append("module_access = ?")
+            params.append(json.dumps(data["allowedModules"]))
+        if "status" in data:
+            updates.append("status = ?")
+            params.append(str(data["status"]).lower())
+
+        if not updates:
+            return False
+        params.extend([user_id, scoped_id])
+        sql = _to_sql_params(f"UPDATE users SET {', '.join(updates)} WHERE id = ? AND hospital_id = ?")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_admin_user(user_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET status = 'inactive' WHERE id = ? AND hospital_id = ?", (user_id, scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def admin_reset_user_password(user_id, new_password, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    try:
+        import bcrypt
+        pw_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(10)).decode()
+    except Exception:
+        pw_hash = "mock_hash_password123"
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ? AND hospital_id = ?",
+            (pw_hash, user_id, scoped_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_roles(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT * FROM hospital_roles WHERE hospital_id = ? ORDER BY is_system DESC, role_name ASC")
+        cursor.execute(sql, (scoped_id,))
+        roles = [dict(r) for r in cursor.fetchall()]
+        for r in roles:
+            try:
+                r["allowedModules"] = json.loads(r.get("allowed_modules") or "[]")
+            except Exception:
+                r["allowedModules"] = []
+            r["id"] = r.get("role_key") or str(r.get("id"))
+            r["name"] = r.get("role_name") or r["id"]
+        return roles
+
+
+def get_admin_role(role_id, hospital_id=None):
+    """Return one role definition, including its canonical module grants."""
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            _to_sql_params("SELECT * FROM hospital_roles WHERE hospital_id = ? AND role_key = ?"),
+            (scoped_id, str(role_id)),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        role = dict(row)
+        try:
+            role["allowedModules"] = json.loads(role.get("allowed_modules") or "[]")
+        except Exception:
+            role["allowedModules"] = []
+        role["id"] = role.get("role_key") or str(role.get("id"))
+        role["name"] = role.get("role_name") or role["id"]
+        return role
+
+
+def list_login_users_for_role(role_id, hospital_id=None):
+    """Return only active staff identities for an active selected login role.
+
+    Password hashes, permissions and contact details are intentionally omitted.
+    """
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            _to_sql_params("""
+                SELECT u.id, u.full_name, u.employee_id, u.department
+                FROM users u
+                INNER JOIN hospital_roles r
+                    ON r.hospital_id = u.hospital_id AND r.role_key = u.role_key
+                WHERE u.hospital_id = ? AND u.role_key = ?
+                  AND LOWER(u.status) = 'active' AND LOWER(COALESCE(r.status, 'active')) = 'active'
+                ORDER BY u.full_name ASC, u.id ASC
+            """),
+            (scoped_id, str(role_id)),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_login_summary(hospital_id=None):
+    """Safe, aggregate data for the unauthenticated sign-in screen."""
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM hospital_roles WHERE hospital_id = ? AND LOWER(COALESCE(status, 'active')) = 'active'",
+            (scoped_id,),
+        )
+        active_roles = int(cursor.fetchone()[0] or 0)
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE hospital_id = ? AND LOWER(status) = 'active' AND user_type = 'normal'",
+            (scoped_id,),
+        )
+        active_staff = int(cursor.fetchone()[0] or 0)
+        return {"active_roles": active_roles, "active_staff": active_staff}
+
+
+def create_admin_role(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    role_key = (data.get("role_key") or data.get("id") or f"ROLE_{data.get('name', '').upper().replace(' ', '_')}").strip()
+    role_name = (data.get("role_name") or data.get("name") or role_key).strip()
+    allowed_json = json.dumps(data.get("allowedModules") or data.get("allowed_modules") or [])
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            INSERT INTO hospital_roles (hospital_id, role_key, role_name, description, allowed_modules, status, is_system)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, role_key, role_name,
+            data.get("description", ""),
+            allowed_json,
+            str(data.get("status") or "active").lower(),
+            bool(data.get("is_system", False))
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_admin_role(role_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        updates = []
+        params = []
+        if "role_name" in data or "name" in data:
+            updates.append("role_name = ?")
+            params.append(data.get("role_name") or data.get("name"))
+        if "description" in data:
+            updates.append("description = ?")
+            params.append(data["description"])
+        if "allowedModules" in data or "allowed_modules" in data:
+            updates.append("allowed_modules = ?")
+            raw_mods = data.get("allowedModules") if "allowedModules" in data else data.get("allowed_modules")
+            params.append(json.dumps(raw_mods if isinstance(raw_mods, list) else []))
+        if "status" in data:
+            status = str(data["status"]).strip().lower()
+            if status not in ("active", "inactive"):
+                raise ValueError("Role status must be active or inactive")
+            updates.append("status = ?")
+            params.append(status)
+
+        if not updates:
+            return False
+        if str(role_id).isdigit():
+            where_clause = "id = ? AND hospital_id = ?"
+            params.extend([int(role_id), scoped_id])
+        else:
+            where_clause = "role_key = ? AND hospital_id = ?"
+            params.extend([str(role_id), scoped_id])
+        # Record the write time with the same transaction as the permission
+        # update, so a reloaded administrator screen always reads the exact
+        # persisted version rather than a browser-only draft.
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        sql = _to_sql_params(f"UPDATE hospital_roles SET {', '.join(updates)} WHERE {where_clause}")
+        cursor.execute(sql, tuple(params))
+        if cursor.rowcount > 0:
+            conn.commit()
+            return True
+
+        # If role does not exist in table yet (e.g. system catalogue role being customized), insert it
+        role_key = str(role_id).strip()
+        role_name = (data.get("role_name") or data.get("name") or role_key).strip()
+        raw_mods = data.get("allowedModules") if "allowedModules" in data else data.get("allowed_modules")
+        allowed_json = json.dumps(raw_mods if isinstance(raw_mods, list) else [])
+        status_val = str(data.get("status") or "active").lower()
+        sql_insert = _to_sql_params("""
+            INSERT INTO hospital_roles (hospital_id, role_key, role_name, description, allowed_modules, status, is_system)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql_insert, (
+            scoped_id, role_key, role_name,
+            data.get("description", ""),
+            allowed_json,
+            status_val,
+            bool(data.get("is_system", False))
+        ))
+        conn.commit()
+        return True
+
+
+def apply_role_modules_to_users(role_id, allowed_modules, hospital_id=None):
+    """Apply a revised role template to its assigned ordinary accounts.
+
+    User records retain their resolved module list for fast session checks, so
+    changing a role must explicitly update those records rather than waiting
+    for each account to be edited again.
+    """
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM users WHERE hospital_id = ? AND role_key = ? AND user_type = 'normal'",
+            (scoped_id, str(role_id)),
+        )
+        user_ids = [row[0] for row in cursor.fetchall()]
+        if user_ids:
+            cursor.execute(
+                "UPDATE users SET module_access = ? WHERE hospital_id = ? AND role_key = ? AND user_type = 'normal'",
+                (json.dumps(allowed_modules), scoped_id, str(role_id)),
+            )
+        conn.commit()
+        return user_ids
+
+
+def list_admin_role_user_ids(role_id, hospital_id=None):
+    """Return accounts assigned to a role so security changes can revoke sessions."""
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM users WHERE hospital_id = ? AND role_key = ?",
+            (scoped_id, str(role_id)),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def delete_admin_role(role_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) FROM users WHERE hospital_id = ? AND role_key = ?",
+            (scoped_id, str(role_id)),
+        )
+        if int(cursor.fetchone()[0] or 0) > 0:
+            raise ValueError("Deactivate this role or reassign its staff before deleting it.")
+        if str(role_id).isdigit():
+            cursor.execute(
+                "DELETE FROM hospital_roles WHERE id = ? AND hospital_id = ? AND is_system = FALSE",
+                (int(role_id), scoped_id),
+            )
+        else:
+            cursor.execute(
+                "DELETE FROM hospital_roles WHERE role_key = ? AND hospital_id = ? AND is_system = FALSE",
+                (str(role_id), scoped_id),
+            )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_tariffs(hospital_id=None, category=None, department=None, search=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        conditions = ["hospital_id = ?"]
+        params = [scoped_id]
+
+        if category and category != "all":
+            conditions.append("category = ?")
+            params.append(category)
+
+        if department and department != "all":
+            conditions.append("department = ?")
+            params.append(department)
+
+        if search and search.strip():
+            term = f"%{search.strip().lower()}%"
+            conditions.append("(LOWER(name) LIKE ? OR LOWER(code) LIKE ? OR LOWER(sub_category) LIKE ?)")
+            params.extend([term, term, term])
+
+        where_clause = " AND ".join(conditions)
+        sql = _to_sql_params(f"""
+            SELECT * FROM diagnostic_tariffs
+            WHERE {where_clause}
+            ORDER BY department ASC, name ASC
+        """)
+        cursor.execute(sql, tuple(params))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def create_admin_tariff(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    code = (data.get("code") or f"TRF-{int(datetime.now().timestamp()) % 100000}").strip()
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ValueError("Investigation / Tariff name is required")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            INSERT INTO diagnostic_tariffs (
+                hospital_id, code, name, category, department, modality,
+                body_region, sub_category, variant_protocol, hospital_availability,
+                tariff_reference, price, responsible_in_charge, report_template, tat, unit
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, code, name,
+            data.get("category", "Radiology"),
+            data.get("department", "Radiology"),
+            data.get("modality", ""),
+            data.get("bodyRegion") or data.get("body_region", ""),
+            data.get("subCategory") or data.get("sub_category", ""),
+            data.get("variantProtocol") or data.get("variant_protocol", ""),
+            data.get("hospitalAvailability") or data.get("hospital_availability", "Enabled"),
+            data.get("tariffReference") or data.get("tariff_reference", "Hospital Tariff"),
+            float(data.get("price", 0)),
+            data.get("responsibleInCharge") or data.get("responsible_in_charge", ""),
+            data.get("reportTemplate") or data.get("report_template", ""),
+            data.get("tat", "2-4 Hours"),
+            data.get("unit", "")
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_admin_tariff(tariff_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = ["name", "price", "hospital_availability", "tat", "responsible_in_charge", "report_template"]
+        updates = []
+        params = []
+        for key in allowed:
+            if key in data:
+                updates.append(f"{key} = ?")
+                params.append(data[key])
+        if "hospitalAvailability" in data:
+            updates.append("hospital_availability = ?")
+            params.append(data["hospitalAvailability"])
+        if not updates:
+            return False
+        params.extend([tariff_id, str(tariff_id), scoped_id])
+        sql = _to_sql_params(f"UPDATE diagnostic_tariffs SET {', '.join(updates)} WHERE (id = ? OR code = ?) AND hospital_id = ?")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_admin_tariff(tariff_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE diagnostic_tariffs SET status = 'inactive' WHERE (id = ? OR code = ?) AND hospital_id = ?", (tariff_id, str(tariff_id), scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_rooms(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT * FROM hospital_rooms WHERE hospital_id = ? ORDER BY block_building ASC, room_number ASC")
+        cursor.execute(sql, (scoped_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def create_admin_room(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    room_number = str(data.get("room_number", "")).strip()
+    if not room_number:
+        raise ValueError("Room number is required")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            INSERT INTO hospital_rooms (
+                hospital_id, room_number, room_type, department,
+                block_building, floor, capacity, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, room_number,
+            data.get("room_type", "General"),
+            data.get("department", "Inpatient"),
+            data.get("block_building", "Main Block"),
+            data.get("floor", "1st Floor"),
+            int(data.get("capacity", 1)),
+            data.get("status", "Available")
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_admin_room(room_id, data, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        allowed = ["room_type", "department", "block_building", "floor", "capacity", "status"]
+        updates = []
+        params = []
+        for key in allowed:
+            if key in data:
+                updates.append(f"{key} = ?")
+                params.append(data[key])
+        if not updates:
+            return False
+        params.extend([room_id, scoped_id])
+        sql = _to_sql_params(f"UPDATE hospital_rooms SET {', '.join(updates)} WHERE id = ? AND hospital_id = ?")
+        cursor.execute(sql, tuple(params))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def delete_admin_room(room_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM hospital_rooms WHERE id = ? AND hospital_id = ?", (room_id, scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def list_admin_specialties(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT * FROM clinical_specialties WHERE hospital_id = ? ORDER BY specialty_name ASC")
+        cursor.execute(sql, (scoped_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def create_admin_specialty(data, hospital_id=None):
+    scoped_id = hospital_id or data.get("hospital_id") or resolve_hospital_id()
+    spec_name = str(data.get("specialty_name", "")).strip()
+    if not spec_name:
+        raise ValueError("Specialty name is required")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            INSERT INTO clinical_specialties (hospital_id, specialty_name, department_name, sub_specialty, consultation_types, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """)
+        cursor.execute(sql, (
+            scoped_id, spec_name,
+            data.get("department_name", spec_name),
+            data.get("sub_specialty", ""),
+            json.dumps(data.get("consultation_types", ["Standard", "Follow-up", "Emergency"])),
+            data.get("status", "active")
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def delete_admin_specialty(specialty_id, hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM clinical_specialties WHERE id = ? AND hospital_id = ?", (specialty_id, scoped_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_admin_scheduling_rules(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT * FROM scheduling_rules WHERE hospital_id = ?")
+        cursor.execute(sql, (scoped_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {
+                "slot_duration_minutes": 15,
+                "max_advance_booking_days": 30,
+                "allow_same_day_booking": True,
+                "cancellation_cutoff_hours": 2,
+                "emergency_buffer_slots": 2
+            }
+        return dict(row)
+
+
+def save_admin_scheduling_rules(hospital_id, data):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM scheduling_rules WHERE hospital_id = ?", (scoped_id,))
+        existing = cursor.fetchone()
+        if existing:
+            sql = _to_sql_params("""
+                UPDATE scheduling_rules
+                SET slot_duration_minutes = ?, max_advance_booking_days = ?,
+                    allow_same_day_booking = ?, cancellation_cutoff_hours = ?,
+                    emergency_buffer_slots = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE hospital_id = ?
+            """)
+            cursor.execute(sql, (
+                int(data.get("slot_duration_minutes", 15)),
+                int(data.get("max_advance_booking_days", 30)),
+                bool(data.get("allow_same_day_booking", True)),
+                int(data.get("cancellation_cutoff_hours", 2)),
+                int(data.get("emergency_buffer_slots", 2)),
+                scoped_id
+            ))
+        else:
+            sql = _to_sql_params("""
+                INSERT INTO scheduling_rules (
+                    hospital_id, slot_duration_minutes, max_advance_booking_days,
+                    allow_same_day_booking, cancellation_cutoff_hours, emergency_buffer_slots
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """)
+            cursor.execute(sql, (
+                scoped_id,
+                int(data.get("slot_duration_minutes", 15)),
+                int(data.get("max_advance_booking_days", 30)),
+                bool(data.get("allow_same_day_booking", True)),
+                int(data.get("cancellation_cutoff_hours", 2)),
+                int(data.get("emergency_buffer_slots", 2))
+            ))
+        conn.commit()
+        return True
+
+
+def get_all_hospital_settings(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT setting_key, setting_value FROM hospital_settings WHERE hospital_id = ?")
+        cursor.execute(sql, (scoped_id,))
+        return {r["setting_key"]: r["setting_value"] for r in cursor.fetchall()}
+
+
+def save_hospital_setting(hospital_id, key, value):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM hospital_settings WHERE hospital_id = ? AND setting_key = ?", (scoped_id, key))
+        if cursor.fetchone():
+            cursor.execute("UPDATE hospital_settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE hospital_id = ? AND setting_key = ?", (str(value), scoped_id, key))
+        else:
+            cursor.execute("INSERT INTO hospital_settings (hospital_id, setting_key, setting_value) VALUES (?, ?, ?)", (scoped_id, key, str(value)))
+        conn.commit()
+        return True
+
+
+def get_admin_notification_configs(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("SELECT * FROM notification_configs WHERE hospital_id = ?")
+        cursor.execute(sql, (scoped_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def save_admin_notification_config(hospital_id, channel, data):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM notification_configs WHERE hospital_id = ? AND channel = ?", (scoped_id, channel))
+        if cursor.fetchone():
+            sql = _to_sql_params("""
+                UPDATE notification_configs
+                SET is_enabled = ?, sender_id = ?, endpoint_or_host = ?,
+                    api_key_masked = ?, retry_count = ?, template_config = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE hospital_id = ? AND channel = ?
+            """)
+            cursor.execute(sql, (
+                bool(data.get("is_enabled", True)),
+                data.get("sender_id", ""),
+                data.get("endpoint_or_host", ""),
+                data.get("api_key_masked", "••••••••"),
+                int(data.get("retry_count", 3)),
+                json.dumps(data.get("template_config", {})),
+                scoped_id, channel
+            ))
+        else:
+            sql = _to_sql_params("""
+                INSERT INTO notification_configs (
+                    hospital_id, channel, is_enabled, sender_id, endpoint_or_host,
+                    api_key_masked, retry_count, template_config
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """)
+            cursor.execute(sql, (
+                scoped_id, channel,
+                bool(data.get("is_enabled", True)),
+                data.get("sender_id", ""),
+                data.get("endpoint_or_host", ""),
+                data.get("api_key_masked", "••••••••"),
+                int(data.get("retry_count", 3)),
+                json.dumps(data.get("template_config", {}))
+            ))
+        conn.commit()
+        return True
+
+
+def get_system_health_metrics(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    import time
+    start = time.time()
+    db_ok = True
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+    except Exception:
+        db_ok = False
+    latency_ms = round((time.time() - start) * 1000, 2)
+
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "api_connectivity": "online",
+        "database_connected": db_ok,
+        "database_latency_ms": latency_ms,
+        "redis_connectivity": "connected",
+        "active_tenants": 1,
+        "hms_version": "2.4.0-Enterprise",
+        "timestamp": datetime.now(IST_TIMEZONE).isoformat()
+    }
+
+
+def list_admin_employees(hospital_id=None):
+    scoped_id = hospital_id or resolve_hospital_id()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        sql = _to_sql_params("""
+            SELECT 
+                u.id, u.username, u.full_name, u.email, u.phone,
+                u.department, u.employee_id, u.job_role, u.status, u.date_joined,
+                (SELECT d.id FROM doctors d WHERE d.hospital_id = u.hospital_id AND (d.staff_id = u.employee_id OR d.username = u.username)) as linked_doctor_id
+            FROM users u
+            WHERE u.hospital_id = ?
+            ORDER BY u.id DESC
+        """)
+        cursor.execute(sql, (scoped_id,))
+        return [dict(r) for r in cursor.fetchall()]
+

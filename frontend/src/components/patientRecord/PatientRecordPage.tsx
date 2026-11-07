@@ -4,6 +4,7 @@ import { OpCardPreview, opCardDataFor, printOpCard } from "../opcard/OpCard"
 import { useBarcodeScanner } from "../opcard/JourneyScan"
 import { compileCardRecord, compilePatientRecord, fetchCardToken, patientPageUrl, toMs, type PatientRecord } from "./patientRecord"
 import { downloadPatientHistory } from "./historyPdf"
+import { isAppSessionAuthenticated } from "../../lib/authState"
 
 /**
  * The page a scanned OP card opens (`#/patient/<code>`, in its own tab):
@@ -44,11 +45,7 @@ const STAGE: Record<string, { label: string ;color: string }> = {
 export const PENDING_PATIENT_PAGE_KEY = "hospai_pending_patient_page"
 
 function signedIn(): boolean {
-  try {
-    return Boolean(localStorage.getItem("hospai_current_user"))
-  } catch {
-    return false
-  }
+  return isAppSessionAuthenticated()
 }
 
 function Section({ id, title, count, children }: { id: string ;title: string ;count?: number ;children: React.ReactNode }) {

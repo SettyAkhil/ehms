@@ -694,7 +694,7 @@ def patient_notes_create(patient_id):
     # it, each landing in its own real table (same ones the Vitals/Problems
     # tabs already read from) rather than getting buried inside the note text.
     vitals = payload.get("vitals") or {}
-    if any(vitals.get(k) for k in ("bp", "pulse", "temperature", "spo2", "respiratory_rate")):
+    if any(vitals.get(k) for k in ("bp", "pulse", "temperature", "spo2", "respiratory_rate", "weight")):
         vital_id = add_manual_patient_vital(
             {
                 "patient_id": patient_id,
@@ -703,6 +703,7 @@ def patient_notes_create(patient_id):
                 "temperature": vitals.get("temperature"),
                 "spo2": vitals.get("spo2"),
                 "respiratory_rate": vitals.get("respiratory_rate"),
+                "weight": vitals.get("weight"),
                 "recorded_by": payload.get("doctor_name"),
             }
         )
@@ -724,7 +725,7 @@ def patient_vitals_create(patient_id):
     add_manual_patient_vital() for why encounter_id is nullable."""
     payload = request.get_json(force=True)
     if not any(
-        payload.get(k) for k in ("bp", "pulse", "temperature", "spo2", "respiratory_rate")
+        payload.get(k) for k in ("bp", "pulse", "temperature", "spo2", "respiratory_rate", "weight")
     ):
         return jsonify({"error": "At least one vital reading is required"}), 400
     vital_id = add_manual_patient_vital(
@@ -735,6 +736,7 @@ def patient_vitals_create(patient_id):
             "temperature": payload.get("temperature"),
             "spo2": payload.get("spo2"),
             "respiratory_rate": payload.get("respiratory_rate"),
+            "weight": payload.get("weight"),
             "notes": payload.get("notes"),
             "recorded_by": (g.current_user or {}).get("username"),
         }

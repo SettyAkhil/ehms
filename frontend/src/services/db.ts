@@ -364,9 +364,6 @@ class HospitalDatabase {
   private init() {
     if (typeof window === "undefined") return
 
-    // Reclaim storage quota on initialization
-    emergencyDbStorageEviction()
-
     // A new install starts empty: every patient and visit is a real one.
     if (!safeDbGetItem(STORAGE_KEYS.PATIENTS)) {
       safeDbSetItem(STORAGE_KEYS.PATIENTS, "[]")
@@ -788,6 +785,11 @@ class HospitalDatabase {
     dept?: string
 
     chiefComplaint?: string
+  }, serverVisit?: {
+    patient_id?: string
+    encounter_id?: string | number
+    appointment_id?: string | number
+    op_number?: string | number
   }): { patient: DBPatient ;encounter: DBOPEncounter } {
     const patients = this.getPatients()
 
@@ -802,9 +804,11 @@ class HospitalDatabase {
 
     const nextUmrCounter = currentCounter + 1
 
-    safeDbSetItem(STORAGE_KEYS.UMR_COUNTER, nextUmrCounter.toString())
+    if (!serverVisit?.patient_id) {
+      safeDbSetItem(STORAGE_KEYS.UMR_COUNTER, nextUmrCounter.toString())
+    }
 
-    const newUmr = `UMR${nextUmrCounter}`
+    const newUmr = serverVisit?.patient_id || `UMR${nextUmrCounter}`
 
     // Global Continuous Unique OP Number Generator
 
@@ -815,9 +819,11 @@ class HospitalDatabase {
 
     const nextOpCounter = currentOpCounter + 1
 
-    safeDbSetItem(STORAGE_KEYS.OP_COUNTER, nextOpCounter.toString())
+    if (serverVisit?.op_number == null) {
+      safeDbSetItem(STORAGE_KEYS.OP_COUNTER, nextOpCounter.toString())
+    }
 
-    const newOpNumber = `OP${String(nextOpCounter).padStart(3, "0")}`
+    const newOpNumber = `OP${String(serverVisit?.op_number ?? nextOpCounter).padStart(3, "0")}`
 
     const fullName = [data.firstName, data.middleName, data.lastName]
       .filter(Boolean)
@@ -857,7 +863,9 @@ class HospitalDatabase {
 
     // Step 2: Create Initial OP Encounter with Global Continuous OP Number
 
-    const encounterId = `ENC-${newUmr}-${nextOpCounter}`
+    const encounterId = serverVisit?.encounter_id != null
+      ? `ENC-${serverVisit.encounter_id}`
+      : `ENC-${newUmr}-${nextOpCounter}`
 
     const newEncounter: DBOPEncounter = {
       id: encounterId,
@@ -962,35 +970,86 @@ class HospitalDatabase {
       JSON.stringify([newEncounter, ...encounters]),
     )
 
-    // Backend write-through for OP Visit / Appointment
-    apiFetch("/api/op/visits", {
-      method: "POST",
-      body: JSON.stringify({
-        patient_id: newPatient.umr,
-        patient: {
-          first_name: data.firstName,
-          last_name: data.lastName,
-          phone: newPatient.phone,
-          age: newPatient.age,
-          gender: newPatient.sex,
-        },
-        appointment: {
-          doctor_name: (newEncounter as any).assignedDoctor || (newEncounter as any).doctorAssigned || undefined,
-          department: newEncounter.dept || data.dept || "General Medicine",
-          visit_type: "OP",
-          appointment_date: new Date().toISOString().split("T")[0],
-          status: "checked_in",
-          chief_complaint: newEncounter.chiefComplaint || data.chiefComplaint || "OP Visit",
-        },
-      }),
-    })
-      .then((res) => this.adoptServerPatientId(newPatient.umr, res))
-      .catch(() => {})
-      .finally(() => this.announceRegistered(newEncounter.id))
+    if (serverVisit) {
+      // The authoritative write was completed before the UI cache is updated.
+      this.announceRegistered(newEncounter.id)
+    } else {
+      // Legacy callers still use write-through. New registration uses the
+      // confirmed path below and never reports success before this request.
+      apiFetch("/api/op/visits", {
+        method: "POST",
+        body: JSON.stringify({
+          patient_id: newPatient.umr,
+          patient: {
+            first_name: data.firstName,
+            last_name: data.lastName,
+            phone: newPatient.phone,
+            age: newPatient.age,
+            gender: newPatient.sex,
+          },
+          appointment: {
+            doctor_name: (newEncounter as any).assignedDoctor || (newEncounter as any).doctorAssigned || undefined,
+            department: newEncounter.dept || data.dept || "General Medicine",
+            visit_type: "OP",
+            appointment_date: new Date().toISOString().split("T")[0],
+            status: "checked_in",
+            chief_complaint: newEncounter.chiefComplaint || data.chiefComplaint || "OP Visit",
+          },
+        }),
+      })
+        .then((res) => this.adoptServerPatientId(newPatient.umr, res))
+        .catch(() => {})
+        .finally(() => this.announceRegistered(newEncounter.id))
+    }
 
     this.notify()
 
     return { patient: newPatient, encounter: newEncounter }
+  }
+
+  /** Create a patient and initial OP visit on the server before caching it locally. */
+  public async registerNewPatientConfirmed(data: {
+    firstName: string
+    middleName?: string
+    lastName: string
+    dob?: string
+    age: number
+    sex?: "Male" | "Female" | "Other"
+    phone: string
+    address?: string
+    bloodGroup?: string
+    dept?: string
+    chiefComplaint?: string
+  }): Promise<{ patient: DBPatient ;encounter: DBOPEncounter }> {
+    const serverVisit = await apiFetch<{
+      patient_id: string
+      encounter_id: string | number
+      appointment_id: string | number
+      op_number: string | number
+    }>("/api/op/visits", {
+      method: "POST",
+      body: JSON.stringify({
+        patient: {
+          first_name: data.firstName,
+          middle_name: data.middleName,
+          last_name: data.lastName,
+          dob: data.dob,
+          age: data.age,
+          gender: data.sex,
+          phone: data.phone,
+          address: data.address,
+          blood_group: data.bloodGroup,
+        },
+        appointment: {
+          department: data.dept || "Awaiting Triage",
+          visit_type: "OP",
+          appointment_date: new Date().toISOString(),
+          status: "checked_in",
+          chief_complaint: data.chiefComplaint || "OP Visit",
+        },
+      }),
+    })
+    return this.registerNewPatient(data, serverVisit)
   }
 
   /**
@@ -1001,6 +1060,7 @@ class HospitalDatabase {
   public createRevisitEncounter(
     umr: string,
     data?: { dept?: string ;chiefComplaint?: string },
+    serverVisit?: { encounter_id?: string | number ;op_number?: string | number },
   ): DBOPEncounter {
     const patient = this.getPatientByUmr(umr)
 
@@ -1018,11 +1078,15 @@ class HospitalDatabase {
 
     const nextOpCounter = currentOpCounter + 1
 
-    safeDbSetItem(STORAGE_KEYS.OP_COUNTER, nextOpCounter.toString())
+    if (serverVisit?.op_number == null) {
+      safeDbSetItem(STORAGE_KEYS.OP_COUNTER, nextOpCounter.toString())
+    }
 
-    const newOpNumber = `OP${String(nextOpCounter).padStart(3, "0")}`
+    const newOpNumber = `OP${String(serverVisit?.op_number ?? nextOpCounter).padStart(3, "0")}`
 
-    const encounterId = `ENC-${umr}-${nextOpCounter}`
+    const encounterId = serverVisit?.encounter_id != null
+      ? `ENC-${serverVisit.encounter_id}`
+      : `ENC-${umr}-${nextOpCounter}`
 
     const nowIso = new Date().toISOString()
 
@@ -1142,8 +1206,12 @@ class HospitalDatabase {
       JSON.stringify([newEncounter, ...encounters]),
     )
 
-    // Backend write-through for OP Visit / Appointment
-    apiFetch("/api/op/visits", {
+    if (serverVisit) {
+      this.announceRegistered(newEncounter.id)
+    } else {
+      // Legacy callers retain write-through; the Registration screen calls the
+      // confirmed method below and will not announce success before this API.
+      apiFetch("/api/op/visits", {
       method: "POST",
       body: JSON.stringify({
         patient_id: umr,
@@ -1163,14 +1231,47 @@ class HospitalDatabase {
           chief_complaint: newEncounter.chiefComplaint || "Revisit",
         },
       }),
-    })
-      .then((res) => this.adoptServerPatientId(umr, res))
-      .catch(() => {})
-      .finally(() => this.announceRegistered(newEncounter.id))
+      })
+        .then((res) => this.adoptServerPatientId(umr, res))
+        .catch(() => {})
+        .finally(() => this.announceRegistered(newEncounter.id))
+    }
 
     this.notify()
 
     return newEncounter
+  }
+
+  /** Create a revisit on the server before adding it to the browser cache. */
+  public async createRevisitEncounterConfirmed(
+    patient: DBPatient,
+    data?: { dept?: string ;chiefComplaint?: string },
+  ): Promise<DBOPEncounter> {
+    const nameParts = patient.name.trim().split(/\s+/)
+    const serverVisit = await apiFetch<{
+      encounter_id: string | number
+      op_number: string | number
+    }>("/api/op/visits", {
+      method: "POST",
+      body: JSON.stringify({
+        patient_id: patient.umr,
+        patient: {
+          first_name: nameParts[0] || patient.name,
+          last_name: nameParts.slice(1).join(" ") || "Unknown",
+          phone: patient.phone,
+          age: patient.age,
+          gender: patient.sex,
+        },
+        appointment: {
+          department: data?.dept || "Awaiting Triage",
+          visit_type: "OP",
+          appointment_date: new Date().toISOString(),
+          status: "checked_in",
+          chief_complaint: data?.chiefComplaint || "Revisit Consultation",
+        },
+      }),
+    })
+    return this.createRevisitEncounter(patient.umr, data, serverVisit)
   }
 
   /**

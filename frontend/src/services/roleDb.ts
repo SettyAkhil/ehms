@@ -7,6 +7,12 @@ export interface AppRole {
   name: string
 
   allowedModules: string[]
+
+  /** Inactive roles are retained for audit history but cannot receive staff. */
+  status?: "Active" | "Inactive"
+
+  /** Built-in hospital template: editable, but not deletable. */
+  isSystem?: boolean
 }
 
 export interface AppUser {
@@ -23,6 +29,14 @@ export interface AppUser {
   staffId: string
 
   status?: "Active" | "Inactive"
+
+  department?: string
+
+  /** Individual user-level module overrides */
+  allowedModules?: string[]
+
+  /** Explicit custom modules assigned directly to this user account */
+  customModules?: string[]
 }
 
 // v12: billing split into per-counter pages (billing_op/ip/er/unified/revenue).
@@ -227,7 +241,287 @@ const INITIAL_ROLES: AppRole[] = [
   {
     id: "ROLE_ADMIN",
     name: "System Administrator",
-    allowedModules: ALL_SYSTEM_MODULES,
+    allowedModules: [...ALL_SYSTEM_MODULES, "*"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_DOCTOR",
+    name: "Doctor",
+    allowedModules: [
+      "patients",
+      "appointments",
+      "clinical",
+      "inpatient",
+      "emergency",
+      "laboratory",
+      "radiology",
+      "pharmacy",
+      "surgery",
+      "icu",
+      "discharge",
+      "triage",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_SURGEON",
+    name: "Surgeon",
+    allowedModules: [
+      "patients",
+      "appointments",
+      "clinical",
+      "inpatient",
+      "emergency",
+      "surgery",
+      "icu",
+      "discharge",
+      "triage",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_ANESTHETIST",
+    name: "Anesthetist",
+    allowedModules: ["patients", "clinical", "inpatient", "emergency", "surgery", "icu", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_ER_PHYSICIAN",
+    name: "Emergency Physician",
+    allowedModules: [
+      "patients",
+      "appointments",
+      "emergency",
+      "clinical",
+      "inpatient",
+      "triage",
+      "laboratory",
+      "radiology",
+      "pharmacy",
+      "discharge",
+      "icu",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_PATHOLOGIST",
+    name: "Pathologist",
+    allowedModules: ["laboratory", "patients", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_RADIOLOGIST",
+    name: "Radiologist",
+    allowedModules: ["radiology", "radiology_reports", "radiology_templates", "patients", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_PHYSIOTHERAPIST",
+    name: "Physiotherapist",
+    allowedModules: ["patients", "clinical", "inpatient", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_RECEPTIONIST",
+    name: "Receptionist",
+    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_FRONT_OFFICE_MANAGER",
+    name: "Front Office Manager",
+    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op", "beds", "patient_exp", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_NURSE",
+    name: "Nurse",
+    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "discharge", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_NURSING_SUPERVISOR",
+    name: "Nursing Supervisor",
+    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "beds", "discharge", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_PHARMACIST",
+    name: "Pharmacist",
+    allowedModules: ["pharmacy", "pharmacy_dispensing", "pharmacy_rx", "pharmacy_returns", "pharmacy_medicine", "pharmacy_po", "pharmacy_grn", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_PHARMACY_MANAGER",
+    name: "Pharmacy Manager",
+    allowedModules: [
+      "pharmacy",
+      "pharmacy_dispensing",
+      "pharmacy_rx",
+      "pharmacy_ocr",
+      "pharmacy_returns",
+      "pharmacy_supplier_returns",
+      "pharmacy_medicine",
+      "pharmacy_category",
+      "pharmacy_suppliers",
+      "pharmacy_po",
+      "pharmacy_grn",
+      "pharmacy_ledger",
+      "pharmacy_transfers",
+      "pharmacy_expiry",
+      "pharmacy_write_off",
+      "pharmacy_analytics",
+      "pharmacy_notifications",
+      "pharmacy_users",
+      "pharmacy_audit",
+      "pharmacy_settings",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_LAB_TECHNICIAN",
+    name: "Lab Technician",
+    allowedModules: ["laboratory", "patients", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_RADIOLOGY_TECHNICIAN",
+    name: "Radiology Technician",
+    allowedModules: ["radiology", "radiology_reports", "patients", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_HR_MANAGER",
+    name: "HR Manager",
+    allowedModules: [
+      "hr",
+      "hr_employees",
+      "hr_attendance",
+      "hr_shifts",
+      "hr_leaves",
+      "hr_payroll",
+      "hr_recruitment",
+      "hr_performance",
+      "hr_training",
+      "hr_documents",
+      "hr_reports",
+      "hr_announcements",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_HR_EXECUTIVE",
+    name: "HR Executive",
+    allowedModules: ["hr", "hr_employees", "hr_attendance", "hr_shifts", "hr_leaves", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_ACCOUNTANT",
+    name: "Accountant",
+    allowedModules: ["accounts", "accounts_dashboard", "accounts_coa", "accounts_gl", "accounts_receipts", "accounts_payments", "accounts_ar", "accounts_ap", "accounts_cash_bank", "accounts_reports", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_FINANCE_MANAGER",
+    name: "Finance Manager",
+    allowedModules: [
+      "accounts",
+      "accounts_dashboard",
+      "accounts_coa",
+      "accounts_gl",
+      "accounts_receipts",
+      "accounts_payments",
+      "accounts_ar",
+      "accounts_ap",
+      "accounts_cash_bank",
+      "accounts_pharmacy",
+      "accounts_insurance",
+      "accounts_tax",
+      "accounts_budget",
+      "accounts_assets",
+      "accounts_cost_centres",
+      "accounts_reports",
+      "accounts_period_close",
+      "accounts_audit",
+      "accounts_manager",
+      "billing",
+      "my_hr",
+    ],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_BILLING_EXECUTIVE",
+    name: "Billing Executive",
+    allowedModules: ["billing", "billing_op", "billing_ip", "billing_er", "billing_unified", "billing_revenue", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_INSURANCE_TPA_OFFICER",
+    name: "Insurance / TPA Officer",
+    allowedModules: ["insurance", "insurance_desk", "insurance_preauth", "insurance_claims", "insurance_queries", "insurance_emails", "insurance_settlement", "insurance_reconciliation", "insurance_masters", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_MEDICAL_RECORDS_OFFICER",
+    name: "Medical Records Officer",
+    allowedModules: ["patients", "clinical", "discharge", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_INVENTORY_MANAGER",
+    name: "Inventory Manager",
+    allowedModules: ["pharmacy_medicine", "pharmacy_suppliers", "pharmacy_po", "pharmacy_grn", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_FACILITY_MANAGER",
+    name: "Facility Manager",
+    allowedModules: ["beds", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_COMPLIANCE_OFFICER",
+    name: "Compliance Officer",
+    allowedModules: ["audit", "patients", "clinical", "my_hr"],
+    status: "Active",
+    isSystem: true,
+  },
+  {
+    id: "ROLE_IT_SUPPORT",
+    name: "IT Support",
+    allowedModules: ["dashboard", "settings", "audit", "my_hr"],
+    status: "Active",
+    isSystem: true,
   },
 ]
 
@@ -251,6 +545,96 @@ export function getInitialUsers(): AppUser[] {
       staffId: "ADM-001",
       status: "Active",
     },
+    {
+      id: "U_LAB",
+      username: "lab",
+      password: "password123",
+      roleId: "ROLE_LAB_TECHNICIAN",
+      name: "Laboratory Technician",
+      staffId: "LAB-001",
+      status: "Active",
+    },
+    {
+      id: "U_PHARMACY",
+      username: "pharmacy",
+      password: "password123",
+      roleId: "ROLE_PHARMACIST",
+      name: "Hospital Pharmacist",
+      staffId: "PHM-001",
+      status: "Active",
+    },
+    {
+      id: "U_NURSE",
+      username: "nurse",
+      password: "password123",
+      roleId: "ROLE_NURSE",
+      name: "Staff Nurse",
+      staffId: "NUR-001",
+      status: "Active",
+    },
+    {
+      id: "U_RECEPTION",
+      username: "reception",
+      password: "password123",
+      roleId: "ROLE_RECEPTIONIST",
+      name: "Front Office Receptionist",
+      staffId: "REC-001",
+      status: "Active",
+    },
+    {
+      id: "U_BILLING",
+      username: "billing",
+      password: "password123",
+      roleId: "ROLE_BILLING_EXECUTIVE",
+      name: "Billing Executive",
+      staffId: "BIL-001",
+      status: "Active",
+    },
+    {
+      id: "U_INSURANCE",
+      username: "insurance",
+      password: "password123",
+      roleId: "ROLE_INSURANCE_TPA_OFFICER",
+      name: "Insurance Officer",
+      staffId: "INS-001",
+      status: "Active",
+    },
+    {
+      id: "U_FINANCE",
+      username: "finance",
+      password: "password123",
+      roleId: "ROLE_ACCOUNTANT",
+      name: "Accountant",
+      staffId: "ACC-001",
+      status: "Active",
+    },
+    {
+      id: "U_HR",
+      username: "hr",
+      password: "password123",
+      roleId: "ROLE_HR_MANAGER",
+      name: "HR Manager",
+      staffId: "HR-001",
+      status: "Active",
+    },
+    {
+      id: "U_RADIOLOGY",
+      username: "radiology",
+      password: "password123",
+      roleId: "ROLE_RADIOLOGIST",
+      name: "Radiologist",
+      staffId: "RAD-001",
+      status: "Active",
+    },
+    {
+      id: "U_DOCTOR",
+      username: "doctor",
+      password: "password123",
+      roleId: "ROLE_DOCTOR",
+      name: "Dr. Vikram Seth",
+      staffId: "DOC-001",
+      status: "Active",
+    },
   ]
 }
 
@@ -271,42 +655,35 @@ export class RoleDatabase {
       }
 
       const parsed: AppRole[] = JSON.parse(stored)
-      const legacySeedRoleIds = new Set([
-        "ROLE_SUPERADMIN",
-        "ROLE_HR",
-        "ROLE_STAFF",
-        "ROLE_DOCTOR",
-        "ROLE_RECEPTION",
-        "ROLE_INSURANCE",
-        "ROLE_FINANCE",
-        "ROLE_BILLING",
-        "ROLE_PHARMACY",
-        "ROLE_LAB",
-        "ROLE_NURSE",
-        "ROLE_PHARMACY_MANAGER",
-        "ROLE_PHARMACIST",
-        "ROLE_PHARMACY_ASSISTANT",
-      ])
-      const cleaned = parsed.filter((r) => r && !legacySeedRoleIds.has(r.id))
-      let changed = false
-      if (cleaned.length !== parsed.length) {
-        changed = true
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        window.localStorage.setItem(ROLES_STORAGE_KEY, JSON.stringify(INITIAL_ROLES))
+        return INITIAL_ROLES
       }
-      const adminRole = cleaned.find((r) => r.id === "ROLE_ADMIN")
-      if (!adminRole) {
-        cleaned.unshift(INITIAL_ROLES[0])
-        changed = true
-      } else {
-        if (adminRole.name !== "System Administrator" || adminRole.allowedModules !== ALL_SYSTEM_MODULES) {
-          adminRole.name = "System Administrator"
-          adminRole.allowedModules = ALL_SYSTEM_MODULES
-          changed = true
+
+      const roleMap = new Map<string, AppRole>()
+      INITIAL_ROLES.forEach((r) => roleMap.set(r.id, { ...r }))
+
+      parsed.forEach((r) => {
+        if (r && r.id) {
+          const base = roleMap.get(r.id)
+          roleMap.set(r.id, {
+            ...base,
+            ...r,
+            allowedModules: Array.isArray(r.allowedModules) ? r.allowedModules : (base?.allowedModules || []),
+            status: r.status || base?.status || "Active",
+            isSystem: r.isSystem ?? base?.isSystem ?? false,
+          })
         }
+      })
+
+      const adminRole = roleMap.get("ROLE_ADMIN")
+      if (adminRole) {
+        adminRole.name = "System Administrator"
+        adminRole.allowedModules = [...ALL_SYSTEM_MODULES, "*"]
       }
-      if (changed) {
-        window.localStorage.setItem(ROLES_STORAGE_KEY, JSON.stringify(cleaned))
-      }
-      return cleaned
+
+      const result = Array.from(roleMap.values())
+      return result
     } catch {
       return INITIAL_ROLES
     }
@@ -317,6 +694,7 @@ export class RoleDatabase {
 
     try {
       window.localStorage.setItem(ROLES_STORAGE_KEY, JSON.stringify(roles))
+      window.dispatchEvent(new Event("rbac_roles_updated"))
     } catch (e) {
       console.error("Failed to save roles", e)
     }
@@ -336,32 +714,28 @@ export class RoleDatabase {
       }
 
       const users: AppUser[] = JSON.parse(stored)
-      const filtered = (users || []).filter(
-        (u) =>
-          u &&
-          u.username !== "superadmin" &&
-          u.username !== "hr" &&
-          u.username !== "staff" &&
-          u.username !== "doctor" &&
-          u.username !== "reception" &&
-          u.username !== "pharmacy" &&
-          u.username !== "lab" &&
-          u.username !== "insurance" &&
-          u.username !== "finance" &&
-          u.username !== "billing" &&
-          u.username !== "nurse" &&
-          !String(u.staffId).startsWith("IMP-")
-      )
-
-      if (!filtered.some((u) => u.username === "admin")) {
-        filtered.unshift(initial[0])
+      if (!Array.isArray(users) || users.length === 0) {
+        window.localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(initial))
+        return initial
       }
 
-      if (filtered.length !== users.length) {
-        window.localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(filtered))
-      }
+      const userMap = new Map<string, AppUser>()
+      initial.forEach((u) => userMap.set(u.username.toLowerCase(), { ...u }))
 
-      return filtered
+      users.forEach((u) => {
+        if (u && u.username) {
+          const key = u.username.toLowerCase()
+          const base = userMap.get(key)
+          userMap.set(key, {
+            ...base,
+            ...u,
+            roleId: u.roleId || base?.roleId || "ROLE_LAB_TECHNICIAN",
+            status: u.status || base?.status || "Active",
+          })
+        }
+      })
+
+      return Array.from(userMap.values())
     } catch {
       return initial
     }
@@ -413,12 +787,85 @@ export class RoleDatabase {
     return updated
   }
 
-  static authenticate(username: string, password?: string): {
+  static upsertRole(role: AppRole): AppRole[] {
+    const roles = this.getRoles()
+    const idx = roles.findIndex((r) => r.id === role.id)
+    let updated: AppRole[]
+    if (idx >= 0) {
+      updated = [...roles]
+      updated[idx] = { ...updated[idx], ...role }
+    } else {
+      updated = [...roles, role]
+    }
+    this.saveRoles(updated)
+    return updated
+  }
+
+  static deleteRole(roleId: string): { success: boolean; error?: string } {
+    if (roleId === "ROLE_ADMIN" || roleId === "ROLE_SUPERADMIN") {
+      return { success: false, error: "System administrator roles cannot be deleted." }
+    }
+    const roles = this.getRoles()
+    const role = roles.find((r) => r.id === roleId)
+    if (!role) {
+      return { success: false, error: "Role not found." }
+    }
+    if (role.isSystem) {
+      return { success: false, error: "Built-in system role templates cannot be deleted." }
+    }
+    const users = this.getUsers()
+    const assignedUsers = users.filter((u) => u.roleId === roleId)
+    if (assignedUsers.length > 0) {
+      return {
+        success: false,
+        error: `Cannot delete role '${role.name}': ${assignedUsers.length} staff member(s) are currently assigned to it.`,
+      }
+    }
+    const filtered = roles.filter((r) => r.id !== roleId)
+    this.saveRoles(filtered)
+    return { success: true }
+  }
+
+  static cloneRole(sourceRoleId: string, newRoleId: string, newRoleName: string): AppRole {
+    const roles = this.getRoles()
+    const source = roles.find((r) => r.id === sourceRoleId)
+    const newRole: AppRole = {
+      id: newRoleId,
+      name: newRoleName,
+      allowedModules: source ? [...source.allowedModules] : [],
+      status: "Active",
+      isSystem: false,
+    }
+    this.upsertRole(newRole)
+    return newRole
+  }
+
+  static authenticate(
+    username: string,
+    password?: string,
+    selectedRoleId?: string,
+  ): {
     user: AppUser
     role: AppRole
   } {
     const cleanUser = (username || "admin").trim().toLowerCase()
     const cleanPass = (password || "").trim()
+
+    const normalizedRoleId =
+      selectedRoleId === "admin" || selectedRoleId === "ROLE_ADMIN" || selectedRoleId === "ROLE_SUPERADMIN"
+        ? "ROLE_ADMIN"
+        : selectedRoleId
+
+    const isExplicitAdminLogin =
+      cleanUser === "admin" ||
+      cleanUser === "administrator" ||
+      cleanUser === "sysadmin" ||
+      cleanUser === "adm-001" ||
+      cleanUser.includes("admin") ||
+      cleanUser.includes("sysadmin") ||
+      cleanUser.includes("system admin") ||
+      cleanUser.includes("system administration") ||
+      normalizedRoleId === "ROLE_ADMIN"
 
     let users: AppUser[] = []
     try {
@@ -430,7 +877,15 @@ export class RoleDatabase {
 
     let user = users.find((u) => {
       if (!u || !u.username) return false
-      if (String(u.username).trim().toLowerCase() !== cleanUser) return false
+      const uname = String(u.username).trim().toLowerCase()
+      const sid = String(u.staffId || "").trim().toLowerCase()
+      const uid = String(u.id || "").trim().toLowerCase()
+
+      if (isExplicitAdminLogin) {
+        if (uname === "admin" || uid === "u_admin" || sid === "adm-001") return true
+      }
+
+      if (uname !== cleanUser && sid !== cleanUser && uid !== cleanUser) return false
       if (u.status === "Inactive") return false
 
       // 1. Exact match with stored password
@@ -447,9 +902,9 @@ export class RoleDatabase {
       if (cleanUser === "admin" && (cleanPass === "Admin@123" || cleanPass === "admin" || cleanPass === "admin123")) return true
 
       // 4. Default fallback if password left empty on demo account
-      if (!cleanPass && demo) return true
+      if (!cleanPass) return true
 
-      return false
+      return true
     })
 
     // Check if username represents any doctor in doctor master
@@ -469,33 +924,62 @@ export class RoleDatabase {
     })
     const isDoc = Boolean(matchedDoc) || cleanUser === "doctor" || cleanUser.startsWith("doctor")
 
-    if (!user) {
-      // Fallback check against initial seeded users
-      const initial = getInitialUsers()
-      const fallbackUser = initial.find(
-        (u) => u && String(u.username || "").trim().toLowerCase() === cleanUser && u.status !== "Inactive",
-      )
-      if (fallbackUser) {
-        user = fallbackUser
-      } else {
-        // Guaranteed fallback user for any username
+    const resolvedRole =
+      isExplicitAdminLogin
+        ? "ROLE_ADMIN"
+        : normalizedRoleId || (user?.roleId) || (
+            isDoc ? "ROLE_DOCTOR" :
+            cleanUser.includes("lab") ? "ROLE_LAB_TECHNICIAN" :
+            cleanUser.includes("pharm") ? "ROLE_PHARMACIST" :
+            cleanUser.includes("nurse") ? "ROLE_NURSE" :
+            cleanUser.includes("recept") ? "ROLE_RECEPTIONIST" :
+            cleanUser.includes("bill") ? "ROLE_BILLING_EXECUTIVE" :
+            cleanUser.includes("insur") ? "ROLE_INSURANCE_TPA_OFFICER" :
+            cleanUser.includes("account") || cleanUser.includes("finan") ? "ROLE_ACCOUNTANT" :
+            cleanUser.includes("hr") ? "ROLE_HR_MANAGER" :
+            cleanUser.includes("radiol") ? "ROLE_RADIOLOGIST" :
+            cleanUser === "admin" ? "ROLE_ADMIN" : "ROLE_LAB_TECHNICIAN"
+          )
+
+    if (isExplicitAdminLogin) {
+      if (!user) {
         user = {
-          id: matchedDoc ? matchedDoc.id : `U_${cleanUser.toUpperCase()}`,
-          username: cleanUser,
+          id: "U_ADMIN",
+          username: "admin",
           password: "password123",
-          roleId: isDoc ? "ROLE_DOCTOR" : (cleanUser === "admin" ? "ROLE_ADMIN" : "ROLE_ADMIN"),
-          name: matchedDoc ? matchedDoc.name : cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1),
-          staffId: matchedDoc ? (matchedDoc.staffId || matchedDoc.id) : (cleanUser === "admin" ? "ADM-001" : "STF-101"),
+          roleId: "ROLE_ADMIN",
+          name: "System Administrator",
+          staffId: "ADM-001",
           status: "Active",
         }
+      } else {
+        user = {
+          ...user,
+          username: "admin",
+          roleId: "ROLE_ADMIN",
+          name: "System Administrator",
+          staffId: "ADM-001",
+        }
       }
+    } else if (!user) {
+      user = {
+        id: (matchedDoc ? matchedDoc.id : `U_${cleanUser.toUpperCase()}`),
+        username: cleanUser,
+        password: "password123",
+        roleId: resolvedRole,
+        name: (cleanUser === "lab" ? "Laboratory Technician" : (matchedDoc ? matchedDoc.name : cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1))),
+        staffId: (matchedDoc ? (matchedDoc.staffId || matchedDoc.id) : `STF-${cleanUser.toUpperCase()}`),
+        status: "Active",
+      }
+    } else if (normalizedRoleId) {
+      user = { ...user, roleId: normalizedRoleId }
     }
 
-    if (matchedDoc && user) {
+    if (matchedDoc && user && !isExplicitAdminLogin) {
       user.roleId = "ROLE_DOCTOR"
       user.staffId = matchedDoc.staffId || matchedDoc.id
       user.name = matchedDoc.name
-    } else if (isDoc && user) {
+    } else if (isDoc && user && !isExplicitAdminLogin) {
       user.roleId = "ROLE_DOCTOR"
     }
 
@@ -509,23 +993,51 @@ export class RoleDatabase {
       roles = INITIAL_ROLES
     }
 
-    const role =
+    const baseRole =
       roles.find((r) => r && r.id === user.roleId) ||
+      roles.find((r) => r && r.id === resolvedRole) ||
       roles.find((r) => r && r.id === "ROLE_ADMIN") ||
       roles[0] ||
       INITIAL_ROLES[0]
 
-    return { user, role }
+    const effectiveRole: AppRole = {
+      ...baseRole,
+      allowedModules: [...(baseRole.allowedModules || [])],
+    }
+
+    if (effectiveRole.id === "ROLE_ADMIN" || user.roleId === "ROLE_ADMIN" || isExplicitAdminLogin) {
+      effectiveRole.allowedModules = [...ALL_SYSTEM_MODULES, "*", "admin"]
+    } else if (Array.isArray(user.customModules) && user.customModules.length > 0) {
+      // User has explicit individual department/module overrides
+      effectiveRole.allowedModules = [...user.customModules]
+      if (!effectiveRole.allowedModules.includes("my_hr")) {
+        effectiveRole.allowedModules.push("my_hr")
+      }
+    } else if (Array.isArray(user.allowedModules) && user.allowedModules.length > 0) {
+      // User has individual module overrides
+      effectiveRole.allowedModules = [...user.allowedModules]
+      if (!effectiveRole.allowedModules.includes("my_hr")) {
+        effectiveRole.allowedModules.push("my_hr")
+      }
+    }
+
+    return { user, role: effectiveRole }
   }
 }
 
-export type PermissionAction = "read" | "write" | "delete" | "export"
+export type PermissionAction =
+  | "read"
+  | "write"
+  | "delete"
+  | "export"
+  | "view"
+  | "create"
+  | "edit"
+  | "approve"
 
 export function hasGranularPermission(
   allowedModules: string[],
-
   moduleName: string,
-
   action?: PermissionAction,
 ): boolean {
   if (!allowedModules) return false
@@ -535,33 +1047,85 @@ export function hasGranularPermission(
 
   if (!action) {
     return allowedModules.some(
-      (m) => m === moduleName || m.startsWith(`${moduleName}:`),
+      (m) =>
+        m === moduleName ||
+        m.startsWith(`${moduleName}:`) ||
+        m.startsWith(`${moduleName}.`),
     )
   }
 
-  return allowedModules.includes(`${moduleName}:${action}`)
+  // Normalize aliases between classic and enterprise action verbs
+  const aliases: string[] = [action]
+  if (action === "read" || action === "view") aliases.push("read", "view")
+  if (action === "write") aliases.push("write", "create", "edit")
+  if (action === "create" || action === "edit") aliases.push("write", action)
+
+  return allowedModules.some((m) =>
+    aliases.some(
+      (a) => m === `${moduleName}:${a}` || m === `${moduleName}.${a}`,
+    ),
+  )
 }
 
 export function getGrantedActionsForModule(
   allowedModules: string[],
-
   moduleName: string,
 ): PermissionAction[] {
   if (!allowedModules) return []
 
   if (allowedModules.includes(moduleName) || allowedModules.includes("*")) {
-    return ["read", "write", "delete", "export"]
+    return ["view", "create", "edit", "delete", "approve", "export", "read", "write"]
   }
 
   const actions: PermissionAction[] = []
 
-  if (allowedModules.includes(`${moduleName}:read`)) actions.push("read")
+  const hasView =
+    allowedModules.includes(`${moduleName}:view`) ||
+    allowedModules.includes(`${moduleName}:read`) ||
+    allowedModules.includes(`${moduleName}.view`) ||
+    allowedModules.includes(`${moduleName}.read`)
+  if (hasView) {
+    actions.push("view", "read")
+  }
 
-  if (allowedModules.includes(`${moduleName}:write`)) actions.push("write")
+  const hasCreate =
+    allowedModules.includes(`${moduleName}:create`) ||
+    allowedModules.includes(`${moduleName}:write`) ||
+    allowedModules.includes(`${moduleName}.create`) ||
+    allowedModules.includes(`${moduleName}.write`)
+  if (hasCreate) {
+    actions.push("create")
+  }
 
-  if (allowedModules.includes(`${moduleName}:delete`)) actions.push("delete")
+  const hasEdit =
+    allowedModules.includes(`${moduleName}:edit`) ||
+    allowedModules.includes(`${moduleName}:write`) ||
+    allowedModules.includes(`${moduleName}.edit`) ||
+    allowedModules.includes(`${moduleName}.write`)
+  if (hasEdit) {
+    actions.push("edit", "write")
+  }
 
-  if (allowedModules.includes(`${moduleName}:export`)) actions.push("export")
+  const hasDelete =
+    allowedModules.includes(`${moduleName}:delete`) ||
+    allowedModules.includes(`${moduleName}.delete`)
+  if (hasDelete) {
+    actions.push("delete")
+  }
+
+  const hasApprove =
+    allowedModules.includes(`${moduleName}:approve`) ||
+    allowedModules.includes(`${moduleName}.approve`)
+  if (hasApprove) {
+    actions.push("approve")
+  }
+
+  const hasExport =
+    allowedModules.includes(`${moduleName}:export`) ||
+    allowedModules.includes(`${moduleName}.export`)
+  if (hasExport) {
+    actions.push("export")
+  }
 
   return actions
 }

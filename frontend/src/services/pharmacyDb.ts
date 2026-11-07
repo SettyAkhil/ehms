@@ -1357,25 +1357,10 @@ export function clearAllPharmacyData(): void {
   }
 }
 
-// One-time initialization to guarantee 100% clean formulary and clean storage quota in all browsers (Chrome & Edge)
+// Keep destructive maintenance operations out of the browser global scope.
+// Production retention actions belong to an authenticated backend workflow.
 if (typeof window !== "undefined") {
   try {
-    const CLEAN_SLATE_STAMP = "varma_storage_clean_v8_active"
-    if (window.localStorage.getItem(CLEAN_SLATE_STAMP) !== "true") {
-      cleanupStorageQuota()
-      clearAllPharmacyData()
-      try {
-        window.localStorage.setItem(CLEAN_SLATE_STAMP, "true")
-        window.localStorage.setItem("hospai_pharm_fresh_demo_purged_v10", "true")
-      } catch {}
-    }
-  } catch {}
-}
-
-// Expose utility globally for manual testing if needed
-if (typeof window !== "undefined") {
-  try {
-    ;(window as any).clearAllPharmacyData = clearAllPharmacyData
     ;(window as any).purgeSamplePharmacyData = purgeSampleData
     ;(window as any).seedPharmacyHospitalData = seedPharmacyHospitalData
     ;(window as any).ensurePharmacyDataSeeded = ensurePharmacyDataSeeded
