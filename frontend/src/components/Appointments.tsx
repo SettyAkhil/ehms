@@ -813,8 +813,16 @@ export default function Appointments({
   ).length
   const activeDoctorsCount = getDoctorMaster().filter((d) => d.verified).length
 
-  const handleAddAppointment = (booking: AppointmentBooking) => {
-    const booked = bookAppointment(booking)
+  const handleAddAppointment = async (booking: AppointmentBooking) => {
+    let booked
+    try {
+      booked = await bookAppointment(booking)
+    } catch (error) {
+      toast.error(
+        `Appointment was not booked: ${error instanceof Error ? error.message : "server did not confirm the registration."}`,
+      )
+      return
+    }
     setJustBooked({
       encounterId: booked.encounterId,
       name: booked.name,

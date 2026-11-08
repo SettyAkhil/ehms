@@ -1,6 +1,7 @@
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 import { SurgicalCase, SurgeryDatabase } from "../../services/surgeryDb"
-import { BedDatabase } from "../../services/bedDb"
+import type { BedRecord } from "../../services/bedDb"
+import { apiFetch } from "../../lib/api"
 import { Btn } from "../shared"
 import { toast } from "react-hot-toast"
 
@@ -16,7 +17,9 @@ export default function TransferToIcuModal({
   onSuccess,
 }: TransferToIcuModalProps) {
   const [icuUnit, setIcuUnit] = useState<"SICU" | "MICU" | "CCU" | "PICU">("SICU")
-  const [bedNo, setBedNo] = useState("SICU Bed 3")
+  const [icuBeds, setIcuBeds] = useState<BedRecord[]>([])
+  const [selectedBedId, setSelectedBedId] = useState<number | null>(null)
+  const [bedsError, setBedsError] = useState<string | null>(null)
   const [transferredBy, setTransferredBy] = useState("Dr. Rodriguez (Anesthesiology)")
   const [intubated, setIntubated] = useState(true)
   const [ventilatorMode, setVentilatorMode] = useState("SIMV-VC: TV 480mL, RR 16, PEEP 8, FiO2 50%")
@@ -31,13 +34,36 @@ export default function TransferToIcuModal({
   )
   const [submitting, setSubmitting] = useState(false)
 
+  useEffect(() => {
+    let active = true
+    apiFetch<{ beds: BedRecord[] }>("/api/beds")
+      .then((data) => {
+        if (!active) return
+        const available = (data.beds || []).filter((b) => b.status === "Available" && b.bed_type === "ICU")
+        setIcuBeds(available)
+        setSelectedBedId(available[0]?.id ?? null)
+      })
+      .catch((err) => active && setBedsError(err instanceof Error ? err.message : "Could not load beds."))
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const selectedBed = icuBeds.find((b) => b.id === selectedBedId)
+  const bedNo = selectedBed ? `${selectedBed.ward} — Room ${selectedBed.room_no} / Bed ${selectedBed.bed_no}` : ""
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!selectedBed) {
+      toast.error(bedsError ? `Could not load beds: ${bedsError}` : "Select an available ICU bed first.")
+      return
+    }
     setSubmitting(true)
     try {
       await SurgeryDatabase.transferToIcu(surgicalCase.id, {
         icuUnit,
         bedNo,
+        bedId: selectedBed.id,
         transferredAt: new Date().toISOString(),
         transferredBy,
         intubated,
@@ -116,13 +142,24 @@ export default function TransferToIcuModal({
               <label className="text-[11px] font-semibold text-slate-700 block mb-1">
                 ICU Bed Allocation
               </label>
-              <input
-                type="text"
-                value={bedNo}
-                onChange={(e) => setBedNo(e.target.value)}
-                className="w-full border border-[#DDE2EC] rounded-lg p-2 text-xs bg-white focus:outline-none focus:border-slate-800"
-                required
-              />
+              {icuBeds.length > 0 ? (
+                <select
+                  value={selectedBedId ?? ""}
+                  onChange={(e) => setSelectedBedId(Number(e.target.value))}
+                  className="w-full border border-[#DDE2EC] rounded-lg p-2 text-xs bg-white focus:outline-none focus:border-slate-800"
+                  required
+                >
+                  {icuBeds.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.ward} — Room {b.room_no} / Bed {b.bed_no}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="p-2 border border-amber-200 bg-amber-50 rounded-lg text-amber-900">
+                  {bedsError ? `Could not load beds: ${bedsError}` : "No ICU beds are available."}
+                </div>
+              )}
             </div>
           </div>
 

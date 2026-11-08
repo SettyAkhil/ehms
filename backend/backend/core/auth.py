@@ -857,6 +857,11 @@ def signup_employee(
         "username": data["username"],
         "password_hash": hash_password(data["password"]),
         "role": "employee",
+        # Without this, the account never matches any hospital_roles row: it is
+        # invisible to the role-scoped login screen (list_login_users_for_role)
+        # and, if a role is ever selected at sign-in, authenticate() rejects it
+        # with "The selected role does not match this account."
+        "role_key": (data.get("role_key") or data.get("roleId") or "").strip().upper() or None,
         "access_role": "owner" if user_type == "admin" else "receptionist",
         "user_type": user_type,
         "module_access": module_access,

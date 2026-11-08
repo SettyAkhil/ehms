@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react"
 import { SurgicalCase, SurgeryDatabase } from "../../services/surgeryDb"
-import { BedDatabase, BedRecord } from "../../services/bedDb"
+import type { BedRecord } from "../../services/bedDb"
+import { apiFetch } from "../../lib/api"
 import { Btn } from "../shared"
 import { toast } from "react-hot-toast"
 
@@ -29,19 +30,25 @@ export default function TransferToWardModal({
   )
   const [submitting, setSubmitting] = useState(false)
 
+  const [bedsError, setBedsError] = useState<string | null>(null)
+
   useEffect(() => {
-    try {
-      const allBeds = BedDatabase.getBeds()
-      const wardBeds = allBeds.filter(
-        (b) => b.status === "Available" && b.bed_type !== "ICU",
-      )
-      setAvailableBeds(wardBeds)
-      if (wardBeds.length > 0) {
-        setSelectedBedId(wardBeds[0].id)
-        setWardName(wardBeds[0].ward)
-      }
-    } catch {
-      // Fallback
+    let active = true
+    apiFetch<{ beds: BedRecord[] }>("/api/beds")
+      .then((data) => {
+        if (!active) return
+        const wardBeds = (data.beds || []).filter(
+          (b) => b.status === "Available" && b.bed_type !== "ICU",
+        )
+        setAvailableBeds(wardBeds)
+        if (wardBeds.length > 0) {
+          setSelectedBedId(wardBeds[0].id)
+          setWardName(wardBeds[0].ward)
+        }
+      })
+      .catch((err) => active && setBedsError(err instanceof Error ? err.message : "Could not load beds."))
+    return () => {
+      active = false
     }
   }, [])
 
@@ -55,18 +62,20 @@ export default function TransferToWardModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const chosenBed = availableBeds.find((b) => b.id === selectedBedId)
+    if (!chosenBed) {
+      toast.error(bedsError ? `Could not load beds: ${bedsError}` : "Select an available ward bed first.")
+      return
+    }
     setSubmitting(true)
     try {
-      const chosenBed = availableBeds.find((b) => b.id === selectedBedId)
-      const bedNoLabel = chosenBed
-        ? `Room ${chosenBed.room_no} - Bed ${chosenBed.bed_no}`
-        : "Bed 204-A"
+      const bedNoLabel = `Room ${chosenBed.room_no} - Bed ${chosenBed.bed_no}`
 
       await SurgeryDatabase.transferToWard(surgicalCase.id, {
-        wardName: chosenBed?.ward || wardName,
-        roomNo: chosenBed?.room_no || "204",
-        bedNo: chosenBed?.bed_no || "Bed A",
-        bedId: selectedBedId || undefined,
+        wardName: chosenBed.ward,
+        roomNo: chosenBed.room_no,
+        bedNo: chosenBed.bed_no,
+        bedId: chosenBed.id,
         transferredAt: new Date().toISOString(),
         transferredBy,
         handoverNotes: `${handoverNotes}\nOrders: Diet: ${dietOrder} | Drain: ${drainCare} | IV: ${ivFluids} | Pain: ${painRegimen} | Mobility: ${mobilization}`,
@@ -83,15 +92,15 @@ export default function TransferToWardModal({
             date: new Date().toISOString(),
             pod: 0,
             author: transferredBy,
-            vitalsSummary: "BP 124/80, HR 74, SpO2 99% on RA. Aldrete 9/10 on PACU exit.",
-            clinicalNotes: `Received in ${chosenBed?.ward || wardName} (${bedNoLabel}) from PACU Recovery. Awake and oriented. Operative site inspected.`,
+            vitalsSummary: "Not recorded at transfer -- record vitals on arrival.",
+            clinicalNotes: `Received in ${chosenBed.ward} (${bedNoLabel}) from PACU Recovery. Awake and oriented. Operative site inspected.`,
             orders: `Diet: ${dietOrder}. IV Fluids: ${ivFluids}. Pain: ${painRegimen}.`,
           },
         ],
       })
 
       toast.success(
-        `Patient ${surgicalCase.patientName} safely transferred to ${chosenBed?.ward || wardName} (${bedNoLabel})!`,
+        `Patient ${surgicalCase.patientName} safely transferred to ${chosenBed.ward} (${bedNoLabel})!`,
       )
       onSuccess()
       onClose()

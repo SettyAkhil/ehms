@@ -22,7 +22,6 @@
  */
 
 import { apiFetch } from "../lib/api"
-import { BedDatabase } from "./bedDb"
 
 export type SurgeryStatus =
   | "PAC Pending"
@@ -477,6 +476,33 @@ export interface SurgeonPreferenceCard {
 }
 
 /** Reason string from a 409 gate rejection, so the UI can show *why*. */
+/**
+ * Places a post-op patient in a bed on the server. If they already occupy a
+ * bed (e.g. an IPD patient who went to theatre) this is a transfer that keeps
+ * the same admission; otherwise it is a fresh assignment. Throws on failure.
+ */
+async function placePatientInServerBed(
+  patientId: string,
+  bedId: number,
+  notes: string,
+  expectedLosDays: number,
+): Promise<void> {
+  const { beds } = await apiFetch<{ beds: Array<{ id: number ;patient_id?: string | null ;status: string }> }>("/api/beds")
+  const current = (beds || []).find((b) => b.status === "Occupied" && b.patient_id === patientId)
+  if (current && current.id === bedId) return
+  if (current) {
+    await apiFetch(`/api/beds/${current.id}/transfer`, {
+      method: "POST",
+      body: JSON.stringify({ to_bed_id: bedId, reason: notes }),
+    })
+    return
+  }
+  await apiFetch(`/api/beds/${bedId}/assign`, {
+    method: "POST",
+    body: JSON.stringify({ patient_id: patientId, notes, expected_los_days: expectedLosDays }),
+  })
+}
+
 export class OtGateError extends Error {
   reason: string
   constructor(reason: string) {
@@ -1465,23 +1491,13 @@ class SurgeryDbService {
     const existing = this.getCaseById(id)
     if (!existing) throw new Error("Case not found")
 
-    if (wardCare.bedId) {
-      try {
-        BedDatabase.assignBed(
-          wardCare.bedId,
-          {
-            patient_id: existing.patientId || existing.mrn,
-            name: existing.patientName,
-            age: existing.age,
-            gender: existing.gender,
-          },
-          `Post-Op Surgical Admission: ${existing.procedureName} (Surgeon: Dr. ${existing.surgeon})`,
-          4,
-        )
-      } catch (err) {
-        console.warn("Could not automatically assign bed in BedDatabase:", err)
-      }
-    }
+    if (!wardCare.bedId) throw new Error("Select an available ward bed before transferring.")
+    await placePatientInServerBed(
+      existing.patientId || existing.mrn,
+      wardCare.bedId,
+      `Post-Op Surgical Admission: ${existing.procedureName} (Surgeon: Dr. ${existing.surgeon})`,
+      4,
+    )
 
     const updatedCase: SurgicalCase = {
       ...existing,
@@ -1504,23 +1520,13 @@ class SurgeryDbService {
     const existing = this.getCaseById(id)
     if (!existing) throw new Error("Case not found")
 
-    if (icuCare.bedId) {
-      try {
-        BedDatabase.assignBed(
-          icuCare.bedId,
-          {
-            patient_id: existing.patientId || existing.mrn,
-            name: existing.patientName,
-            age: existing.age,
-            gender: existing.gender,
-          },
-          `Critical Post-Op SICU Transfer: ${existing.procedureName} (Intubated: ${icuCare.intubated ? "Yes" : "No"})`,
-          3,
-        )
-      } catch (err) {
-        console.warn("Could not automatically assign ICU bed in BedDatabase:", err)
-      }
-    }
+    if (!icuCare.bedId) throw new Error("Select an available ICU bed before transferring.")
+    await placePatientInServerBed(
+      existing.patientId || existing.mrn,
+      icuCare.bedId,
+      `Critical Post-Op SICU Transfer: ${existing.procedureName} (Intubated: ${icuCare.intubated ? "Yes" : "No"})`,
+      3,
+    )
 
     const updatedCase: SurgicalCase = {
       ...existing,
@@ -1606,15 +1612,12 @@ class SurgeryDbService {
 
     const bedId = existing.wardTransfer?.bedId || existing.icuTransfer?.bedId
     if (bedId) {
-      try {
-        BedDatabase.releaseBed(
-          bedId,
-          `Surgical Discharge: ${existing.procedureName} - ${discharge.conditionAtDischarge}`,
-          existing.totalAmount,
-        )
-      } catch (err) {
-        console.warn("Could not release bed in BedDatabase:", err)
-      }
+      await apiFetch(`/api/beds/${bedId}/release`, {
+        method: "POST",
+        body: JSON.stringify({
+          discharge_override_reason: `Surgical Discharge: ${existing.procedureName} - ${discharge.conditionAtDischarge}`,
+        }),
+      })
     }
 
     const updatedCase: SurgicalCase = {

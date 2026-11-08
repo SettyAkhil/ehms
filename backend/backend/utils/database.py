@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import math
 import re
 import uuid as uuid_lib
@@ -15,6 +16,8 @@ from .embeddings import (
 )
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 try:
     import psycopg2
@@ -4078,9 +4081,9 @@ def add_employee(data, hospital_id=None):
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO users (hospital_id, username, password_hash, role, job_role, full_name, email, phone,
+            INSERT INTO users (hospital_id, username, password_hash, role, role_key, job_role, full_name, email, phone,
                                department, employee_id, status, address, emergency_contact, access_role, user_type, module_access)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """,
             (
@@ -4088,6 +4091,7 @@ def add_employee(data, hospital_id=None):
                 data["username"],
                 data["password_hash"],
                 data.get("role", "employee"),
+                data.get("role_key"),
                 data.get("job_role"),
                 data.get("full_name"),
                 data.get("email"),
@@ -4164,7 +4168,8 @@ def update_employee(employee_id, data, hospital_id=None):
             """
             UPDATE users SET full_name=?, email=?, phone=?, department=?,
                            status=?, address=?, emergency_contact=?, job_role=?, access_role=COALESCE(?, access_role),
-                           user_type=COALESCE(?, user_type), module_access=COALESCE(?, module_access)
+                           user_type=COALESCE(?, user_type), module_access=COALESCE(?, module_access),
+                           role_key=COALESCE(?, role_key)
             WHERE employee_id=? AND hospital_id=?
         """,
             (
@@ -4181,6 +4186,11 @@ def update_employee(employee_id, data, hospital_id=None):
                 (
                     json.dumps(data["module_access"], separators=(",", ":"))
                     if "module_access" in data
+                    else None
+                ),
+                (
+                    (data.get("role_key") or "").strip().upper() or None
+                    if "role_key" in data
                     else None
                 ),
                 employee_id,
@@ -6635,6 +6645,28 @@ def ensure_bed_management_columns(conn):
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_bed_allocations_patient ON bed_allocations(patient_id, allocated_at DESC)"
     )
+    # Database-enforced: a bed has at most one active occupant, and a patient
+    # occupies at most one bed. These are the backstop for concurrent requests.
+    # If legacy data already violates one, report it instead of failing startup;
+    # the conflicting rows must be reconciled by hand before the index can exist.
+    for name, columns in (
+        ("ux_bed_allocations_active_bed", "hospital_id, bed_id"),
+        ("ux_bed_allocations_active_patient", "hospital_id, patient_id"),
+    ):
+        cursor.execute("SAVEPOINT bed_uniqueness")
+        try:
+            cursor.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {name} "
+                f"ON bed_allocations({columns}) WHERE status = 'active'"
+            )
+            cursor.execute("RELEASE SAVEPOINT bed_uniqueness")
+        except Exception as exc:
+            cursor.execute("ROLLBACK TO SAVEPOINT bed_uniqueness")
+            logger.error(
+                "Could not create %s: existing active bed allocations conflict (%s). "
+                "Reconcile duplicate active allocations to enable this safeguard.",
+                name, exc,
+            )
     conn.commit()
 
 
@@ -7001,7 +7033,15 @@ def assign_patient_to_bed(hospital_id, bed_id, patient_id, notes, expected_los_d
         bed = cursor.fetchone()
         if not bed:
             return None
-        if bed["status"] != "Available":
+        # Claim the bed atomically: only one concurrent request can flip it from
+        # Available to Occupied; every other request sees rowcount 0 and fails.
+        cursor.execute(
+            "UPDATE bed_master SET status = 'Occupied', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND hospital_id = ? AND status = 'Available'",
+            (bed_id, hospital_id),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
             raise ValueError("This bed is no longer available.")
 
         admission_timestamp = current_ist_timestamp()
@@ -7039,12 +7079,6 @@ def assign_patient_to_bed(hospital_id, bed_id, patient_id, notes, expected_los_d
             ),
         )
         allocation_id = cursor.fetchone()[0]
-
-        cursor.execute(
-            "UPDATE bed_master SET status = 'Occupied', updated_at = CURRENT_TIMESTAMP "
-            "WHERE id = ?",
-            (bed_id,),
-        )
         conn.commit()
         return {"admission_id": admission_id, "allocation_id": allocation_id}
 
@@ -7255,7 +7289,13 @@ def transfer_bed(hospital_id, from_bed_id, to_bed_id, reason=None):
         target_bed = cursor.fetchone()
         if not target_bed:
             raise ValueError("Destination bed not found.")
-        if target_bed["status"] != "Available":
+        cursor.execute(
+            "UPDATE bed_master SET status = 'Occupied', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND hospital_id = ? AND status = 'Available'",
+            (to_bed_id, hospital_id),
+        )
+        if cursor.rowcount != 1:
+            conn.rollback()
             raise ValueError("Destination bed is not available.")
 
         cursor.execute(
@@ -7287,12 +7327,9 @@ def transfer_bed(hospital_id, from_bed_id, to_bed_id, reason=None):
         new_allocation_id = cursor.fetchone()[0]
 
         cursor.execute(
-            "UPDATE bed_master SET status = 'Available', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (from_bed_id,),
-        )
-        cursor.execute(
-            "UPDATE bed_master SET status = 'Occupied', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (to_bed_id,),
+            "UPDATE bed_master SET status = 'Available', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND hospital_id = ?",
+            (from_bed_id, hospital_id),
         )
         conn.commit()
         return {
@@ -8983,30 +9020,54 @@ def allocate_er_bed_request(
     request/visit status. The bed_id always comes from the caller (Reception,
     choosing from real availability); this function never picks one itself --
     that's the boundary the whole ER module is built around."""
+    # Claim the request first so two staff fulfilling it at once can't both
+    # allocate a bed; the loser sees rowcount 0 and gets "already allocated".
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT * FROM er_bed_requests WHERE id = ? AND hospital_id = ? AND status = 'pending'",
+            "UPDATE er_bed_requests SET status = 'allocating' "
+            "WHERE id = ? AND hospital_id = ? AND status = 'pending'",
             (bed_request_id, hospital_id),
         )
-        req = cursor.fetchone()
-        if not req:
+        if cursor.rowcount != 1:
+            conn.rollback()
             return None
-        er_visit_id = req["er_visit_id"]
-        cursor.execute("SELECT patient_id FROM er_visits WHERE id = ?", (er_visit_id,))
+        cursor.execute(
+            "SELECT er_visit_id FROM er_bed_requests WHERE id = ?", (bed_request_id,)
+        )
+        er_visit_id = cursor.fetchone()["er_visit_id"]
+        cursor.execute(
+            "SELECT patient_id FROM er_visits WHERE id = ? AND hospital_id = ?",
+            (er_visit_id, hospital_id),
+        )
         visit_row = cursor.fetchone()
         patient_id = visit_row["patient_id"] if visit_row else None
+        conn.commit()
+
+    def _release_claim():
+        with get_connection() as conn:
+            conn.cursor().execute(
+                "UPDATE er_bed_requests SET status = 'pending' WHERE id = ? AND status = 'allocating'",
+                (bed_request_id,),
+            )
+            conn.commit()
 
     if not patient_id:
+        _release_claim()
         raise ValueError(
             "This ER visit isn't linked to a confirmed patient record yet -- "
             "merge the unknown patient before allocating a bed."
         )
 
-    result = assign_patient_to_bed(
-        hospital_id, bed_id, patient_id, notes, expected_los_days=expected_los_days
-    )
+    try:
+        result = assign_patient_to_bed(
+            hospital_id, bed_id, patient_id, notes, expected_los_days=expected_los_days
+        )
+    except Exception:
+        _release_claim()
+        raise
     if result is None:
+        _release_claim()
         return None
 
     with get_connection() as conn:

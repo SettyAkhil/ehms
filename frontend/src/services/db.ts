@@ -785,7 +785,7 @@ class HospitalDatabase {
     dept?: string
 
     chiefComplaint?: string
-  }, serverVisit?: {
+  }, serverVisit: {
     patient_id?: string
     encounter_id?: string | number
     appointment_id?: string | number
@@ -970,37 +970,8 @@ class HospitalDatabase {
       JSON.stringify([newEncounter, ...encounters]),
     )
 
-    if (serverVisit) {
-      // The authoritative write was completed before the UI cache is updated.
-      this.announceRegistered(newEncounter.id)
-    } else {
-      // Legacy callers still use write-through. New registration uses the
-      // confirmed path below and never reports success before this request.
-      apiFetch("/api/op/visits", {
-        method: "POST",
-        body: JSON.stringify({
-          patient_id: newPatient.umr,
-          patient: {
-            first_name: data.firstName,
-            last_name: data.lastName,
-            phone: newPatient.phone,
-            age: newPatient.age,
-            gender: newPatient.sex,
-          },
-          appointment: {
-            doctor_name: (newEncounter as any).assignedDoctor || (newEncounter as any).doctorAssigned || undefined,
-            department: newEncounter.dept || data.dept || "General Medicine",
-            visit_type: "OP",
-            appointment_date: new Date().toISOString().split("T")[0],
-            status: "checked_in",
-            chief_complaint: newEncounter.chiefComplaint || data.chiefComplaint || "OP Visit",
-          },
-        }),
-      })
-        .then((res) => this.adoptServerPatientId(newPatient.umr, res))
-        .catch(() => {})
-        .finally(() => this.announceRegistered(newEncounter.id))
-    }
+    // Only reached after the server confirmed the visit (see registerNewPatientConfirmed).
+    this.announceRegistered(newEncounter.id)
 
     this.notify()
 
@@ -1059,8 +1030,8 @@ class HospitalDatabase {
 
   public createRevisitEncounter(
     umr: string,
-    data?: { dept?: string ;chiefComplaint?: string },
-    serverVisit?: { encounter_id?: string | number ;op_number?: string | number },
+    data: { dept?: string ;chiefComplaint?: string } | undefined,
+    serverVisit: { encounter_id?: string | number ;op_number?: string | number },
   ): DBOPEncounter {
     const patient = this.getPatientByUmr(umr)
 
@@ -1206,36 +1177,8 @@ class HospitalDatabase {
       JSON.stringify([newEncounter, ...encounters]),
     )
 
-    if (serverVisit) {
-      this.announceRegistered(newEncounter.id)
-    } else {
-      // Legacy callers retain write-through; the Registration screen calls the
-      // confirmed method below and will not announce success before this API.
-      apiFetch("/api/op/visits", {
-      method: "POST",
-      body: JSON.stringify({
-        patient_id: umr,
-        patient: patient ? {
-          first_name: patient.name.split(" ")[0] || patient.name,
-          last_name: patient.name.split(" ").slice(1).join(" ") || "",
-          phone: patient.phone,
-          age: patient.age,
-          gender: patient.sex,
-        } : undefined,
-        appointment: {
-          doctor_name: (newEncounter as any).assignedDoctor || (newEncounter as any).doctorAssigned || undefined,
-          department: newEncounter.dept || "General Medicine",
-          visit_type: "OP",
-          appointment_date: new Date().toISOString().split("T")[0],
-          status: "checked_in",
-          chief_complaint: newEncounter.chiefComplaint || "Revisit",
-        },
-      }),
-      })
-        .then((res) => this.adoptServerPatientId(umr, res))
-        .catch(() => {})
-        .finally(() => this.announceRegistered(newEncounter.id))
-    }
+    // Only reached after the server confirmed the visit (see createRevisitEncounterConfirmed).
+    this.announceRegistered(newEncounter.id)
 
     this.notify()
 
@@ -1379,19 +1322,52 @@ class HospitalDatabase {
     })
   }
 
-  public recordVitals(
+  /**
+   * Saves vitals to the backend first; the encounter only moves to "In Queue"
+   * once the server has stored the reading. Throws if the server rejects it.
+   */
+  public async recordVitals(
     id: string,
 
     vitals: DBOPEncounter["vitals"],
 
     nurseName: string,
-  ): DBOPEncounter {
+  ): Promise<DBOPEncounter> {
     const now = new Date().toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     })
 
     const existing = this.getEncounters().find((e) => e.id === id)
+
+    const reading = (value?: string) => {
+      const v = (value || "").trim()
+      return v && v !== "--" ? v : undefined
+    }
+    const num = (value: string | undefined, parse: (s: string) => number) => {
+      if (!value) return undefined
+      const n = parse(value)
+      return Number.isFinite(n) ? n : undefined
+    }
+    const rr = (vitals as any).respiratoryRate ?? (vitals as any).rr
+    const payload = {
+      bp: reading(vitals.bp),
+      pulse: num(reading(vitals.pulse), (s) => parseInt(s, 10)),
+      temperature: num(reading(vitals.temp), parseFloat),
+      spo2: num(reading(vitals.spo2), (s) => parseInt(s, 10)),
+      respiratory_rate: num(reading(rr != null ? String(rr) : undefined), (s) => parseInt(s, 10)),
+      weight: num(reading(vitals.weight), parseFloat),
+      notes: vitals.notes || undefined,
+    }
+    const hasReading = [payload.bp, payload.pulse, payload.temperature, payload.spo2, payload.respiratory_rate, payload.weight]
+      .some((v) => v !== undefined)
+
+    if (existing?.umr && hasReading) {
+      await apiFetch(`/api/patients/${encodeURIComponent(existing.umr)}/vitals`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      })
+    }
 
     const updated = this.updateEncounter(id, {
       vitals,
@@ -1404,25 +1380,6 @@ class HospitalDatabase {
         vitalsBy: nurseName,
       },
     })
-
-    // Write-through to the real backend, keyed on the patient's UMR (not this
-    // encounter's local id, which has no backend existence) -- best-effort,
-    // same posture as ICU/OT: the local record above is what the UI reads
-    // from immediately, this just makes the reading survive past this browser.
-    if (existing?.umr && (vitals.bp || vitals.pulse || vitals.temp || vitals.spo2)) {
-      apiFetch(`/api/patients/${existing.umr}/vitals`, {
-        method: "POST",
-        body: JSON.stringify({
-          bp: vitals.bp || undefined,
-          pulse: vitals.pulse ? parseInt(vitals.pulse) : undefined,
-          temperature: vitals.temp ? parseFloat(vitals.temp) : undefined,
-          spo2: vitals.spo2 ? parseInt(vitals.spo2) : undefined,
-          notes: vitals.notes || undefined,
-        }),
-      }).catch(() => {
-        // Offline/unreachable -- the local record above already has it.
-      })
-    }
 
     return updated
   }

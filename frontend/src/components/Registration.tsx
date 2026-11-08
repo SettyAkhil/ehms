@@ -457,8 +457,16 @@ export default function Registration({
           <AppointmentBookingModal
             initialEncounter={selectedEncounter}
             onClose={() => setBookingOpen(false)}
-            onSchedule={(booking) => {
-              const result = bookAppointment(booking)
+            onSchedule={async (booking) => {
+              let result
+              try {
+                result = await bookAppointment(booking)
+              } catch (error) {
+                toast.error(
+                  `Appointment was not booked: ${error instanceof Error ? error.message : "server did not confirm the registration."}`,
+                )
+                return
+              }
               setBooked(result)
               setBookingOpen(false)
               setActiveTab("appointment")

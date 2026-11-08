@@ -86,7 +86,7 @@ def employees_search():
     return jsonify({"employees": rows_to_dicts(employees)})
 
 
-_ACCESS_FIELDS = ("user_type", "access_role", "module_access")
+_ACCESS_FIELDS = ("user_type", "access_role", "module_access", "role_key")
 
 
 @hr_bp.route("/api/employees/<employee_id>", methods=["GET", "PUT", "DELETE"])

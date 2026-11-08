@@ -12,7 +12,7 @@ import { BillingDatabase } from "../services/billingDb"
 
 import { getDoctorMaster } from "../services/doctorMaster"
 import { DepartmentDatabase } from "../services/departmentDb"
-import { RoleDatabase, ALL_SYSTEM_MODULES, type AppRole, type AppUser } from "../services/roleDb"
+import { RoleDatabase, type AppRole, type AppUser } from "../services/roleDb"
 
 import {
   GeneralReportsService,
@@ -1810,174 +1810,9 @@ async function handleLocalErMock<T = any>(
     return { success: true, message: "Password updated successfully" } as T
   }
 
-  // ==================== Authentication & Role-Based Login ====================
-
-  // GET /api/auth/login-roles
-  if (pathname === "/api/auth/login-roles" && method === "GET") {
-    const activeRoles = RoleDatabase.getRoles().filter((r) => r.status !== "Inactive")
-    const rolesMapped = activeRoles.map((r) => ({
-      id: r.id,
-      role_key: r.id,
-      name: r.name,
-      role_name: r.name,
-      description: `${r.name} · ${r.allowedModules.length} module(s) granted`,
-    }))
-    return { success: true, roles: rolesMapped } as T
-  }
-
-  // GET /api/auth/login-roles/:roleId/users
-  const roleUsersMatch = pathname.match(/^\/api\/auth\/login-roles\/([^/]+)\/users$/)
-  if (roleUsersMatch && method === "GET") {
-    const roleId = decodeURIComponent(roleUsersMatch[1])
-    const allUsers = RoleDatabase.getUsers()
-    const filtered = allUsers
-      .filter((u) => (u.roleId === roleId || (roleId === "admin" && u.username === "admin")) && u.status !== "Inactive")
-      .map((u) => ({
-        id: u.id,
-        full_name: u.name,
-        employee_id: u.staffId,
-        department: u.roleId.replace(/^ROLE_/, "").replace(/_/g, " "),
-      }))
-    return { success: true, users: filtered } as T
-  }
-
-  // POST /api/auth/login
-  if (pathname === "/api/auth/login" && method === "POST") {
-    const rawRoleId = body.selected_role_id || body.selectedRoleId || body.roleId || body.role
-    const selectedRoleId =
-      rawRoleId === "admin" || rawRoleId === "ROLE_ADMIN" || rawRoleId === "ROLE_SUPERADMIN"
-        ? "ROLE_ADMIN"
-        : rawRoleId
-
-    const cleanUser = String(body.username || "").trim().toLowerCase()
-    const isAdminExplicit =
-      cleanUser === "admin" ||
-      cleanUser === "administrator" ||
-      cleanUser === "sysadmin" ||
-      cleanUser === "adm-001" ||
-      cleanUser.includes("admin") ||
-      cleanUser.includes("sysadmin") ||
-      cleanUser.includes("system admin") ||
-      cleanUser.includes("system administration") ||
-      selectedRoleId === "ROLE_ADMIN"
-
-    const authenticated = RoleDatabase.authenticate(
-      isAdminExplicit ? "admin" : body.username,
-      body.password,
-      isAdminExplicit ? "ROLE_ADMIN" : selectedRoleId,
-    )
-    const isSysAdmin =
-      isAdminExplicit ||
-      authenticated.role.id === "ROLE_ADMIN" ||
-      authenticated.role.id === "ROLE_SUPERADMIN" ||
-      authenticated.user.roleId === "ROLE_ADMIN" ||
-      (authenticated.user.username?.toLowerCase() === "admin")
-
-    const effectiveRole = isSysAdmin ? "ROLE_ADMIN" : authenticated.role.id
-    const userProfile = {
-      username: isSysAdmin ? "admin" : authenticated.user.username,
-      role: effectiveRole,
-      role_key: effectiveRole,
-      access_role: isSysAdmin ? "owner" : authenticated.role.id.replace(/^ROLE_/, "").toLowerCase(),
-      user_type: isSysAdmin ? "admin" : "staff",
-      module_access: isSysAdmin ? [...ALL_SYSTEM_MODULES, "*", "admin"] : authenticated.role.allowedModules,
-      permissions: isSysAdmin ? [...ALL_SYSTEM_MODULES, "*", "admin"] : authenticated.role.allowedModules,
-      full_name: isSysAdmin ? "System Administrator" : authenticated.user.name,
-      employee_id: isSysAdmin ? "ADM-001" : authenticated.user.staffId,
-      department: isSysAdmin ? "Administration" : authenticated.role.name,
-    }
-    if (typeof window !== "undefined" && window.localStorage) {
-      window.localStorage.setItem("hospai_current_user", JSON.stringify(userProfile))
-    }
-    return { success: true, user: userProfile } as T
-  }
-
-  // GET /api/auth/session
-  if (pathname === "/api/auth/session" && method === "GET") {
-    let userProfile: any = null
-    if (typeof window !== "undefined" && window.localStorage) {
-      try {
-        userProfile = JSON.parse(window.localStorage.getItem("hospai_current_user") || "null")
-      } catch {}
-    }
-    if (userProfile) {
-      const isSysAdmin =
-        userProfile.username?.toLowerCase() === "admin" ||
-        userProfile.username?.toLowerCase() === "administrator" ||
-        userProfile.username?.toLowerCase().includes("admin") ||
-        userProfile.role === "ROLE_ADMIN" ||
-        userProfile.role === "admin" ||
-        userProfile.user_type === "admin" ||
-        userProfile.employee_id === "ADM-001"
-
-      if (isSysAdmin) {
-        userProfile.username = "admin"
-        userProfile.role = "ROLE_ADMIN"
-        userProfile.role_key = "ROLE_ADMIN"
-        userProfile.access_role = "owner"
-        userProfile.user_type = "admin"
-        userProfile.full_name = "System Administrator"
-        userProfile.employee_id = "ADM-001"
-        userProfile.department = "Administration"
-        userProfile.module_access = [...ALL_SYSTEM_MODULES, "*", "admin"]
-        userProfile.permissions = [...ALL_SYSTEM_MODULES, "*", "admin"]
-        if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem("hospai_current_user", JSON.stringify(userProfile))
-        }
-      } else if (userProfile.role) {
-        // Check if this specific user account has custom module overrides
-        const allUsers = RoleDatabase.getUsers()
-        const userObj = allUsers.find(
-          (u) =>
-            u.username?.toLowerCase() === userProfile.username?.toLowerCase() ||
-            u.staffId?.toLowerCase() === userProfile.employee_id?.toLowerCase()
-        )
-        const customMods = (userObj?.customModules && userObj.customModules.length > 0)
-          ? userObj.customModules
-          : (userObj?.allowedModules && userObj.allowedModules.length > 0)
-            ? userObj.allowedModules
-            : null
-
-        if (customMods && customMods.length > 0) {
-          const effectiveMods = customMods.includes("my_hr") ? customMods : [...customMods, "my_hr"]
-          userProfile.module_access = effectiveMods
-          userProfile.permissions = effectiveMods
-          userProfile.user_type = "staff"
-        } else {
-          const currentRole = RoleDatabase.getRoles().find((r) => r.id === userProfile.role)
-          if (currentRole) {
-            userProfile.module_access = currentRole.allowedModules
-            userProfile.permissions = currentRole.allowedModules
-            userProfile.user_type = "staff"
-          }
-        }
-      }
-    }
-    if (!userProfile) {
-      // Default initial admin session if available
-      userProfile = {
-        username: "admin",
-        role: "ROLE_ADMIN",
-        role_key: "ROLE_ADMIN",
-        access_role: "owner",
-        user_type: "admin",
-        module_access: [...ALL_SYSTEM_MODULES, "*", "admin"],
-        permissions: [...ALL_SYSTEM_MODULES, "*", "admin"],
-        full_name: "System Administrator",
-        employee_id: "ADM-001",
-        department: "Administration",
-      }
-    }
-    return { success: true, user: userProfile } as T
-  }
-
-  // POST /api/auth/logout
-  if (pathname === "/api/auth/logout" && method === "POST") {
-    if (typeof window !== "undefined" && window.localStorage) {
-      window.localStorage.removeItem("hospai_current_user")
-    }
-    return { success: true, message: "Logged out" } as T
-  }
+  // Authentication (/api/auth/*) is deliberately not handled here. apiFetch()
+  // never routes auth requests into this local mock -- see isAuthRequest there --
+  // so a real sign-in always requires the real backend to validate it.
 
   return null
 }
@@ -2003,11 +1838,12 @@ export async function apiFetch<T = any>(
   // fallback must not create or restore a session without the backend.
   const isAuthRequest = path.startsWith("/api/auth/")
 
-  // Serve ER, bed management, reports, EMR, and patient notes directly from live persistent store
+  // Serve ER, bed management, reports, EMR, and patient notes directly from live persistent store.
+  // Authentication is excluded here deliberately -- see isAuthRequest below.
   if (
+    !isAuthRequest &&
     LOCAL_MOCKS_ENABLED && (
     path.startsWith("/api/admin") ||
-    path.startsWith("/api/auth") ||
     path.startsWith("/api/er") ||
     path.startsWith("/api/reports") ||
     path.startsWith("/api/beds") ||
@@ -2028,7 +1864,7 @@ export async function apiFetch<T = any>(
 
   const now = Date.now()
 
-  if (LOCAL_MOCKS_ENABLED && !isBackendOnline && now - lastBackendProbeTime < PROBE_INTERVAL_MS) {
+  if (!isAuthRequest && LOCAL_MOCKS_ENABLED && !isBackendOnline && now - lastBackendProbeTime < PROBE_INTERVAL_MS) {
     const cachedLocalResult = await handleLocalErMock<T>(path, options)
 
     if (cachedLocalResult !== null) {
@@ -2122,8 +1958,10 @@ export async function apiFetch<T = any>(
         window.dispatchEvent(new Event("app:unauthorized"))
       }
 
-      // If endpoint not implemented or error on backend (503/500/404), fallback to local store
-      if (response.status >= 500 || response.status === 404 || LOCAL_MOCKS_ENABLED) {
+      // Browser mocks may answer a failed request only in an explicit dev/test
+      // build (LOCAL_MOCKS_ENABLED). In production a failure is surfaced, never
+      // replaced by a local "success". Never for auth in any build.
+      if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
         const localResult = await handleLocalErMock<T>(path, options)
         if (localResult !== null) return localResult as T
       }
@@ -2150,10 +1988,12 @@ export async function apiFetch<T = any>(
 
     lastBackendProbeTime = Date.now()
 
-    // Graceful offline fallback to Local persistent stores
-    const localResult = await handleLocalErMock<T>(path, options)
-    if (localResult !== null) {
-      return localResult as T
+    // Offline fallback to browser stores: explicit dev/test builds only, never auth.
+    if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
+      const localResult = await handleLocalErMock<T>(path, options)
+      if (localResult !== null) {
+        return localResult as T
+      }
     }
 
     if (err?.name === "AbortError" && !callerSignal?.aborted) {
