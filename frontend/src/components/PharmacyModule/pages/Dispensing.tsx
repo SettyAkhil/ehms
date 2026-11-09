@@ -490,22 +490,31 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
           .slice(0, 8)
       : []
 
-  const subtotal = cart.reduce((s, i) => s + i.mrp * i.qty, 0)
-  const discountAmt = (subtotal * discount) / 100
-  // Calculate exact GST splits for invoice based on each item
+  const subtotal = +(cart.reduce((s, i) => s + i.mrp * i.qty, 0)).toFixed(2)
+  const discountAmt = +((subtotal * discount) / 100).toFixed(2)
+  // Calculate exact GST splits for invoice based on each item without dropping decimals
   let totalCGST = 0
   let totalSGST = 0
   cart.forEach((item) => {
-    const taxable =
-      item.mrp * item.qty - (item.mrp * item.qty * (item.discount || 0)) / 100
-    const taxTotal = taxable * (item.tax / 100)
-    totalCGST += taxTotal / 2
-    totalSGST += taxTotal / 2
+    const itemDisc = Number(item.discount || 0)
+    const itemQty = Number(item.qty || 1)
+    const itemRate = Number(item.mrp || 0)
+    const itemGross = itemQty * itemRate
+    const itemDiscAmt = +(itemGross * (itemDisc / 100)).toFixed(2)
+    const taxable = +(itemGross - itemDiscAmt).toFixed(2)
+    const taxRate = Number(item.tax !== undefined ? item.tax : 5)
+    const cgst = +(taxable * (taxRate / 200)).toFixed(2)
+    const sgst = +(taxable * (taxRate / 200)).toFixed(2)
+    totalCGST += cgst
+    totalSGST += sgst
   })
 
-  const grand = subtotal - discountAmt + totalCGST + totalSGST
-  const roundOff = Math.round(grand) - grand
-  const finalAmount = Math.round(grand)
+  totalCGST = +totalCGST.toFixed(2)
+  totalSGST = +totalSGST.toFixed(2)
+
+  // Exact bill amount with decimals intact (NEVER rounded to whole number)
+  const finalAmount = +(subtotal - discountAmt + totalCGST + totalSGST).toFixed(2)
+  const roundOff = 0.00
 
   const updateQty = (id: number, delta: number) => {
     setCart((prev) =>
@@ -525,15 +534,20 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
           return i
         }
 
+        const itemDisc = Number(i.discount || 0)
+        const gross = +(newQty * i.mrp).toFixed(2)
+        const discAmt = +(gross * (itemDisc / 100)).toFixed(2)
+        const taxable = +(gross - discAmt).toFixed(2)
+        const taxRate = Number(i.tax !== undefined ? i.tax : 5)
+        const cgst = +(taxable * (taxRate / 200)).toFixed(2)
+        const sgst = +(taxable * (taxRate / 200)).toFixed(2)
+        const itemTotal = +(taxable + cgst + sgst).toFixed(2)
+
         return {
           ...i,
           qty: newQty,
           maxStock,
-          total:
-            newQty *
-            i.mrp *
-            (1 - (i.discount || 0) / 100) *
-            (1 + (i.tax || 0) / 100),
+          total: itemTotal,
         }
       }),
     )
@@ -658,21 +672,21 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
 
   useEffect(() => {
     if (finalAmount > 0) {
-      const half = Math.round(finalAmount / 2)
+      const half = +(finalAmount / 2).toFixed(2)
       setSplitAmount1(half)
-      setSplitAmount2(finalAmount - half)
+      setSplitAmount2(+(finalAmount - half).toFixed(2))
     }
   }, [finalAmount])
 
   const handleSplitAmount1Change = (val: number) => {
     setSplitAmount1(val)
-    setSplitAmount2(Math.max(0, finalAmount - val))
+    setSplitAmount2(+(Math.max(0, finalAmount - val)).toFixed(2))
   }
 
   const handleQuickHalfSplit = () => {
-    const half = Math.round(finalAmount / 2)
+    const half = +(finalAmount / 2).toFixed(2)
     setSplitAmount1(half)
-    setSplitAmount2(finalAmount - half)
+    setSplitAmount2(+(finalAmount - half).toFixed(2))
   }
 
   const openChangePaymentModal = (billRecord: any) => {
@@ -717,9 +731,9 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
 
   const handleEditQuickHalfSplit = () => {
     const total = editingBill?.totalAmount || 0
-    const half = Math.round(total / 2)
+    const half = +(total / 2).toFixed(2)
     setEditSplitAmount1(half)
-    setEditSplitAmount2(total - half)
+    setEditSplitAmount2(+(total - half).toFixed(2))
   }
 
   const saveUpdatedPaymentMode = () => {
@@ -1028,36 +1042,54 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
       paymentMode: finalPaymentMode,
       paymentsData: finalPaymentsData,
       prescriptionId: rxId || undefined,
-      items: cart.map((c: any) => ({
-        medicineId: c.medicineId,
-        medicineName: c.packing && !c.medicine.includes(c.packing) ? `${c.medicine} (${c.packing})` : c.medicine,
-        form: c.form || "TABLET",
-        packing: c.packing || "",
-        batchNumber: c.batch,
-        expiryDate: c.expiry,
-        quantity: c.qty,
-        unitPrice: c.mrp,
-        rate: c.rate || c.mrp,
-        grossAmount: c.qty * c.mrp,
-        discount: c.discount || 0,
-        hsnCode: c.hsnCode || "3004 039",
-        mnf: c.mnf || "MANK",
-        sh: c.sh || "H",
-        binNo: c.binNo || "",
-        taxableAmount: c.total - c.total * (c.tax / (100 + c.tax)),
-        cgstAmount: (c.total * (c.tax / (100 + c.tax))) / 2,
-        sgstAmount: (c.total * (c.tax / (100 + c.tax))) / 2,
-        tax: c.tax,
-        totalPrice: c.total,
-      })),
-      subTotal: subtotal,
-      discount: discountAmt,
-      tax: totalCGST + totalSGST,
-      taxableTotal: subtotal - discountAmt,
-      cgstTotal: totalCGST,
-      sgstTotal: totalSGST,
-      totalAmount: finalAmount,
-      totalPaid: finalAmount,
+      items: cart.map((c: any) => {
+        const itemQty = Number(c.qty) || 1
+        const itemPrice = Number(c.mrp) || 0
+        const itemDiscPercent = Number(c.discount || 0)
+        const gross = +(itemQty * itemPrice).toFixed(2)
+        const discAmt = +(gross * (itemDiscPercent / 100)).toFixed(2)
+        const taxable = +(gross - discAmt).toFixed(2)
+        const taxRate = Number(c.tax !== undefined ? c.tax : 5)
+        const cgstRate = +(taxRate / 2).toFixed(2)
+        const sgstRate = +(taxRate / 2).toFixed(2)
+        const cgst = +(taxable * (cgstRate / 100)).toFixed(2)
+        const sgst = +(taxable * (sgstRate / 100)).toFixed(2)
+        const billAmt = +(taxable + cgst + sgst).toFixed(2)
+
+        return {
+          medicineId: c.medicineId,
+          medicineName: c.packing && !c.medicine.includes(c.packing) ? `${c.medicine} (${c.packing})` : c.medicine,
+          form: c.form || "TABLET",
+          packing: c.packing || "",
+          batchNumber: c.batch,
+          expiryDate: c.expiry,
+          quantity: itemQty,
+          unitPrice: itemPrice,
+          rate: c.rate || itemPrice,
+          grossAmount: gross,
+          discount: itemDiscPercent,
+          discountAmount: discAmt,
+          hsnCode: c.hsnCode || "3004 039",
+          mnf: c.mnf || "MANK",
+          sh: c.sh || "H",
+          binNo: c.binNo || "",
+          taxableAmount: taxable,
+          cgstRate: cgstRate,
+          sgstRate: sgstRate,
+          cgstAmount: cgst,
+          sgstAmount: sgst,
+          tax: taxRate,
+          totalPrice: billAmt,
+        }
+      }),
+      subTotal: +(subtotal).toFixed(2),
+      discount: +(discountAmt).toFixed(2),
+      tax: +(totalCGST + totalSGST).toFixed(2),
+      taxableTotal: +(subtotal - discountAmt).toFixed(2),
+      cgstTotal: +(totalCGST).toFixed(2),
+      sgstTotal: +(totalSGST).toFixed(2),
+      totalAmount: +(finalAmount).toFixed(2),
+      totalPaid: +(finalAmount).toFixed(2),
       balanceDue: 0,
       createdBy: "Pharmacist",
       createdAt: new Date().toISOString(),
@@ -1846,10 +1878,9 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
                 </span>
               </div>
               <div className="flex justify-between text-[13px] text-[#475569]">
-                <span>Round Off</span>
+                <span>Total Tax (GST)</span>
                 <span className="font-medium text-[#0F1624]">
-                  ₹{roundOff > 0 ? "+" : ""}
-                  {roundOff.toFixed(2)}
+                  +₹{(totalCGST + totalSGST).toFixed(2)}
                 </span>
               </div>
 
