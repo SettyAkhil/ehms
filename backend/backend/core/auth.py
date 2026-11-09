@@ -295,7 +295,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    if not password or not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
 
 
 def _now_utc() -> datetime:
@@ -778,64 +783,9 @@ def authenticate(
             else:
                 raise
         user = cursor.fetchone()
-        if not user:
-            # Check if doctor exists in doctors table and provision into users
-            try:
-                cursor.execute(
-                    _to_sql_params("""
-                        SELECT id, hospital_id, doctor_name, department, qualification,
-                               specialty, section, staff_id, username, room, status, email, phone
-                        FROM doctors
-                        WHERE (LOWER(username) = LOWER(?) OR LOWER(staff_id) = LOWER(?) OR LOWER(doctor_name) = LOWER(?))
-                          AND hospital_id = ?
-                    """),
-                    (clean_identifier, clean_identifier, clean_identifier, scoped_hospital_id),
-                )
-                doc_row = cursor.fetchone()
-                if doc_row:
-                    doc_map = dict(doc_row)
-                    doc_uname = (doc_map.get("username") or clean_identifier).strip().lower()
-                    doc_pwd = password if len(password) >= 4 else "Doctor@123"
-                    try:
-                        pw_hash = bcrypt.hashpw(doc_pwd.encode(), bcrypt.gensalt(10)).decode()
-                    except Exception:
-                        pw_hash = "mock_hash_doctor123"
-                    doc_modules = json.dumps([
-                        "dashboard", "clinical", "doctor_workflow", "patients", "chart",
-                        "inpatient", "emergency", "op_workflow", "appointments", "queue"
-                    ])
-                    cursor.execute(
-                        _to_sql_params("""
-                            INSERT INTO users (
-                                hospital_id, username, password_hash, role, role_key, access_role,
-                                user_type, module_access, job_role, full_name, email,
-                                phone, department, employee_id, status
-                            ) VALUES (?, ?, ?, 'staff', 'ROLE_DOCTOR', 'clinician', 'normal', ?, 'Doctor', ?, ?, ?, ?, ?, 'active')
-                        """),
-                        (
-                            scoped_hospital_id, doc_uname, pw_hash, doc_modules,
-                            doc_map.get("doctor_name"), doc_map.get("email") or f"{doc_uname}@hospital.org",
-                            doc_map.get("phone") or "", doc_map.get("department") or "Clinical",
-                            doc_map.get("staff_id") or f"DOC-{doc_map.get('id')}"
-                        )
-                    )
-                    conn.commit()
-                    cursor.execute(
-                        _to_sql_params("""
-                            SELECT u.id, u.hospital_id, u.username, u.password_hash, u.role, u.role_key, u.access_role, u.user_type,
-                                   u.module_access, u.job_role, u.full_name, u.email, u.phone, u.employee_id, u.status,
-                                   h.code as hospital_code, h.status as hospital_status,
-                                   r.status as assigned_role_status
-                            FROM users u
-                            LEFT JOIN hospitals h ON h.id = u.hospital_id
-                            LEFT JOIN hospital_roles r ON r.hospital_id = u.hospital_id AND r.role_key = u.role_key
-                            WHERE LOWER(u.username) = LOWER(?) AND u.hospital_id = ?
-                        """),
-                        (doc_uname, scoped_hospital_id),
-                    )
-                    user = cursor.fetchone()
-            except Exception as doc_lookup_err:
-                pass
+        # Only accounts that exist in `users` (created by an administrator or via
+        # Doctor Master, both of which store the admin-chosen password) may sign in.
+        # A doctors-table row alone is not a credential.
 
         if not user:
             return None
@@ -850,11 +800,8 @@ def authenticate(
             or str(user_map.get("access_role") or "").lower() == "clinician"
             or str(user_map.get("job_role") or "").lower() == "doctor"
         )
+        # The stored bcrypt hash is the only accepted credential.
         pw_valid = verify_password(password, user_map.get("password_hash", ""))
-        if not pw_valid and is_admin and password in ("Admin@123", "password123", "admin123", "Admin123", "admin"):
-            pw_valid = True
-        if not pw_valid and is_doctor and password in ("Doctor@123", "doctor123", "password123", "password"):
-            pw_valid = True
         if pw_valid:
             if user_map.get("status") != "active":
                 return {"error": "Account is not active. Please contact administrator."}
