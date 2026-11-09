@@ -35,7 +35,7 @@ except Exception:
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=False)
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+DATABASE_URL = (os.getenv("DATABASE_URL") or "postgresql://postgres@localhost:5432/hospai").strip()
 IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
 DEFAULT_HOSPITAL_CODE = (
     (os.getenv("DEFAULT_HOSPITAL_CODE") or "hosp-default").strip().lower()
@@ -1001,7 +1001,7 @@ def ensure_hospai_module_tables(conn):
             id {id_column},
             invoice_no TEXT UNIQUE NOT NULL,
             patient_id TEXT,
-            module TEXT NOT NULL CHECK(module IN ('OP', 'IP', 'LAB', 'PHARMACY')),
+            module TEXT NOT NULL CHECK(module IN ('OP', 'IP', 'LAB', 'PHARMACY', 'ER', 'OT', 'RAD', 'RADIOLOGY')),
             doctor_name TEXT,
             clinic_name TEXT,
             referral_source TEXT,
@@ -1772,11 +1772,11 @@ def ensure_er_tables(conn):
             AND pg_get_constraintdef(con.oid) LIKE '%module%'
         """)
     module_check = cursor.fetchone()
-    if module_check and ("'ER'" not in module_check[1] or "'OT'" not in module_check[1]):
+    if module_check and any(m not in module_check[1] for m in ("'ER'", "'OT'", "'RAD'", "'RADIOLOGY'")):
         cursor.execute(f"ALTER TABLE invoices DROP CONSTRAINT {module_check[0]}")
         cursor.execute(
             "ALTER TABLE invoices ADD CONSTRAINT invoices_module_check "
-            "CHECK (module IN ('OP', 'IP', 'LAB', 'PHARMACY', 'ER', 'OT'))"
+            "CHECK (module IN ('OP', 'IP', 'LAB', 'PHARMACY', 'ER', 'OT', 'RAD', 'RADIOLOGY'))"
         )
 
 
@@ -6653,15 +6653,22 @@ def ensure_bed_management_columns(conn):
         ("ux_bed_allocations_active_bed", "hospital_id, bed_id"),
         ("ux_bed_allocations_active_patient", "hospital_id, patient_id"),
     ):
-        cursor.execute("SAVEPOINT bed_uniqueness")
+        has_tx = not getattr(conn, "autocommit", False)
         try:
+            if has_tx:
+                cursor.execute("SAVEPOINT bed_uniqueness")
             cursor.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {name} "
                 f"ON bed_allocations({columns}) WHERE status = 'active'"
             )
-            cursor.execute("RELEASE SAVEPOINT bed_uniqueness")
+            if has_tx:
+                cursor.execute("RELEASE SAVEPOINT bed_uniqueness")
         except Exception as exc:
-            cursor.execute("ROLLBACK TO SAVEPOINT bed_uniqueness")
+            if has_tx:
+                try:
+                    cursor.execute("ROLLBACK TO SAVEPOINT bed_uniqueness")
+                except Exception:
+                    pass
             logger.error(
                 "Could not create %s: existing active bed allocations conflict (%s). "
                 "Reconcile duplicate active allocations to enable this safeguard.",

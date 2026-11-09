@@ -230,7 +230,7 @@ export function printRadiologyDocument(
   const technique = escapeHtml(study.technique || catalogMatch?.technique || "Standard diagnostic protocol.")
   const dateStr = escapeHtml(study.signedAt || study.finalizedAt || study.ordered || new Date().toLocaleDateString("en-IN"))
   const statusStr = escapeHtml((study.status || study.reportStatus || "FINAL").toUpperCase())
-  const techNotes = escapeHtml(study.technicianNotes || "Diagnostic imaging scan performed per protocol. DICOM images ingested into PACS.")
+  const techNotes = escapeHtml(study.operationalNotes || study.technicianNotes || (study as any).operatorNotes || "Diagnostic imaging scan performed per protocol. DICOM images ingested into PACS.")
   const techName = escapeHtml(study.technician || "Radiology Technologist")
   const techSig = escapeHtml(study.technicianSignature || `TECH-SIG-${study.mrn || "88012"}`)
   const radName = escapeHtml(study.radiologist || study.finalizedBy || "Consultant Radiologist")

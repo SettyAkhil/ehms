@@ -19,6 +19,7 @@ import { AuditDatabase } from "./auditDb"
 import { LabOrderDatabase } from "./labOrdersDb"
 import { RadiologyTemplateDatabase, convertHtmlToFormattedText } from "./radiologyTemplateDb"
 import { INITIAL_RADIOLOGY_TARIFFS } from "./radiologyTariffsData"
+import { isLaboratoryTest } from "../utils/testClassifier"
 
 export interface RadiologyActionLog {
   timestamp: string
@@ -110,7 +111,7 @@ const RAD_CHANNEL_NAME = "hospai_rad_channel"
 // In-memory cache variables for instant access
 let cachedStudies: ExtendedRadiologyRecord[] | null = null
 let cacheTimestamp = 0
-const CACHE_TTL_MS = 30000 // Invalidate after 30 seconds or on write/broadcast event
+const CACHE_TTL_MS = 1000 // Invalidate after 1 second or on write/broadcast event
 
 export class RadiologyWorkflowDb {
   /**
@@ -266,12 +267,13 @@ export class RadiologyWorkflowDb {
       }
     }
     if (study.orderDate && study.ordered) {
-      const combined = `${study.orderDate.slice(0, 10)} ${study.ordered}`.trim()
+      const combined = `${study.orderDate.slice(0, 10)} ${study.ordered.replace(/·/g, " ")}`.trim()
       const tComb = new Date(combined).getTime()
       if (!isNaN(tComb) && tComb > 0) return tComb
     }
     if (study.ordered) {
-      const t = new Date(study.ordered).getTime()
+      const clean = study.ordered.replace(/·/g, " ").trim()
+      const t = new Date(clean).getTime()
       if (!isNaN(t) && t > 0) return t
     }
     if (study.paidAt) {
@@ -403,8 +405,20 @@ export class RadiologyWorkflowDb {
     }
 
     try {
-      // 1. Single batch fetch of raw studies and billing data
-      const raw = BillingDatabase.getRadiologyStudies()
+      // 1. Single batch fetch of raw studies using explicit Radiology metadata
+      const raw = BillingDatabase.getRadiologyStudies().filter((s) => {
+        if (!s || !s.study) return false
+        // Exclude pure lab orders if any were incorrectly placed in rad storage
+        if (s.id?.startsWith("LAB-") || (s as any).category === "Laboratory" || (s as any).category === "PATHOLOGY") return false
+        // 1. Standard Radiology ID or Accession Number
+        if (s.id?.startsWith("RAD-") || s.accessionNo?.startsWith("RAD-")) return true
+        // 2. Explicit Department / Category
+        if (s.department === "Radiology" || (s as any).category === "Radiology" || (s as any).category === "Radiology / Imaging") return true
+        // 3. Recognized Modality
+        if (s.modality && ["XR", "CT", "MR", "US", "NM", "X-Ray", "CT Scan", "MRI", "Ultrasound (USG)", "Doppler", "Mammography", "Fluoroscopy / Contrast", "Nuclear Medicine", "DEXA", "Dental", "Interventional Radiology"].includes(s.modality)) return true
+        // 4. Positive classification from classifier
+        return isRadiologyTest(s.study, (s as any).category)
+      })
       const claims = BillingDatabase.getClaims()
       const labOrders = LabOrderDatabase.getOrders()
 
@@ -483,9 +497,9 @@ export class RadiologyWorkflowDb {
             receiptNo ||
             linkedClaim.payments?.[0]?.receiptNo ||
             `RCPT-2026-${linkedClaim.invoiceNo.replace(/\D/g, "").slice(-4) || "5501"}`
-        } else if (paidStudyIds.has(sId) || (sInv ? paidInvoices.has(sInv) : false)) {
+        } else if (paidStudyIds.has(sId) || (sInv ? paidInvoices.has(sInv) : false) || (sEnc ? paidEncounters.has(sEnc) : false)) {
           isPaid = true
-          receiptNo = receiptNo || (sInv && paidInvoices.get(sInv)) || "RCPT-2026-5501"
+          receiptNo = receiptNo || (sInv && paidInvoices.get(sInv)) || (sEnc && paidEncounters.get(sEnc)) || "RCPT-2026-5501"
         } else {
           isPaid = false
         }
@@ -500,11 +514,33 @@ export class RadiologyWorkflowDb {
           ? (ext.billingDiscrepancyReason || `Scan acquisition was completed on ${ext.completedAt || ext.ordered || "prior session"} while billing clearance was pending. Unresolved balance of ₹${study.price || 0}.`)
           : undefined
 
-        // Resolve OP/IP
-        let opNumber = ext.opNumber
+        // Resolve Patient Demographics & OP/IP
+        let resolvedAge = (study as any).age ?? (ext as any).age
+        let resolvedGender = (study as any).gender || (ext as any).gender
+        let resolvedOpNumber = ext.opNumber || (study as any).opNumber
         let ipNumber = ext.ipNumber
-        if (!opNumber && !ipNumber) {
-          opNumber = `OP-${study.mrn || (study.umr || "").replace(/\D/g, "") || "1002"}`
+
+        if ((resolvedAge === undefined || !resolvedGender || !resolvedOpNumber) && ext.encounterId) {
+          try {
+            const enc = db.getEncounterById(ext.encounterId)
+            if (enc) {
+              if (resolvedAge === undefined && enc.age) resolvedAge = enc.age
+              if (!resolvedGender && enc.sex) resolvedGender = enc.sex
+              if (!resolvedOpNumber && enc.opNumber) resolvedOpNumber = enc.opNumber
+            }
+          } catch {}
+        }
+        if ((resolvedAge === undefined || !resolvedGender) && (study.umr || study.mrn)) {
+          try {
+            const p = db.getPatientByUmr(study.umr || study.mrn)
+            if (p) {
+              if (resolvedAge === undefined && p.age) resolvedAge = p.age
+              if (!resolvedGender && p.gender) resolvedGender = p.gender
+            }
+          } catch {}
+        }
+        if (!resolvedOpNumber && !ipNumber) {
+          resolvedOpNumber = `OP-${study.mrn || (study.umr || "").replace(/\D/g, "") || "1002"}`
         }
 
         const billingStatus = isPaid
@@ -528,7 +564,9 @@ export class RadiologyWorkflowDb {
 
         result[i] = {
           ...ext,
-          opNumber,
+          age: resolvedAge,
+          gender: resolvedGender,
+          opNumber: resolvedOpNumber,
           ipNumber,
           orderDate: ext.orderDate || ext.ordered || new Date().toISOString().split("T")[0],
           paymentStatus: isPaid ? "Paid" : "Payment Pending",
@@ -562,6 +600,13 @@ export class RadiologyWorkflowDb {
           ],
         }
       }
+
+      result.sort((a, b) => {
+        const timeA = this.getOrderCreationTimestamp(a)
+        const timeB = this.getOrderCreationTimestamp(b)
+        if (timeA !== timeB) return timeB - timeA // Newest orders first
+        return (b.id || "").localeCompare(a.id || "")
+      })
 
       cachedStudies = result
       cacheTimestamp = now
@@ -1222,9 +1267,14 @@ export class RadiologyWorkflowDb {
       templateName: data.templateName,
       radiologist: data.specialistName,
       reportStatus: data.isFinal ? "Finalized" : "Draft",
+      normalizedReportStatus: data.isFinal ? "Finalized" : "Draft",
+      workflowStatus: data.isFinal ? "FINALIZED" : "DRAFT",
       finalizedAt: data.isFinal ? (study.finalizedAt || nowIso) : undefined,
       finalizedBy: data.isFinal ? (study.finalizedBy || data.specialistName) : undefined,
       finalizedRole: data.isFinal ? (study.finalizedRole || data.specialistRole) : undefined,
+      returnedForCorrectionAt: undefined,
+      returnedForCorrectionBy: undefined,
+      correctionNotes: undefined,
       signedAt: data.isFinal ? (study.signedAt || `${new Date().toLocaleDateString("en-IN")} ${nowTime}`) : study.signedAt,
       status: data.isFinal ? "Final" : "Images Ready",
       history: updatedHistory,
@@ -1507,6 +1557,9 @@ export class RadiologyWorkflowDb {
       submittedForReviewAt: nowIso,
       submittedForReviewBy: author,
       submittedForReviewRole: authorRole,
+      returnedForCorrectionAt: undefined,
+      returnedForCorrectionBy: undefined,
+      correctionNotes: undefined,
       history: updatedHistory,
     } as any)
 
@@ -1923,12 +1976,21 @@ export class RadiologyWorkflowDb {
     } catch {}
     const unsubBilling = BillingDatabase.onUpdate(onSignal)
 
+    if (typeof window !== "undefined") {
+      window.addEventListener("hospai_rad_workflow_updated", onSignal)
+      window.addEventListener("storage", onSignal)
+    }
+
     return () => {
       this._listeners.delete(onSignal)
       unsubBilling()
       try {
         channel?.close()
       } catch {}
+      if (typeof window !== "undefined") {
+        window.removeEventListener("hospai_rad_workflow_updated", onSignal)
+        window.removeEventListener("storage", onSignal)
+      }
     }
   }
 }

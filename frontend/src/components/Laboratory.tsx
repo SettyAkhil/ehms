@@ -730,7 +730,7 @@ export default function Laboratory({
                       }`}
                     >
                       <span className={selectedOrder.billing.status === "Paid" ? "text-emerald-500 text-[8px]" : "text-amber-500 text-[8px]"}>●</span>
-                      <span>Billing: {selectedOrder.billing.status}</span>
+                      <span>Payment: {selectedOrder.billing.status === "Paid" ? "PAID" : "PENDING_PAYMENT"}</span>
                     </span>
                   </div>
                   <span className="text-xs text-gray-500 mt-0.5 block font-mono">
@@ -889,7 +889,7 @@ export default function Laboratory({
                               }`}
                             >
                               <span className={isPaid ? "text-emerald-500 text-[8px]" : "text-amber-500 text-[8px]"}>●</span>
-                              <span>{isPaid ? "Paid" : "Pending"}</span>
+                              <span>{isPaid ? "PAID" : "PENDING_PAYMENT"}</span>
                             </span>
                           </td>
                           <td className="py-3 px-4 border-r border-gray-100">
@@ -1180,7 +1180,7 @@ export default function Laboratory({
                               }`}
                             >
                               <span className={isPaid ? "text-emerald-500 text-[8px]" : "text-amber-500 text-[8px]"}>●</span>
-                              <span>{order.billing.status}</span>
+                              <span>{isPaid ? "PAID" : "PENDING_PAYMENT"}</span>
                             </span>
                           </td>
 

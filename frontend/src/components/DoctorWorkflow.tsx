@@ -4,6 +4,14 @@ import { Btn, Input, StatusBadge } from "./shared"
 import { db, DBOPEncounter, DBPatient } from "../services/db"
 import { doesDoctorMatchEncounter } from "../services/doctorPortalDb"
 import { BillingDatabase, InvoiceItem } from "../services/billingDb"
+import { LabOrderDatabase, priceForTest } from "../services/labOrdersDb"
+import {
+  isRadiologyTest,
+  getModalityForTest,
+  getRoomForModality,
+  resolveInvestigationDepartment,
+} from "../utils/testClassifier"
+import { OpReportsService } from "../services/opReportsDb"
 import {
   PharmacyDatabase,
   AppPrescription,
@@ -769,7 +777,112 @@ export default function DoctorWorkflow({
     })
 
     try {
-      // 1. Update clinical encounter in DB
+      // 1. Separate pure lab tests and radiology studies automatically using configured category / department mapping
+      const labTests = investigations.filter((inv) => !isRadiologyTest(inv))
+      const radTests = investigations.filter((inv) => isRadiologyTest(inv))
+
+      let createdLabOrder: any = undefined
+      const createdStudies: any[] = []
+
+      // Route Laboratory Investigations strictly to Laboratory department
+      if (labTests.length > 0) {
+        createdLabOrder = LabOrderDatabase.createOrder({
+          encounterId: activeEncounter.id,
+          umr: activeEncounter.umr,
+          patientName: activeEncounter.patientName,
+          age: activeEncounter.age,
+          sex: activeEncounter.sex,
+          phone: activeEncounter.phone || activePatientRecord?.phone || "+91 98765 43210",
+          opNumber: activeEncounter.opNumber,
+          doctorId: selectedDoctor.id,
+          doctorName: selectedDoctor.name,
+          department: activeEncounter.dept || selectedDoctor.specialty,
+          diagnosis: diagnosis || clinicalAssessment || activeEncounter.diagnosis || "",
+          clinicalNotes: clinicalAssessment || advice || "",
+          tests: labTests.map((tName) => ({
+            name: tName,
+            category: resolveInvestigationDepartment(tName) || "Laboratory",
+            urgency: "Routine",
+            price: priceForTest(tName),
+          })),
+        })
+      }
+
+      // Route Radiology Investigations strictly to Radiology department
+      if (radTests.length > 0) {
+        radTests.forEach((tName, idx) => {
+          const modality = getModalityForTest(tName)
+          const room = getRoomForModality(modality)
+          const price = priceForTest(tName)
+          const studyId = `RAD-${Date.now().toString().slice(-6)}-${idx + 1}`
+          const study = BillingDatabase.createRadiologyStudy({
+            id: studyId,
+            patient: activeEncounter.patientName,
+            age: activeEncounter.age,
+            gender: activeEncounter.sex,
+            opNumber: activeEncounter.opNumber,
+            mrn: activeEncounter.umr.replace(/\D/g, "") || "10001",
+            umr: activeEncounter.umr,
+            encounterId: activeEncounter.id,
+            department: activeEncounter.dept || selectedDoctor.specialty,
+            diagnosis: diagnosis || clinicalAssessment || activeEncounter.diagnosis || "",
+            study: tName,
+            modality,
+            priority: "Routine",
+            ordered: `${OpReportsService.getEncounterDate(activeEncounter) || new Date().toISOString().split("T")[0]} · ${activeEncounter.registrationTime || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+            orderDate: OpReportsService.getEncounterDate(activeEncounter) || new Date().toISOString().split("T")[0],
+            provider: selectedDoctor.name,
+            status: "Orders",
+            room,
+            price,
+            paymentStatus: "Payment Pending",
+            paymentStatusDisplay: "PENDING",
+            isPaid: false,
+            indication: diagnosis || clinicalAssessment || "Doctor Outpatient Order",
+            technique: `Diagnostic ${modality} imaging scan`,
+          })
+          createdStudies.push(study)
+        })
+      }
+
+      // 2. Create or update centralized consolidated claim in Billing POS Cashier Desk
+      const createdClaim = BillingDatabase.ensureConsolidatedInvestigationClaim({
+        encounter: activeEncounter,
+        doctor: selectedDoctor,
+        labOrder: createdLabOrder,
+        radiologyStudies: createdStudies,
+      })
+
+      // If doctor also added bedside clinical services, merge them into the consolidated claim
+      if (orderedServices.length > 0) {
+        orderedServices.forEach((svc, idx) => {
+          const svcItemId = `ITM-SVC-${idx + 1}-${Date.now()}`
+          if (!createdClaim.items.some((it) => it.description === svc.name)) {
+            createdClaim.items.push({
+              id: svcItemId,
+              description: svc.name,
+              category: svc.category,
+              cptCode: svc.cptCode,
+              quantity: svc.quantity,
+              unitPrice: svc.price,
+              total: svc.price * svc.quantity,
+              insuranceCovered: 0,
+              patientPayable: svc.price * svc.quantity,
+            })
+          }
+        })
+        const subtotal = createdClaim.items.reduce((sum, it) => sum + (it.total || 0), 0)
+        createdClaim.subtotal = subtotal
+        createdClaim.totalAmount = subtotal
+        createdClaim.patientPortion = subtotal
+        createdClaim.balanceDue = Math.max(0, subtotal - (createdClaim.amountPaid || 0))
+        BillingDatabase.updateClaim(createdClaim.id, createdClaim)
+      }
+
+      const servicesTotal = createdClaim.totalAmount
+
+      // 3. Update clinical encounter in DB
+      const hasInvestigations = investigations.length > 0
       db.updateEncounter(activeEncounter.id, {
         assessment: clinicalAssessment,
         diagnosis: diagnosis,
@@ -778,90 +891,18 @@ export default function DoctorWorkflow({
         investigations: investigations,
         services: orderedServices,
         advice: advice,
-        status: "Consultation Completed",
+        status: hasInvestigations ? "Awaiting Billing" : "Consultation Completed",
+        furtherAction: labTests.length > 0
+          ? "Laboratory"
+          : radTests.length > 0
+            ? "Radiology"
+            : rxMode === "DIGITAL" && medications.length > 0
+              ? "Pharmacy"
+              : "None",
         timestamps: {
           ...activeEncounter.timestamps,
           consultationEnd: nowTime,
         },
-      })
-
-      // 2. Aggregate line-item charges for Central Billing UMR Ledger
-      const invoiceItems: InvoiceItem[] = [
-        {
-          id: `ITM-DOC-${Date.now()}`,
-          description: `Specialist Outpatient Consultation (${selectedDoctor.name} - ${selectedDoctor.specialty})`,
-          category: "Consultation",
-          cptCode: "99205",
-          quantity: 1,
-          unitPrice: 100,
-          total: 100,
-          insuranceCovered: 80,
-          patientPayable: 20,
-        },
-        ...orderedServices.map((svc, idx) => ({
-          id: `ITM-SVC-${idx + 1}-${Date.now()}`,
-          description: svc.name,
-          category: svc.category,
-          cptCode: svc.cptCode,
-          quantity: svc.quantity,
-          unitPrice: svc.price,
-          total: svc.price * svc.quantity,
-          insuranceCovered: Math.round(svc.price * svc.quantity * 0.8),
-          patientPayable: Math.round(svc.price * svc.quantity * 0.2),
-        })),
-        ...investigations.map((inv, idx) => {
-          const invPrice = inv.includes("MRI")
-            ? 350
-            : inv.includes("Ultrasound")
-              ? 100
-              : inv.includes("ECG")
-                ? 50
-                : inv.includes("X-Ray")
-                  ? 60
-                  : 50
-          return {
-            id: `ITM-INV-${idx + 1}-${Date.now()}`,
-            description: `Diagnostic Investigation: ${inv}`,
-            category: (inv.includes("MRI") ||
-            inv.includes("X-Ray") ||
-            inv.includes("Ultrasound")
-              ? "Radiology / Imaging"
-              : "Laboratory") as any,
-            cptCode: inv.includes("MRI")
-              ? "70551"
-              : inv.includes("ECG")
-                ? "93000"
-                : "80050",
-            quantity: 1,
-            unitPrice: invPrice,
-            total: invPrice,
-            insuranceCovered: Math.round(invPrice * 0.8),
-            patientPayable: Math.round(invPrice * 0.2),
-          }
-        }),
-      ]
-
-      const servicesTotal = invoiceItems.reduce((acc, it) => acc + it.total, 0)
-
-      // 3. Create active Invoice directly in Central Billing POS Cashier Desk
-      const createdClaim = BillingDatabase.createClaim({
-        patientId: activeEncounter.umr,
-        mrn: activeEncounter.umr.replace(/\D/g, "") || "10001",
-        patientName: activeEncounter.patientName,
-        age: activeEncounter.age,
-        gender: activeEncounter.sex as any,
-        phone: activePatientRecord?.phone || "+91 98765 43210",
-        encounterId: activeEncounter.id,
-        department: "Outpatient",
-        carePathway: `OP Consultation & Procedures (${activeEncounter.dept || selectedDoctor.specialty})`,
-        dateOfService: new Date().toISOString().split("T")[0],
-        insuranceProvider:
-          (activePatientRecord as any)?.insurance || "Self-Pay",
-        attendingDoctor: selectedDoctor.name,
-        diagnosisCodes: [icd10 || "I20.9"],
-        items: invoiceItems,
-        status: "Accepted",
-        finalizedByNurse: "Nurse Lead (OPD)",
       })
 
       // 4. Update Department Charge record as Invoiced in Central Billing
@@ -880,7 +921,7 @@ export default function DoctorWorkflow({
           (activePatientRecord as any)?.insurance || "Self-Pay",
         attendingDoctor: selectedDoctor.name,
         diagnosisCodes: [icd10 || "I20.9"],
-        items: invoiceItems,
+        items: createdClaim.items,
         subtotal: servicesTotal,
         totalAmount: servicesTotal,
         status: "Invoiced in Central Billing",

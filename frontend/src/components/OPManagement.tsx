@@ -1446,9 +1446,13 @@ export default function OPManagement({
                 {
                   stage: "Physician Consultation",
                   status:
-                    selectedJourneyEncounter.status === "Under Consultation" ||
-                    selectedJourneyEncounter.status === "OP Completed"
+                    selectedJourneyEncounter.status === "Consultation Completed" ||
+                    selectedJourneyEncounter.status === "OP Completed" ||
+                    selectedJourneyEncounter.status === "Awaiting Billing" ||
+                    selectedJourneyEncounter.status === "Billing Completed"
                       ? "Completed"
+                      : selectedJourneyEncounter.status === "Under Consultation"
+                      ? "In Progress"
                       : "Pending",
                   desc: selectedJourneyEncounter.assignedDoctor
                     ? `Doctor: ${selectedJourneyEncounter.assignedDoctor}`

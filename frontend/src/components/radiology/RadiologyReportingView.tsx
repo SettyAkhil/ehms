@@ -410,19 +410,6 @@ export default function RadiologyReportingView({
     }
 
     if (
-      nrs === "correction required" ||
-      nrs === "needs correction" ||
-      rs === "correction required" ||
-      rs === "correction_required" ||
-      rs === "needs correction" ||
-      rs === "correction" ||
-      ws === "correction_required" ||
-      Boolean(s.returnedForCorrectionAt)
-    ) {
-      return "correction"
-    }
-
-    if (
       nrs === "submitted for review" ||
       nrs === "under review" ||
       rs === "submitted for review" ||
@@ -446,6 +433,19 @@ export default function RadiologyReportingView({
       ws === "draft_saved"
     ) {
       return "draft"
+    }
+
+    if (
+      nrs === "correction required" ||
+      nrs === "needs correction" ||
+      rs === "correction required" ||
+      rs === "correction_required" ||
+      rs === "needs correction" ||
+      rs === "correction" ||
+      ws === "correction_required" ||
+      Boolean(s.returnedForCorrectionAt)
+    ) {
+      return "correction"
     }
 
     return "pending"

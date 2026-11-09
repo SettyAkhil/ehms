@@ -82,8 +82,8 @@ def billing_create_invoice():
     if validation_error:
         return validation_error
     module = str(payload.get("module") or "").strip().upper()
-    if module not in {"OP", "IP", "LAB", "PHARMACY", "ER", "OT"}:
-        return jsonify({"error": "module must be one of OP, IP, LAB, PHARMACY, ER, OT"}), 400
+    if module not in {"OP", "IP", "LAB", "PHARMACY", "ER", "OT", "RAD", "RADIOLOGY"}:
+        return jsonify({"error": "module must be one of OP, IP, LAB, PHARMACY, ER, OT, RAD, RADIOLOGY"}), 400
     payload["module"] = module
     invoice_no = (
         payload.get("invoice_no") or new_invoice_no("INV")

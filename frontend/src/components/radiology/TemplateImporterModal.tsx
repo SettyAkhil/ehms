@@ -134,8 +134,8 @@ export default function TemplateImporterModal({
   const [rightZoom, setRightZoom] = useState(1.0)
   const [syncZoom, setSyncZoom] = useState(true)
 
-  // Extracted-Text Reviewer & Completeness State
-  const [leftViewTab, setLeftViewTab] = useState<"source" | "extracted_text">("source")
+  // Extracted-Text Reviewer & Completeness State (defaults to extracted text instead of image)
+  const [leftViewTab, setLeftViewTab] = useState<"source" | "extracted_text">("extracted_text")
   const [editingExtractedText, setEditingExtractedText] = useState<string>("")
   const [isRetrying, setIsRetrying] = useState<boolean>(false)
 

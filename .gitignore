@@ -86,3 +86,8 @@ pnpm-debug.log*
 ehthumbs.db
 Thumbs.db
 desktop.ini
+
+# Temporary local artifacts
+cookie.txt
+project-structure.txt
+scratch/

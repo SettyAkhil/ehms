@@ -914,6 +914,59 @@ def public_patient_card(token):
     return response
 
 
+@patients_bp.get("/api/public/patient/<patient_id>")
+@limiter.limit("60 per minute")
+def public_patient_by_id(patient_id):
+    """No login: public lookup for scanned cards by patient ID / UMR."""
+    hospital_id = current_hospital_id()
+    journey = get_patient_journey(patient_id, hospital_id=hospital_id)
+    stored = get_patient(patient_id, hospital_id=hospital_id)
+    if journey is None and not stored:
+        return jsonify({"error": "Patient not found"}), 404
+    patient_raw = (journey["patient"] if journey else dict(stored)) if (journey or stored) else {}
+    patient = {k: patient_raw.get(k) for k in _PUBLIC_PATIENT_FIELDS}
+    try:
+        visits = get_op_patient_history(patient_id, hospital_id=hospital_id) or []
+    except Exception:
+        visits = []
+    bed = None
+    try:
+        for row in list_beds(hospital_id):
+            r = dict(row)
+            if r.get("status") == "Occupied" and r.get("patient_id") == patient_id:
+                bed = {k: r.get(k) for k in ("ward", "room_no", "bed_no", "bed_type", "allocated_at", "admission_date", "admission_notes")}
+                break
+    except Exception:
+        bed = None
+    try:
+        icu_days = rows_to_dicts(list_icu_flowsheets(patient_id))
+    except Exception:
+        icu_days = []
+    hospital_name = None
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM hospitals WHERE id = ?", (hospital_id,))
+            row = cursor.fetchone()
+            hospital_name = row["name"] if row else None
+    except Exception:
+        hospital_name = None
+    response = jsonify(
+        {
+            "patient": patient,
+            "hospital": {"name": hospital_name},
+            "events": journey.get("events", []) if journey else [],
+            "summary": journey.get("summary") if journey else {},
+            "visits": visits if isinstance(visits, list) else visits.get("visits", []),
+            "bed": bed,
+            "icu_days": icu_days,
+        }
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 @patients_bp.post("/api/patients/<patient_id>/movements")
 @require_permissions("patients.clinical.write")
 def patient_movements_create(patient_id):

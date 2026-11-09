@@ -16,8 +16,10 @@ import {
   BillingDatabase,
   type ClaimRecord,
   type DepartmentType,
+  type RadiologyStudyRecord,
 } from "../../services/billingDb"
 import { LabOrderDatabase, type LabOrder } from "../../services/labOrdersDb"
+import { RadiologyWorkflowDb } from "../../services/radiologyWorkflowDb"
 import { claimAmountOf, claimStage, isInsured } from "../insurance/ClaimPanel"
 import {
   BillingHeader,
@@ -93,6 +95,7 @@ export default function BillingDashboard({
   const [claims, setClaims] = useState<ClaimRecord[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [labQueue, setLabQueue] = useState<LabOrder[]>([])
+  const [radQueue, setRadQueue] = useState<RadiologyStudyRecord[]>([])
   const [filter, setFilter] = useState<"all" | CounterKey>("all")
   const [now, setNow] = useState(() => new Date())
 
@@ -106,10 +109,25 @@ export default function BillingDashboard({
     const loadLab = () => setLabQueue(LabOrderDatabase.getBillingQueue())
     loadLab()
     const unLab = LabOrderDatabase.subscribe(loadLab)
+    const loadRad = () => {
+      const allRad = BillingDatabase.getRadiologyStudies()
+      setRadQueue(
+        allRad.filter(
+          (s) =>
+            !s.isPaid &&
+            s.paymentStatus !== "Paid" &&
+            (s.paymentStatusDisplay || "").toUpperCase() !== "PAID" &&
+            s.billingStatus !== "Authorized Exception",
+        ),
+      )
+    }
+    loadRad()
+    const unRad = RadiologyWorkflowDb.subscribe(loadRad)
     const clock = window.setInterval(() => setNow(new Date()), 30_000)
     return () => {
       unBilling()
       unLab()
+      unRad()
       window.clearInterval(clock)
     }
   }, [])
@@ -152,6 +170,11 @@ export default function BillingDashboard({
   const kpi = useMemo(() => {
     const aged = unpaid.filter((c) => ageDays(c.dateOfService) > 30)
     const open = claims.filter((c) => isInsured(c) && claimStage(c) !== "Settled")
+    const invCount = labQueue.length + radQueue.length
+    const invAmount =
+      labQueue.reduce((a, o) => a + (o.billing.total || 0), 0) +
+      radQueue.reduce((a, s) => a + (s.price || 0), 0)
+
     return {
       waiting: unpaid.length,
       due: unpaid.reduce((a, c) => a + (c.balanceDue || 0), 0),
@@ -159,10 +182,12 @@ export default function BillingDashboard({
       agedAmount: aged.reduce((a, c) => a + (c.balanceDue || 0), 0),
       claimsOpen: open.length,
       toClaim: open.filter((c) => claimStage(c) === "To claim").length,
+      investigationCount: invCount,
+      investigationAmount: invAmount,
       labCount: labQueue.length,
       labAmount: labQueue.reduce((a, o) => a + (o.billing.total || 0), 0),
     }
-  }, [claims, unpaid, labQueue])
+  }, [claims, unpaid, labQueue, radQueue])
 
   const counters = useMemo(
     () =>
@@ -265,9 +290,9 @@ export default function BillingDashboard({
           <KpiTile
             tone="sky"
             icon={FlaskConical}
-            label="Lab bills waiting"
-            value={kpi.labCount}
-            sub={`${inr(kpi.labAmount)} — tests held until paid`}
+            label="Investigations waiting"
+            value={kpi.investigationCount}
+            sub={`${inr(kpi.investigationAmount)} — tests & scans held until paid`}
             onClick={() => onNavigate("lab_billing")}
           />
         </div>

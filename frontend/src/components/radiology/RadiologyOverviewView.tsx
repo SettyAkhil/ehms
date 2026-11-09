@@ -21,12 +21,11 @@ import { RADIOLOGY_MODALITIES } from "../../services/radiologyTariffsData"
 
 interface RadiologyOverviewViewProps {
   onNavigateToView: (view: string, subParam?: string) => void
-  onOpenOrderModal: () => void
+  onOpenOrderModal?: () => void
 }
 
 export default function RadiologyOverviewView({
   onNavigateToView,
-  onOpenOrderModal,
 }: RadiologyOverviewViewProps) {
   const [tick, setTick] = useState(0)
 
@@ -324,23 +323,29 @@ export default function RadiologyOverviewView({
             </div>
 
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-              {auditEvents.slice(0, 8).map((ev) => (
-                <div key={ev.id} className="flex items-start gap-2.5 text-[12px] border-b border-slate-100 pb-2.5 last:border-b-0">
-                  <div className="w-2 h-2 rounded-full bg-[#1B4FD8] mt-1.5 shrink-0"></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-[#0F172A]">{ev.action}</span>
-                      <span className="text-[10px] text-[#64748B] font-mono">
-                        {new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p className="text-[11.5px] text-[#475569] truncate">{ev.details}</p>
-                    <div className="text-[10.5px] text-[#94A3B8] mt-0.5">
-                      {ev.actor} ({ev.role})
+              {auditEvents.length === 0 ? (
+                <div className="py-10 text-center text-slate-400 text-[12px]">
+                  No recent scanning activity. Scans started or completed by technologists will appear here in real time.
+                </div>
+              ) : (
+                auditEvents.slice(0, 8).map((ev) => (
+                  <div key={ev.id} className="flex items-start gap-2.5 text-[12px] border-b border-slate-100 pb-2.5 last:border-b-0">
+                    <div className="w-2 h-2 rounded-full bg-[#1B4FD8] mt-1.5 shrink-0"></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-[#0F172A]">{ev.action}</span>
+                        <span className="text-[10px] text-[#64748B] font-mono">
+                          {new Date(ev.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <p className="text-[11.5px] text-[#475569] truncate">{ev.details}</p>
+                      <div className="text-[10.5px] text-[#94A3B8] mt-0.5">
+                        {ev.actor} ({ev.role})
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>
