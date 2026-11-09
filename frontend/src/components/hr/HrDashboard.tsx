@@ -56,9 +56,7 @@ export default function HrDashboard({ onNavigate }: { onNavigate: (to: Dashboard
         </div>
       </div>
 
-      {d.loading && !d.data ? <Loading /> : d.error ? <ErrorState error={d.error} onRetry={d.reload} /> : d.data && (d.data.employees?.total ?? 0) === 0 ? (
-        <Panel><Empty title="No employees recorded yet" hint="Set up departments under Organization, then add or import employees. Every figure here is computed from those records." /></Panel>
-      ) : d.data ? <Body d={d.data} onNavigate={onNavigate} /> : null}
+      {d.loading && !d.data ? <Loading /> : d.error ? <ErrorState error={d.error} onRetry={d.reload} /> : d.data ? <Body d={d.data} onNavigate={onNavigate} /> : null}
     </div>
   )
 }
@@ -85,6 +83,27 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
 
   return (
     <>
+      {(employees.total ?? 0) === 0 && (
+        <div className="bg-gradient-to-r from-teal-50/80 via-white to-blue-50/80 border border-teal-200/80 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-teal-100/80 text-teal-700 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Fresh HR & Staff Database Initialized</h3>
+              <p className="text-xs text-gray-500">The database is clean and ready. Add your hospital staff, doctors, nurses, and administrative personnel to begin.</p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigate({ section: "employees" })}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold shadow-xs transition-colors shrink-0 cursor-pointer"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>+ Add First Employee</span>
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Hero
           icon={Users}

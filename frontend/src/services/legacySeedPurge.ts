@@ -45,7 +45,7 @@ export const SEED_LAB_ORDERS: readonly SeedFingerprint[] = [
 export function purgeAllLegacySeedData(force = false): void {
   if (typeof window === "undefined") return
 
-  const PURGE_FLAG = "hospai_seeds_purged_v15"
+  const PURGE_FLAG = "hospai_seeds_purged_v16"
   if (!force && localStorage.getItem(PURGE_FLAG) === "true") return
 
   const keysToResetEmptyArray = [
@@ -107,6 +107,19 @@ export function purgeAllLegacySeedData(force = false): void {
     "hospai_pharm_grns_v1",
     "hospai_pharm_returns_v1",
     "hospai_pharm_audit_logs_v1",
+    "hrms_staff_list",
+    "hrms_attendance",
+    "hrms_leaves",
+    "hrms_credentials",
+    "hrms_staff_loans",
+    "hrms_payroll_run",
+    "hrms_departments",
+    "hrms_payroll",
+    "hosp_hrms_staff",
+    "hospai_hr_employees",
+    "hospai_hr_attendance",
+    "hospai_hr_leaves",
+    "hospai_hr_payroll",
   ]
 
   keysToResetEmptyArray.forEach((k) => {
@@ -200,6 +213,9 @@ export function purgeAllLegacySeedData(force = false): void {
       "hms_icu_admission_acks",
       "hospai_token_",
       "hospai_encounter_",
+      "hrms_",
+      "hosp_hrms",
+      "hospai_hr_",
     ]
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
