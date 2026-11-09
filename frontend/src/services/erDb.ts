@@ -581,11 +581,69 @@ export class ErDatabase {
 
       const parsed = JSON.parse(data)
 
-      // Purge legacy mock seed records
+      // Purge legacy mock seed records & duplicate visits
       if (key === ER_STORAGE_KEY_VISITS && Array.isArray(parsed)) {
-        const filtered = parsed.filter(
+        let filtered = parsed.filter(
           (v: any) => v && !String(v.id).startsWith("ER-2024") && !String(v.id).startsWith("ER-2025") && v.patient_name !== "John" && v.patient_name !== "Rahul" && v.patient_name !== "Robert"
         )
+
+        // Deduplicate duplicate visits for the same patient (never allow duplicate active visits)
+        const activeVisits = filtered.filter(
+          (v: any) => v && v.status !== "closed" && v.status !== "discharged"
+        )
+        const toRemoveIds = new Set<string>()
+        const seenActivePatients: any[] = []
+
+        for (const v of activeVisits) {
+          const vPid = (v.patient_id || v.patient?.patient_id || "").trim().toUpperCase()
+          const vName = (v.patient_name || v.patient?.name || "").trim().toLowerCase()
+          const vLast = (v.patient_last_name || v.patient?.last_name || "").trim().toLowerCase()
+          const vPhone = (v.patient_phone || v.patient?.phone || "").replace(/\D/g, "")
+
+          const duplicateOf = seenActivePatients.find((prev) => {
+            const prevPid = (prev.patient_id || prev.patient?.patient_id || "").trim().toUpperCase()
+            const prevName = (prev.patient_name || prev.patient?.name || "").trim().toLowerCase()
+            const prevLast = (prev.patient_last_name || prev.patient?.last_name || "").trim().toLowerCase()
+            const prevPhone = (prev.patient_phone || prev.patient?.phone || "").replace(/\D/g, "")
+
+            // 1. Same UHID
+            if (vPid && prevPid && vPid === prevPid) return true
+            // 2. Same Phone (10 digits)
+            if (vPhone && prevPhone && vPhone.length >= 10 && vPhone === prevPhone) return true
+            // 3. Same full name
+            if (vName && prevName && vName === prevName) {
+              if (vLast && prevLast && vLast === prevLast) return true
+              if (!vLast || !prevLast) return true
+            }
+            return false
+          })
+
+          if (duplicateOf) {
+            // Rank them: decide which one to keep
+            // Prefer triaged visits with specific bed over default/placeholder B1 Resuscitation
+            const vIsBetter = (v.status === "triaged" && v.triage_category && !v.triage_category.includes("Resuscitation"))
+            const prevIsBetter = (duplicateOf.status === "triaged" && duplicateOf.triage_category && !duplicateOf.triage_category.includes("Resuscitation"))
+
+            if (vIsBetter && !prevIsBetter) {
+              // Mark prev for removal, keep v
+              toRemoveIds.add(String(duplicateOf.id))
+              if (duplicateOf.visit_no) toRemoveIds.add(String(duplicateOf.visit_no))
+              const idx = seenActivePatients.indexOf(duplicateOf)
+              if (idx >= 0) seenActivePatients[idx] = v
+            } else {
+              // Keep prev, mark v for removal
+              toRemoveIds.add(String(v.id))
+              if (v.visit_no) toRemoveIds.add(String(v.visit_no))
+            }
+          } else {
+            seenActivePatients.push(v)
+          }
+        }
+
+        if (toRemoveIds.size > 0) {
+          filtered = filtered.filter((v: any) => !toRemoveIds.has(String(v.id)) && (!v.visit_no || !toRemoveIds.has(String(v.visit_no))))
+        }
+
         if (filtered.length !== parsed.length) {
           window.localStorage.setItem(key, JSON.stringify(filtered))
         }
@@ -934,7 +992,42 @@ export class ErDatabase {
 
     this.ensureDynamicActiveVisits(visits)
 
-    const sorted = [...visits].sort((a, b) => {
+    // Deduplicate active visits so only one active encounter per patient is displayed
+    const seenActiveKeys = new Set<string>()
+    const deduplicated: ErVisitRecord[] = []
+    let hasDupes = false
+
+    for (const v of visits) {
+      const isActive =
+        v.status !== "closed" &&
+        v.status !== "discharged" &&
+        v.disposition !== "Discharged" &&
+        v.disposition !== "Transferred"
+      if (!isActive) {
+        deduplicated.push(v)
+        continue
+      }
+
+      const pId = (v.patient_id || v.patient?.patient_id || "").trim().toUpperCase()
+      const pPhone = (v.patient_phone || v.patient?.phone || "").replace(/\D/g, "").slice(-10)
+      const pName = `${v.patient_name || v.patient?.name || ""} ${v.patient_last_name || v.patient?.last_name || ""}`.trim().toLowerCase()
+
+      const key = pId || (pPhone.length >= 10 ? `ph_${pPhone}` : (pName ? `nm_${pName}` : `id_${v.id}`))
+      if (seenActiveKeys.has(key)) {
+        hasDupes = true
+        continue
+      }
+      seenActiveKeys.add(key)
+      deduplicated.push(v)
+    }
+
+    if (hasDupes) {
+      try {
+        this.save(ER_STORAGE_KEY_VISITS, deduplicated)
+      } catch {}
+    }
+
+    const sorted = [...deduplicated].sort((a, b) => {
       const timeB = new Date(b.arrival_at || (b as any).created_at || (b as any).arrivalDate || 0).getTime()
       const timeA = new Date(a.arrival_at || (a as any).created_at || (a as any).arrivalDate || 0).getTime()
       return timeB - timeA || b.id - a.id
@@ -1449,6 +1542,10 @@ export class ErDatabase {
 
     assignedSpecialty?: string
 
+    triageCategory?: string
+
+    triageBedLabel?: string
+
     /** Rule-based triage only, no LLM call -- for generated demo visits. */
     skipAiTriage?: boolean
   }): Promise<{ visit: ErVisitRecord ;patient: ErPatient | null }> {
@@ -1513,6 +1610,44 @@ export class ErDatabase {
     }
 
     const visits = this.getVisits("all")
+
+    // Guard against duplicate active visits for the same patient in ER
+    if (patient) {
+      const activeVisits = visits.filter((v) => {
+        const isActive =
+          v.status !== "closed" &&
+          v.status !== "discharged" &&
+          v.disposition !== "Discharged" &&
+          v.disposition !== "Transferred"
+        if (!isActive) return false
+        const vPid = (v.patient_id || v.patient?.patient_id || "").trim().toUpperCase()
+        const pPid = (patient!.patient_id || "").trim().toUpperCase()
+        if (vPid && pPid && vPid === pPid) return true
+        const vPhone = (v.patient_phone || v.patient?.phone || "").replace(/\D/g, "").slice(-10)
+        const pPhone = (patient!.phone || "").replace(/\D/g, "").slice(-10)
+        if (vPhone && pPhone && vPhone.length === 10 && vPhone === pPhone) return true
+        return false
+      })
+
+      if (activeVisits.length > 0) {
+        const existingVisit = activeVisits[0]
+        if (visitData.triageCategory) {
+          existingVisit.triage_category = visitData.triageCategory
+          existingVisit.status = "triaged"
+        }
+        if (visitData.triageBedLabel) {
+          existingVisit.triage_bed_label = visitData.triageBedLabel
+        }
+        if (visitData.assignedDoctorName) {
+          existingVisit.doctor_name = visitData.assignedDoctorName
+        }
+        if (visitData.complaintText && visitData.complaintText.trim()) {
+          existingVisit.chief_complaint = visitData.complaintText.trim()
+        }
+        this.save(ER_STORAGE_KEY_VISITS, visits)
+        return { visit: existingVisit, patient }
+      }
+    }
 
     const nextId =
       visits.length > 0 ? Math.max(...visits.map((v) => v.id)) + 1 : 101
@@ -1623,9 +1758,56 @@ export class ErDatabase {
 
     const effectivePid = patient?.patient_id || visitData.patientId
 
-    const priorVisits = effectivePid
-      ? this.getVisitsByPatient(effectivePid, patient?.name, patient?.phone)
-      : []
+    // Strict Multi-Encounter Guard: An emergency patient cannot have multiple concurrent open/active visits!
+    const effectivePidClean = (effectivePid || "").trim().toUpperCase()
+    const pNameClean = (visitData.patientDetails?.name || patient?.name || "").trim().toLowerCase()
+    const pLastClean = (visitData.patientDetails?.last_name || patient?.last_name || "").trim().toLowerCase()
+    const pPhoneClean = (visitData.patientDetails?.phone || patient?.phone || "").replace(/\D/g, "")
+
+    const existingActive = visits.find((v) => {
+      if (!v || v.status === "closed" || v.status === "discharged") return false
+      const vPid = (v.patient_id || v.patient?.patient_id || "").trim().toUpperCase()
+      // 1. Match by UHID/patient_id (most reliable)
+      if (effectivePidClean && vPid && vPid === effectivePidClean) return true
+      const vName = (v.patient_name || v.patient?.name || "").trim().toLowerCase()
+      const vLast = (v.patient_last_name || v.patient?.last_name || "").trim().toLowerCase()
+      const vPhone = (v.patient_phone || v.patient?.phone || "").replace(/\D/g, "")
+      // 2. Match by first name + last name (even if one side is missing last name, still try phone)
+      if (pNameClean && vName === pNameClean) {
+        // Both have last name and they match → definite duplicate
+        if (pLastClean && vLast && pLastClean === vLast) return true
+        // Last name matches for the one that has it, other doesn't → check phone too
+        if (pLastClean && !vLast && pPhoneClean && vPhone && pPhoneClean === vPhone) return true
+        if (!pLastClean && vLast && pPhoneClean && vPhone && pPhoneClean === vPhone) return true
+        // Both have phone and match → strong signal even without last name
+        if (pPhoneClean && pPhoneClean.length === 10 && vPhone && vPhone === pPhoneClean) return true
+        // Both have no phone and no last name → same first name, treat as same patient
+        if (!pPhoneClean && !vPhone && !pLastClean && !vLast) return true
+      }
+      // 3. Same phone + similar name (phone is unique per patient — catch renames)
+      if (pPhoneClean && pPhoneClean.length === 10 && vPhone && vPhone === pPhoneClean) {
+        // Phone matches — strong uniqueness signal
+        return true
+      }
+      return false
+    })
+
+    if (existingActive) {
+      console.warn(`[ErDatabase] Patient already has active ER visit ${existingActive.visit_no}. Updating existing encounter instead of creating duplicate.`)
+      if (visitData.triageCategory) {
+        existingActive.triage_category = visitData.triageCategory
+        existingActive.status = "triaged"
+      }
+      if (visitData.triageBedLabel) {
+        existingActive.triage_bed_label = visitData.triageBedLabel
+      }
+      if (visitData.complaintText && (!existingActive.complaints || existingActive.complaints.length === 0)) {
+        existingActive.complaints = complaintsList
+      }
+      if (patient) existingActive.patient = patient
+      this.save(ER_STORAGE_KEY_VISITS, visits)
+      return { visit: existingActive, patient: patient || existingActive.patient || null }
+    }
 
     const newRecord: ErVisitRecord = {
       id: nextId,
@@ -1656,7 +1838,7 @@ export class ErDatabase {
 
       arrival_at: arrivalTimestamp,
 
-      status: "registered",
+      status: visitData.triageCategory ? "triaged" : "registered",
 
       assigned_doctor_name: finalDoctorName,
 
@@ -1666,9 +1848,9 @@ export class ErDatabase {
 
       doctor_accepted_at: null,
 
-      triage_category: triageCalc.categoryCode,
+      triage_category: visitData.triageCategory || triageCalc.categoryCode,
 
-      triage_bed_label: triageCalc.triageBedLabel,
+      triage_bed_label: visitData.triageBedLabel || triageCalc.triageBedLabel,
 
       closed_at: null,
 
@@ -1703,15 +1885,15 @@ export class ErDatabase {
       vitals: vitalsList,
 
       triage: {
-        category: triageCalc.categoryCode,
+        category: visitData.triageCategory || triageCalc.categoryCode,
 
-        triage_bed_label: triageCalc.triageBedLabel,
+        triage_bed_label: visitData.triageBedLabel || triageCalc.triageBedLabel,
 
         reason: triageCalc.reasoning,
 
         triaged_at: now,
 
-        assigned_by: "AI Triage Assistant",
+        assigned_by: visitData.triageCategory ? "Intake Staff" : "AI Triage Assistant",
       },
 
       treatments: [],
@@ -1724,6 +1906,7 @@ export class ErDatabase {
 
       consents: [],
     }
+
 
     visits.unshift(newRecord)
 
@@ -2018,13 +2201,42 @@ export class ErDatabase {
       allocated_at: null,
     }
 
+    if (!visit.bed_requests) visit.bed_requests = []
     visit.bed_requests.push(newItem)
 
     this.updateVisit(visitId, {
       bed_requests: visit.bed_requests,
-
       status: "bed_requested",
     })
+
+    try {
+      ErDatabase.dispatchBedTransferAlert({
+        patient_id: visit.patient_id,
+        patient_name:
+          visit.patient_name ||
+          (visit.patient as any)?.name ||
+          (visit.is_unknown_patient
+            ? visit.unknown_patient_label || "Unknown Patient"
+            : "Patient"),
+        patient_last_name: visit.patient_last_name || (visit.patient as any)?.last_name || "",
+        patient_age: visit.patient_age,
+        patient_gender: visit.patient_gender,
+        patient_phone: visit.patient_phone,
+        source_department: `Emergency Department (${visit.triage?.triage_bed_label || visit.triage_bed_label || "Triage Bay"})`,
+        target_destination: newItem.requested_level_of_care,
+        target_bed_type: newItem.requested_level_of_care.toLowerCase().includes("icu") ? "ICU" : "General",
+        target_ward: newItem.requested_level_of_care.toLowerCase().includes("icu") ? "Intensive Care Unit (ICU)" : "3N Medical/Surgical",
+        priority: "High Priority",
+        clinical_reason: `Emergency admission bed request (${newItem.requested_level_of_care}).`,
+        sent_by: visit.assigned_doctor_name || "Emergency Staff",
+        er_visit_id: visit.id,
+        er_bed_request_id: newItem.id,
+      })
+    } catch {}
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
+    }
 
     return newItem
   }
@@ -2356,6 +2568,10 @@ export class ErDatabase {
           : null,
     })
 
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
+    }
+
     return disp
   }
 
@@ -2381,9 +2597,10 @@ export class ErDatabase {
 
           patient_name:
             v.patient_name ||
+            (v.patient as any)?.name ||
             (v.is_unknown_patient ? v.unknown_patient_label : "Patient"),
 
-          patient_last_name: v.patient_last_name || "",
+          patient_last_name: v.patient_last_name || (v.patient as any)?.last_name || "",
 
           is_unknown_patient: v.is_unknown_patient,
 
@@ -2830,11 +3047,11 @@ export class ErDatabase {
       // Critical Priority (B1 - Red)
 
       if (
-        spo2 < 85 ||
-        sys < 80 ||
+        (spo2 > 0 && spo2 < 85) ||
+        (sys > 0 && sys < 80) ||
         hr > 140 ||
-        hr < 40 ||
-        gcs < 9 ||
+        (hr > 0 && hr < 40) ||
+        (gcs > 0 && gcs < 9) ||
         cons.includes("unresponsive") ||
         cons.includes("comatose") ||
         c.includes("cardiac arrest") ||

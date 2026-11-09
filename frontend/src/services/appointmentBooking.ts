@@ -45,9 +45,9 @@ export interface BookedAppointment {
   time: string
 }
 
-export function bookAppointment(
+export async function bookAppointment(
   booking: AppointmentBooking,
-): BookedAppointment {
+): Promise<BookedAppointment> {
   const sex =
     booking.sex === "Female"
       ? "Female"
@@ -99,7 +99,8 @@ export function bookAppointment(
 
   // Walk-in: register the patient and the encounter, then assign the doctor.
   const parts = booking.patient.trim().split(" ")
-  const { encounter } = db.registerNewPatient({
+  // Registered on the server first; nothing is shown as booked if this fails.
+  const { encounter } = await db.registerNewPatientConfirmed({
     firstName: parts[0],
     lastName: parts.slice(1).join(" ") || "Patient",
     age: booking.age,

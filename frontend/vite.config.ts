@@ -29,20 +29,9 @@ function portUp(port: number): Promise<boolean> {
 
 function getSafeFallbackPayload(urlOrPath: string): any {
   const p = (urlOrPath || "").toLowerCase()
-  if (p.includes("/auth/login")) {
-    return {
-      status: "success",
-      authenticated: true,
-      user: { id: "ADM-001", username: "admin", role: "admin", name: "Administrator" },
-      token: "mock_jwt_token",
-    }
-  }
-  if (p.includes("/auth/session")) {
-    return {
-      authenticated: true,
-      user: { id: "ADM-001", username: "admin", role: "admin", name: "Administrator" },
-    }
-  }
+  // Authentication is never a development fallback. A running backend must
+  // validate credentials and issue the HttpOnly session cookie.
+  if (p.includes("/auth/")) return null
   if (p.includes("/er/visits")) {
     return { visits: [] }
   }
@@ -416,6 +405,10 @@ function hmsApiMockMiddleware() {
       }
 
       // Route-specific stand-ins when port 8010 is down
+      if (pathname.startsWith("/api/auth/")) {
+        res.statusCode = 503
+        return sendJson({ error: "Authentication service is unavailable." })
+      }
       const fallback = getSafeFallbackPayload(pathname)
       if (fallback) return sendJson(fallback)
       return sendJson({ ok: true, items: [] })

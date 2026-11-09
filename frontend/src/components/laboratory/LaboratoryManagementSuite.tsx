@@ -147,6 +147,8 @@ export default function LaboratoryManagementSuite({
   const [currentTab, setCurrentTab] = useState<LisSubModule>(normalizeKey(activeSubPage))
   const [activeOrderForBench, setActiveOrderForBench] = useState<LabOrder | null>(null)
   const [activeTestForBench, setActiveTestForBench] = useState<LabOrderTest | null>(null)
+  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<"worklists" | "result_entry" | "review">("worklists")
+  const [activeWorklistDept, setActiveWorklistDept] = useState<any>(undefined)
   const [showGuide, setShowGuide] = useState(false)
 
   // Live data subscriptions for badges
@@ -216,7 +218,24 @@ export default function LaboratoryManagementSuite({
     }
   }
 
-  const handleOpenBenchWithOrder = (order: LabOrder, test?: LabOrderTest) => {
+  const handleOpenWorklistWithOrder = (order: LabOrder) => {
+    setActiveOrderForBench(order)
+    setActiveTestForBench(null)
+    setActiveWorkbenchTab("worklists")
+    const firstTest = order.tests[0]
+    if (firstTest) {
+      const cat = (firstTest.category || "").toLowerCase()
+      if (cat.includes("hematology") || cat.includes("blood count")) setActiveWorklistDept("Hematology")
+      else if (cat.includes("biochemistry") || cat.includes("sugar") || cat.includes("lipid") || cat.includes("lft") || cat.includes("kft")) setActiveWorklistDept("Clinical Biochemistry")
+      else if (cat.includes("microbiology") || cat.includes("culture") || cat.includes("serology") || cat.includes("immunology")) setActiveWorklistDept("Microbiology & Serology")
+      else if (cat.includes("pathology") || cat.includes("urine") || cat.includes("stool")) setActiveWorklistDept("Clinical Pathology & Urinalysis")
+      else if (cat.includes("histopathology") || cat.includes("cytology")) setActiveWorklistDept("Histopathology & Cytology")
+    }
+    handleTabChange("lab_workbench")
+  }
+
+  const handleOpenBenchWithOrder = (order: LabOrder, test?: LabOrderTest, targetTab: "worklists" | "result_entry" | "review" = "result_entry") => {
+    setActiveWorkbenchTab(targetTab)
     setActiveOrderForBench(order)
     setActiveTestForBench(test || null)
     handleTabChange("lab_workbench")

@@ -492,49 +492,69 @@ export default function QueueManagement({
     )
   }
 
-  const handleCreateToken = (e: React.FormEvent) => {
+  const handleCreateToken = async (e: React.FormEvent) => {
     e.preventDefault()
 
     let targetPatient: DBPatient | undefined
     let targetEncounter: DBOPEncounter | undefined
 
-    if (tokenPatientMode === "existing") {
-      const umrToUse = tokenSelectedUmr || patients[0]?.umr
-      if (!umrToUse) {
-        alert("Please select a registered patient.")
-        return
-      }
-      targetPatient = patients.find((p) => p.umr === umrToUse)
-      if (!targetPatient) {
-        alert("Selected patient not found.")
-        return
-      }
+    try {
+      if (tokenPatientMode === "existing") {
+        const umrToUse = tokenSelectedUmr || patients[0]?.umr
+        if (!umrToUse) {
+          alert("Please select a registered patient.")
+          return
+        }
+        targetPatient = patients.find((p) => p.umr === umrToUse)
+        if (!targetPatient) {
+          alert("Selected patient not found.")
+          return
+        }
 
-      targetEncounter = db.createRevisitEncounter(targetPatient.umr, {
-        dept: tokenDept,
-        chiefComplaint:
-          tokenComplaint || `Walk-in outpatient consultation for ${tokenDept}`,
-      })
-    } else {
-      if (!tokenNewName.trim()) {
-        alert("Please enter patient name.")
-        return
-      }
-      const parts = tokenNewName.trim().split(" ")
-      const firstName = parts[0]
-      const lastName = parts.slice(1).join(" ") || "Patient"
+        targetEncounter = await db.createRevisitEncounterConfirmed(targetPatient, {
+          dept: tokenDept,
+          chiefComplaint:
+            tokenComplaint || `Walk-in outpatient consultation for ${tokenDept}`,
+        })
+      } else {
+        if (!tokenNewName.trim()) {
+          alert("Please enter patient name.")
+          return
+        }
+        const age = Number(tokenNewAge)
+        if (!Number.isFinite(age) || age <= 0) {
+          alert("Please enter the patient's age.")
+          return
+        }
+        if (!tokenNewPhone.trim()) {
+          alert("Please enter the patient's phone number.")
+          return
+        }
+        const parts = tokenNewName.trim().split(" ")
+        const firstName = parts[0]
+        const lastName = parts.slice(1).join(" ") || "Patient"
 
-      const res = db.registerNewPatient({
-        firstName,
-        lastName,
-        age: Number(tokenNewAge) || 30,
-        sex: tokenNewSex,
-        phone: tokenNewPhone || "+91 98765 43210",
-        dept: tokenDept,
-        chiefComplaint: tokenComplaint || `OP Consultation - ${tokenDept}`,
-      })
-      targetPatient = res.patient
-      targetEncounter = res.encounter
+        const res = await db.registerNewPatientConfirmed({
+          firstName,
+          lastName,
+          age,
+          sex: tokenNewSex,
+          phone: tokenNewPhone.trim(),
+          dept: tokenDept,
+          chiefComplaint: tokenComplaint || `OP Consultation - ${tokenDept}`,
+        })
+        targetPatient = res.patient
+        targetEncounter = res.encounter
+      }
+    } catch (error) {
+      alert(
+        `Token was not issued -- the server did not confirm the registration.
+
+${
+          error instanceof Error ? error.message : ""
+        }`,
+      )
+      return
     }
 
     const docObj = (DOCTOR_MAP[tokenDept] || []).find(

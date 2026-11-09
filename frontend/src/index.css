@@ -854,7 +854,7 @@ textarea:focus-visible {
     position: static !important;
     display: block !important;
   }
-  aside, nav, header, .app-sidebar, .print-hidden, .print\\:hidden {
+  aside, nav, header, .app-sidebar, .print-hidden, [class~="print:hidden"] {
     display: none !important;
   }
 }

@@ -1,5 +1,5 @@
 import type { FlowsheetRecord } from "./IcuFlowsheet"
-import { safeLocalStorageSetItem, freeLocalStorageQuota } from "../../utils/storageQuotaManager"
+import { safeLocalStorageSetItem } from "../../utils/storageQuotaManager"
 
 const storageKey = (patientId: string, date: string) =>
   `icu.flowsheet.${patientId}.${date}`
@@ -858,29 +858,6 @@ export function ensureMultiDaySeedData(
   _totalDays: number = 2,
 ): void {
   // No-op: all seed data disabled for client deployment
-}
-
-// Immediate storage cleanup: prune all legacy ICU flowsheet seeds from localStorage
-if (typeof window !== "undefined") {
-  try {
-    freeLocalStorageQuota()
-  } catch {}
-  try {
-    const keysToRemove: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
-      if (k && k.startsWith("icu.flowsheet.")) {
-        keysToRemove.push(k)
-      }
-    }
-    keysToRemove.forEach((k) => {
-      try {
-        localStorage.removeItem(k)
-      } catch {}
-    })
-  } catch (e) {
-    console.warn("ICU seed cleanup skipped:", e)
-  }
 }
 
 /** Complete Day 1 flowsheet record with 100% of fields filled across all sections */

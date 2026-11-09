@@ -14,8 +14,18 @@ import { isRadiologyTest } from "../utils/testClassifier"
 import { BillingDatabase } from "./billingDb"
 import { dropLegacySeeds, SEED_LAB_ORDERS } from "./legacySeedPurge"
 import { DiagnosticTariffDatabase } from "./diagnosticTariffDb"
+import { apiFetch } from "../lib/api"
 
 const ORDERS_KEY = "hospai_lab_orders_v2"
+
+// Modes the billing backend accepts as an actually-collected payment.
+// Insurance is settled through a claim, never by marking the order paid here.
+const SERVER_PAYMENT_MODE: Partial<Record<NonNullable<LabOrder["billing"]["mode"]>, string>> = {
+  Cash: "cash",
+  Card: "card",
+  UPI: "upi",
+  Corporate: "bank",
+}
 const CHANNEL_NAME = "hospai_lab_orders"
 
 export type LabOrderStatus =
@@ -108,6 +118,9 @@ export interface LabOrder {
     receiptNo?: string
     paidAt?: string
     collectedBy?: string
+    /** Backend invoice created for this order; reused on retry so a failed payment never creates a second invoice. */
+    serverInvoiceId?: number
+    serverPaymentId?: number
   }
   history: LabOrderEvent[]
 }
@@ -657,36 +670,85 @@ export class LabOrderDatabase {
     return updated
   }
 
-  /** Reception takes payment. Releases order to the laboratory. */
-  static markBilled(
+  /**
+   * Reception takes payment. The order is marked Paid -- and released to the
+   * laboratory -- only after the billing backend has durably recorded the
+   * payment. Throws if the server rejects or cannot be reached.
+   */
+  static async markBilled(
     id: string,
     payment: {
       mode: NonNullable<LabOrder["billing"]["mode"]>
       discount?: number
       collectedBy: string
     },
-  ): LabOrder | undefined {
-    const result = this.mutate(id, (order) => {
-      const discount = Math.max(
-        0,
-        Math.min(payment.discount || 0, order.billing.subtotal),
+  ): Promise<LabOrder | undefined> {
+    const order = readOrders().find((o) => o.id === id)
+    if (!order) return undefined
+    if (order.billing.status === "Paid") return order
+
+    const serverMode = SERVER_PAYMENT_MODE[payment.mode]
+    if (!serverMode) {
+      throw new Error(
+        `${payment.mode} is not a collected payment. Raise an insurance claim instead of marking this order paid.`,
       )
-      const total = order.billing.subtotal - discount
+    }
+
+    const discount = Math.max(0, Math.min(payment.discount || 0, order.billing.subtotal))
+    const total = order.billing.subtotal - discount
+
+    let invoiceId = order.billing.serverInvoiceId
+    let invoiceNo = order.billing.invoiceNo
+    if (!invoiceId) {
+      const numericEncounter = /^\d+$/.test(order.encounterId || "") ? Number(order.encounterId) : undefined
+      const created = await apiFetch<{ invoice_id: number; invoice_no: string }>("/api/billing/invoices", {
+        method: "POST",
+        body: JSON.stringify({
+          module: "LAB",
+          patient_id: order.umr,
+          doctor_name: order.doctorName,
+          subtotal: order.billing.subtotal,
+          discount,
+          total_amount: total,
+          payment_status: "due",
+          encounter_id: numericEncounter,
+        }),
+      })
+      invoiceId = created.invoice_id
+      invoiceNo = created.invoice_no
+      this.mutate(id, (o) => ({
+        ...o,
+        billing: { ...o.billing, serverInvoiceId: invoiceId, invoiceNo },
+      }))
+    }
+
+    const recorded = await apiFetch<{ payment_id: number }>(
+      `/api/billing/invoices/${invoiceId}/payments`,
+      {
+        method: "POST",
+        body: JSON.stringify({ amount: total, payment_mode: serverMode }),
+      },
+    )
+
+    const result = this.mutate(id, (current) => {
       return {
-        ...order,
+        ...current,
         status: "Billed",
         billing: {
-          ...order.billing,
+          ...current.billing,
           status: "Paid",
           discount,
           total,
           mode: payment.mode,
-          receiptNo: `RCPT-2026-${Math.floor(5000 + Math.random() * 4999)}`,
+          invoiceNo,
+          serverInvoiceId: invoiceId,
+          serverPaymentId: recorded.payment_id,
+          receiptNo: `${invoiceNo}-P${recorded.payment_id}`,
           paidAt: new Date().toISOString(),
           collectedBy: payment.collectedBy,
         },
         history: [
-          ...order.history,
+          ...current.history,
           {
             at: new Date().toISOString(),
             actor: payment.collectedBy,
@@ -697,86 +759,54 @@ export class LabOrderDatabase {
       }
     })
 
-    // Sync settled lab claim and payment record to Central Billing
+    // Mirror the server-confirmed payment into the Central Billing screens.
+    // The authoritative record is the backend invoice/payment created above.
     if (result) {
       try {
-        const invoiceNo = result.billing.invoiceNo || `INV-LAB-${result.id.slice(-6)}`
-        const receiptNo = result.billing.receiptNo || `REC-LAB-${result.id.slice(-6)}`
-        const nowIso = result.billing.paidAt || new Date().toISOString()
-        const paidAmount = result.billing.total
-        const claimId = `CLM-${result.id}`
-
-        const paymentRecord = {
-          id: `PAY-${result.id}-${Date.now().toString().slice(-4)}`,
-          invoiceId: invoiceNo,
-          receiptNo,
-          amount: paidAmount,
-          paymentDate: nowIso,
-          paymentMethod: (payment.mode === "Cash" ? "Cash" : payment.mode === "UPI" ? "UPI / Digital" : "Credit Card") as any,
+        const claim = BillingDatabase.createClaim({
+          invoiceNo: result.billing.invoiceNo,
+          encounterId: result.encounterId || result.opNumber || result.id,
+          patientId: result.umr,
+          patientName: result.patientName,
+          mrn: result.umr,
+          age: result.age,
+          gender: result.sex === "Female" ? "Female" : result.sex === "Other" ? "Other" : "Male",
+          phone: result.phone || "",
+          department: "Laboratory",
+          insuranceProvider: "Self-Pay",
+          policyNumber: "N/A",
+          status: "Draft",
+          attendingDoctor: result.doctorName,
+          items: result.tests.map((t, idx) => ({
+            id: `ITEM-${t.id || idx}`,
+            description: t.name,
+            category: "Laboratory",
+            cptCode: `LAB0${10 + idx}`,
+            quantity: 1,
+            unitPrice: t.price,
+            total: t.price,
+            insuranceCovered: 0,
+            patientPayable: t.price,
+          })) as any,
+          subtotal: result.billing.subtotal,
+          discount: result.billing.discount || 0,
+          tax: 0,
+          totalAmount: result.billing.total,
+          insurancePortion: 0,
+          patientPortion: result.billing.total,
+          amountPaid: 0,
+          balanceDue: result.billing.total,
+          dateOfService: (result.createdAt || new Date().toISOString()).split("T")[0],
+        } as any)
+        BillingDatabase.recordPayment(claim.id, {
+          amount: result.billing.total,
+          paymentMethod: (payment.mode === "Cash" ? "Cash" : payment.mode === "UPI" ? "UPI / Digital" : payment.mode === "Corporate" ? "Bank Transfer" : "Debit Card") as any,
+          transactionRef: result.billing.receiptNo,
           collectedBy: payment.collectedBy,
-          notes: "Laboratory Investigation Charges Settled at Lab Desk",
-        }
-
-        const claims = BillingDatabase.getClaims()
-        const existingClaimIdx = claims.findIndex((c) => c.invoiceNo === invoiceNo || c.id === claimId)
-        if (existingClaimIdx >= 0) {
-          const c = claims[existingClaimIdx]
-          claims[existingClaimIdx] = {
-            ...c,
-            status: "Paid",
-            amountPaid: c.totalAmount,
-            balanceDue: 0,
-            payments: [...(c.payments || []).filter((p) => p.receiptNo !== receiptNo), paymentRecord],
-            updatedAt: nowIso,
-          }
-          BillingDatabase.saveClaims(claims)
-        } else {
-          const newClaim: any = {
-            id: claimId,
-            invoiceNo,
-            encounterId: result.encounterId || result.opNumber || result.id,
-            patientId: result.umr,
-            patientName: result.patientName,
-            mrn: result.umr,
-            age: result.age,
-            gender: result.sex === "Female" ? "Female" : "Male",
-            phone: result.phone || "",
-            department: "Laboratory",
-            dateOfService: result.createdAt ? result.createdAt.split("T")[0] : nowIso.split("T")[0],
-            carePathway: "Laboratory Diagnostic Workup",
-            insuranceProvider: "Self-Pay",
-            policyNumber: "N/A",
-            status: "Paid",
-            attendingDoctor: result.doctorName || "Treating Physician",
-            diagnosisCodes: [result.diagnosis || "Z01.89"],
-            items: result.tests.map((t, idx) => ({
-              id: `ITEM-${t.id || idx}`,
-              description: t.name,
-              category: "Laboratory",
-              cptCode: `LAB0${10 + idx}`,
-              quantity: 1,
-              unitPrice: t.price,
-              total: t.price,
-              insuranceCovered: 0,
-              patientPayable: t.price,
-            })),
-            subtotal: result.billing.subtotal,
-            discount: result.billing.discount || 0,
-            tax: 0,
-            totalAmount: paidAmount,
-            insurancePortion: 0,
-            patientPortion: paidAmount,
-            amountPaid: paidAmount,
-            balanceDue: 0,
-            payments: [paymentRecord],
-            createdAt: result.createdAt || nowIso,
-            updatedAt: nowIso,
-          }
-          BillingDatabase.saveClaims([newClaim, ...claims])
-        }
-        BillingDatabase.emitUpdate()
+          notes: `Lab order ${result.id} (server invoice ${result.billing.invoiceNo})`,
+        })
       } catch (err) {
-        console.warn("Could not sync lab payment to BillingDatabase:", err)
+        console.error("Lab payment is recorded on the server but could not be mirrored to the billing screen:", err)
       }
     }
 

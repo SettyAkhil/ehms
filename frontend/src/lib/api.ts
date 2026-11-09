@@ -10,7 +10,9 @@ import { db } from "../services/db"
 
 import { BillingDatabase } from "../services/billingDb"
 
-import { RoleDatabase } from "../services/roleDb"
+import { getDoctorMaster } from "../services/doctorMaster"
+import { DepartmentDatabase } from "../services/departmentDb"
+import { RoleDatabase, type AppRole, type AppUser } from "../services/roleDb"
 
 import {
   GeneralReportsService,
@@ -20,6 +22,13 @@ import {
 const HOSPITAL_CODE_KEY = "hospai_hospital_code"
 
 const DEFAULT_HOSPITAL_CODE = "hosp-default"
+
+// Browser-resident stores are useful only for isolated development demos. They
+// must never silently replace a failed API call in a deployed HMS, where that
+// would make a clinical or financial screen claim a successful local write.
+const LOCAL_MOCKS_ENABLED =
+  Boolean((import.meta as any)?.env?.DEV) &&
+  (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS === "true"
 
 export function getHospitalCode(): string {
   if (typeof window === "undefined") return DEFAULT_HOSPITAL_CODE
@@ -236,6 +245,10 @@ async function handleLocalErMock<T = any>(
       infoProvidedBy: vData?.info_provided_by,
 
       policeInvolved: vData?.police_involved,
+
+      triageCategory: vData?.triage_category,
+
+      triageBedLabel: vData?.triage_bed_label,
 
       complaintText: cData?.[0]?.complaint,
 
@@ -512,7 +525,7 @@ async function handleLocalErMock<T = any>(
 
     const d = ErDatabase.recordDisposition(visitId, body)
 
-    return { disposition: d } as T
+    return { disposition: d, bed_request_id: (d as any).er_bed_request_id || 1 } as T
   }
 
   // POST /api/er/patients/:id or PUT /api/patients/:id (Update patient info & allergies)
@@ -715,6 +728,99 @@ async function handleLocalErMock<T = any>(
 
   if (releaseBedMatch && method === "POST") {
     const bedId = parseInt(releaseBedMatch[1])
+    const bedBeforeRelease = BedDatabase.getBed(bedId)
+
+    if (bedBeforeRelease) {
+      const occupantName = `${bedBeforeRelease.patient_name || ""} ${bedBeforeRelease.patient_last_name || ""}`.trim()
+      const patientName = occupantName || "Inpatient Patient"
+      const patientId =
+        bedBeforeRelease.patient_id ||
+        (bedBeforeRelease.admission_id ? `UMR-ADM-${bedBeforeRelease.admission_id}` : `UMR-${100000 + bedId}`)
+
+      let roomChargeTotal = body.room_charge_total || 0
+      if (roomChargeTotal <= 0) {
+        roomChargeTotal = (bedBeforeRelease.daily_rate || 1500) * (body.room_charge_segments?.[0]?.days || 1)
+      }
+      const segments = body.room_charge_segments || []
+
+      const existingClaims = BillingDatabase.getClaims()
+      const encId = bedBeforeRelease.admission_id ? `ADM-${bedBeforeRelease.admission_id}` : `BED-${bedBeforeRelease.id}`
+      const alreadyInvoiced = existingClaims.some((c) => c.encounterId === encId && (c.balanceDue || 0) > 0)
+
+      if (!alreadyInvoiced && roomChargeTotal > 0 && (bedBeforeRelease.patient_id || occupantName)) {
+        const dept: DepartmentType =
+          bedBeforeRelease.bed_type === "ICU" || bedBeforeRelease.ward.toUpperCase().includes("ICU")
+            ? "ICU"
+            : "Inpatient"
+
+        const items =
+          segments.length > 0
+            ? segments.map((seg: any, idx: number) => ({
+                id: `ITEM-BED-${bedBeforeRelease.id}-${Date.now()}-${idx}`,
+                description: `Room & Bed Charges: ${seg.ward} (Room ${seg.room_no} / Bed ${seg.bed_no}) [${seg.days} Day${seg.days > 1 ? "s" : ""} @ ₹${seg.daily_rate}/day]`,
+                category: "Room / Bed Charges" as const,
+                cptCode: "99231",
+                quantity: seg.days || 1,
+                unitPrice: seg.daily_rate || roomChargeTotal,
+                total: (seg.days || 1) * (seg.daily_rate || roomChargeTotal),
+                insuranceCovered: 0,
+                patientPayable: (seg.days || 1) * (seg.daily_rate || roomChargeTotal),
+              }))
+            : [
+                {
+                  id: `ITEM-BED-${bedBeforeRelease.id}-${Date.now()}-0`,
+                  description: `Inpatient Room Charges: ${bedBeforeRelease.ward} (Bed ${bedBeforeRelease.bed_no})`,
+                  category: "Room / Bed Charges" as const,
+                  cptCode: "99231",
+                  quantity: 1,
+                  unitPrice: roomChargeTotal,
+                  total: roomChargeTotal,
+                  insuranceCovered: 0,
+                  patientPayable: roomChargeTotal,
+                },
+              ]
+
+        const claim = BillingDatabase.createClaim({
+          patientId,
+          patientName,
+          mrn: patientId.replace(/\D/g, "") || String(100000 + bedId),
+          age: bedBeforeRelease.patient_age || 45,
+          gender: (bedBeforeRelease.patient_gender as any) || "Other",
+          phone: bedBeforeRelease.patient_phone || "+91 98765 43210",
+          department: dept,
+          carePathway: `Inpatient Stay & Discharge (${bedBeforeRelease.ward} - Room ${bedBeforeRelease.room_no} / Bed ${bedBeforeRelease.bed_no})`,
+          encounterId: encId,
+          hospitalStayId: `STAY-${bedBeforeRelease.id}-${Date.now().toString().slice(-4)}`,
+          dateOfService: new Date().toISOString().split("T")[0],
+          insuranceProvider: "Self-Pay",
+          status: "Accepted",
+          items,
+          amountPaid: 0,
+          balanceDue: roomChargeTotal,
+          totalAmount: roomChargeTotal,
+          patientPortion: roomChargeTotal,
+        })
+
+        try {
+          BillingDatabase.createDepartmentCharge({
+            patientId,
+            patientName,
+            mrn: patientId.replace(/\D/g, "") || String(100000 + bedId),
+            department: dept,
+            encounterId: encId,
+            items,
+            status: "Invoiced in Central Billing",
+            invoiceId: claim.invoiceNo || claim.id,
+            totalAmount: roomChargeTotal,
+          })
+        } catch {
+          // best-effort
+        }
+
+        BillingDatabase.setPreselectedClaimForBilling(claim.id || claim.invoiceNo)
+        BillingDatabase.emitUpdate()
+      }
+    }
 
     const bed = BedDatabase.releaseBed(
       bedId,
@@ -756,6 +862,7 @@ async function handleLocalErMock<T = any>(
   // POST /api/beds/transfer-notifications/read-all
 
   if (
+    LOCAL_MOCKS_ENABLED &&
     pathname === "/api/beds/transfer-notifications/read-all" &&
     method === "POST"
   ) {
@@ -836,6 +943,19 @@ async function handleLocalErMock<T = any>(
       due_amount: p.dueAmount,
     }))
 
+    const admTime = bed?.admission_date || bed?.allocated_at
+    let calculatedDays = 1
+    if (admTime) {
+      const start = new Date(admTime)
+      const now = new Date()
+      const diffMs = Math.max(0, now.getTime() - start.getTime())
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+      calculatedDays = Math.max(1, diffDays)
+    }
+
+    const dailyRate = bed?.daily_rate || 1500
+    const totalRoomCharge = dailyRate * calculatedDays
+
     return {
       billing: { ok: billingOk, pending_invoices: pendingInvoices },
 
@@ -846,21 +966,21 @@ async function handleLocalErMock<T = any>(
       room_charges: {
         segments: [
           {
-            ward: bed?.ward || "3N Medical",
+            ward: bed?.ward || "General Ward",
 
-            room_no: bed?.room_no || "204",
+            room_no: bed?.room_no || "201",
 
-            bed_no: bed?.bed_no || "204-A",
+            bed_no: bed?.bed_no || "201-1",
 
-            days: 3,
+            days: calculatedDays,
 
-            daily_rate: bed?.daily_rate || 2500,
+            daily_rate: dailyRate,
 
-            amount: (bed?.daily_rate || 2500) * 3,
+            amount: totalRoomCharge,
           },
         ],
 
-        total: (bed?.daily_rate || 2500) * 3,
+        total: totalRoomCharge,
       },
 
       clear: billingOk,
@@ -951,103 +1071,43 @@ async function handleLocalErMock<T = any>(
     return { success: true, message: "Document uploaded successfully" } as T
   }
 
-  // POST /api/auth/login
-
-  if (pathname === "/api/auth/login" && method === "POST") {
-    const auth = RoleDatabase.authenticate(body.username, body.password)
-
-    if (!auth) throw new Error("Invalid credentials.")
-
-    return {
-      user: {
-        id: auth.user.id,
-
-        employee_id: auth.user.staffId,
-
-        username: auth.user.username,
-
-        role: auth.role.id,
-
-        name: auth.user.name,
-
-        permissions: auth.role.allowedModules,
-      },
-    } as T
-  }
-
-  // GET /api/auth/session
-
-  if (pathname === "/api/auth/session" && method === "GET") {
-    return {
-      authenticated: true,
-      user: { id: "ADM-001", role: "admin", name: "Administrator" },
-    } as T
-  }
-
   // GET /api/doctors & /api/doctors/directory & /api/op/doctors
 
   if (
     (pathname === "/api/doctors" ||
       pathname === "/api/doctors/directory" ||
-      pathname === "/api/op/doctors") &&
+      pathname === "/api/op/doctors" ||
+      pathname === "/api/admin/doctors") &&
     method === "GET"
   ) {
+    const liveDocs = getDoctorMaster()
+    const deptParam = url.searchParams.get("department")
+    const searchParam = (url.searchParams.get("search") || "").trim().toLowerCase()
+    const filtered = liveDocs.filter((d) => {
+      if (deptParam && deptParam !== "all" && d.specialty !== deptParam && (d as any).department !== deptParam) return false
+      if (searchParam) {
+        const match = d.name.toLowerCase().includes(searchParam) ||
+          (d.specialty || "").toLowerCase().includes(searchParam) ||
+          (d.staffId || "").toLowerCase().includes(searchParam)
+        if (!match) return false
+      }
+      return true
+    })
     return {
-      doctors: [
-        {
-          id: "DOC-4401",
-          doctor_name: "Dr. Vikram Seth",
-          name: "Dr. Vikram Seth",
-          department: "Cardiology",
-          specialty: "Cardiology",
-          available: true,
-        },
-
-        {
-          id: "DOC-4402",
-          doctor_name: "Dr. Anita Roy",
-          name: "Dr. Anita Roy",
-          department: "Emergency Medicine",
-          specialty: "Emergency Medicine",
-          available: true,
-        },
-
-        {
-          id: "DOC-4404",
-          doctor_name: "Dr. Rajesh Sharma",
-          name: "Dr. Rajesh Sharma",
-          department: "General Medicine",
-          specialty: "General Medicine",
-          available: true,
-        },
-
-        {
-          id: "DOC-4405",
-          doctor_name: "Dr. Sanjay Gupta",
-          name: "Dr. Sanjay Gupta",
-          department: "Orthopedics / Trauma",
-          specialty: "Orthopedics",
-          available: true,
-        },
-
-        {
-          id: "DOC-4406",
-          doctor_name: "Dr. Meenakshi Rao",
-          name: "Dr. Meenakshi Rao",
-          department: "Neurology",
-          specialty: "Neurology",
-          available: true,
-        },
-
-        {
-          id: "DOC-4407",
-          doctor_name: "Dr. Priya Deshmukh",
-          name: "Dr. Priya Deshmukh",
-          department: "General Surgery",
-          specialty: "General Surgery",
-          available: true,
-        },
-      ],
+      success: true,
+      doctors: filtered.map((d) => ({
+        id: d.staffId || d.id,
+        doctor_name: d.name,
+        name: d.name,
+        department: d.specialty || (d as any).department || "General Medicine",
+        specialty: d.specialty || (d as any).department || "General Medicine",
+        qualification: d.qualification,
+        room: d.room,
+        section: d.section,
+        consultation_fee: d.consultationFee ?? 500,
+        review_fee: (d.consultationFee ?? 500) * 0.5,
+        available: true,
+      })),
     } as T
   }
 
@@ -1622,28 +1682,24 @@ async function handleLocalErMock<T = any>(
     } as T
   }
 
-  // GET /api/registration/departments
-
-  if (pathname === "/api/registration/departments" && method === "GET") {
+  // GET /api/registration/departments & /api/admin/departments
+  if (
+    (pathname === "/api/registration/departments" || pathname === "/api/admin/departments") &&
+    method === "GET"
+  ) {
+    const liveDepts = DepartmentDatabase.getDepartments()
     return {
-      departments: [
-        { department_name: "Emergency Medicine" },
-
-        { department_name: "Cardiology" },
-
-        { department_name: "Pulmonology" },
-
-        { department_name: "General Medicine" },
-
-        { department_name: "General Surgery" },
-
-        { department_name: "Orthopedics / Trauma" },
-
-        { department_name: "Neurology" },
-
-        { department_name: "Pediatrics" },
-
-        { department_name: "Obstetrics & Gynecology" },
+      success: true,
+      departments: liveDepts.length > 0 ? liveDepts : [
+        { id: 101, department_name: "Emergency Medicine", name: "Emergency Medicine", code: "EMER", status: "active", capacity: 50 },
+        { id: 102, department_name: "Cardiology", name: "Cardiology", code: "CARD", status: "active", capacity: 40 },
+        { id: 103, department_name: "Pulmonology", name: "Pulmonology", code: "PULM", status: "active", capacity: 30 },
+        { id: 104, department_name: "General Medicine", name: "General Medicine", code: "GENM", status: "active", capacity: 60 },
+        { id: 105, department_name: "General Surgery", name: "General Surgery", code: "GENS", status: "active", capacity: 35 },
+        { id: 106, department_name: "Orthopedics / Trauma", name: "Orthopedics / Trauma", code: "ORTH", status: "active", capacity: 40 },
+        { id: 107, department_name: "Neurology", name: "Neurology", code: "NEUR", status: "active", capacity: 25 },
+        { id: 108, department_name: "Pediatrics", name: "Pediatrics", code: "PEDI", status: "active", capacity: 30 },
+        { id: 109, department_name: "Obstetrics & Gynecology", name: "Obstetrics & Gynecology", code: "OBGY", status: "active", capacity: 35 },
       ],
     } as T
   }
@@ -1670,12 +1726,223 @@ async function handleLocalErMock<T = any>(
     } as T
   }
 
+  // ==================== RBAC: Roles Management ====================
+
+  // GET /api/admin/roles
+  if (pathname === "/api/admin/roles" && method === "GET") {
+    const allRoles = RoleDatabase.getRoles()
+    return {
+      success: true,
+      roles: allRoles.map((r) => ({
+        id: r.id,
+        role_key: r.id,
+        name: r.name,
+        role_name: r.name,
+        allowedModules: r.allowedModules || [],
+        allowed_modules: r.allowedModules || [],
+        status: r.status || "Active",
+      })),
+    } as T
+  }
+
+  // POST /api/admin/roles
+  if (pathname === "/api/admin/roles" && method === "POST") {
+    const roleId =
+      body.id ||
+      "ROLE_" +
+        (body.name || "Custom Role")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "_")
+    const newRole: AppRole = {
+      id: roleId,
+      name: (body.name || roleId).trim(),
+      allowedModules: Array.isArray(body.allowedModules)
+        ? body.allowedModules
+        : Array.isArray(body.allowed_modules)
+          ? body.allowed_modules
+          : [],
+      status: body.status || "Active",
+      isSystem: false,
+    }
+    RoleDatabase.upsertRole(newRole)
+    return {
+      success: true,
+      role: {
+        id: newRole.id,
+        role_key: newRole.id,
+        name: newRole.name,
+        role_name: newRole.name,
+        allowedModules: newRole.allowedModules,
+        allowed_modules: newRole.allowedModules,
+        status: newRole.status,
+      },
+      message: `Role ${newRole.name} saved successfully`,
+    } as T
+  }
+
+  // PUT /api/admin/roles/:id
+  const adminRolePutMatch = pathname.match(/^\/api\/admin\/roles\/([^/]+)$/)
+  if (adminRolePutMatch && method === "PUT") {
+    const roleId = decodeURIComponent(adminRolePutMatch[1])
+    const allRoles = RoleDatabase.getRoles()
+    const existing = allRoles.find((r) => r.id === roleId)
+
+    const allowed = Array.isArray(body.allowedModules)
+      ? body.allowedModules
+      : Array.isArray(body.allowed_modules)
+        ? body.allowed_modules
+        : (existing?.allowedModules || [])
+
+    const updatedRole: AppRole = {
+      id: roleId,
+      name: body.name || existing?.name || roleId,
+      status: body.status
+        ? String(body.status).toLowerCase() === "active"
+          ? "Active"
+          : "Inactive"
+        : (existing?.status || "Active"),
+      allowedModules: allowed,
+      isSystem: existing?.isSystem ?? roleId.includes("ADMIN"),
+    }
+
+    RoleDatabase.upsertRole(updatedRole)
+
+    // Synchronize active session permissions if currently logged in with this role
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const raw = window.localStorage.getItem("hospai_current_user")
+        if (raw) {
+          const u = JSON.parse(raw)
+          if (u && (u.role === roleId || u.role_key === roleId)) {
+            u.module_access = updatedRole.allowedModules
+            u.permissions = updatedRole.allowedModules
+            window.localStorage.setItem("hospai_current_user", JSON.stringify(u))
+          }
+        }
+      } catch {}
+    }
+
+    return {
+      success: true,
+      role: {
+        id: updatedRole.id,
+        role_key: updatedRole.id,
+        name: updatedRole.name,
+        role_name: updatedRole.name,
+        allowedModules: updatedRole.allowedModules,
+        allowed_modules: updatedRole.allowedModules,
+        status: updatedRole.status,
+      },
+      message: `Role ${roleId} updated successfully`,
+    } as T
+  }
+
+  // DELETE /api/admin/roles/:id
+  if (adminRolePutMatch && method === "DELETE") {
+    const roleId = decodeURIComponent(adminRolePutMatch[1])
+    if (roleId === "ROLE_ADMIN" || roleId === "ROLE_SUPERADMIN") {
+      throw new Error("System Administrator is a protected platform role.")
+    }
+    RoleDatabase.deleteRole(roleId)
+    return { success: true, message: `Role ${roleId} deleted successfully` } as T
+  }
+
+  // ==================== RBAC: User Management ====================
+
+  // GET /api/admin/users/all
+  if (pathname === "/api/admin/users/all" && method === "GET") {
+    const allUsers = RoleDatabase.getUsers()
+    return {
+      success: true,
+      users: allUsers.map((u) => ({
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        full_name: u.name,
+        roleId: u.roleId,
+        role_key: u.roleId,
+        staffId: u.staffId,
+        employee_id: u.staffId,
+        status: u.status || "Active",
+        department: u.department,
+        allowedModules: u.allowedModules || u.customModules,
+        customModules: u.customModules || u.allowedModules,
+      })),
+    } as T
+  }
+
+  // POST /api/admin/users/create
+  if (pathname === "/api/admin/users/create" && method === "POST") {
+    const allUsers = RoleDatabase.getUsers()
+    const userCount = allUsers.length + 1
+    const newUser: AppUser = {
+      id: `U_${Date.now()}`,
+      username: (body.username || "").trim().toLowerCase(),
+      password: body.password || "password123",
+      roleId: body.roleId || body.role_key || "ROLE_STAFF",
+      name: body.name || body.full_name || body.username || "Staff Member",
+      staffId: body.staffId || body.employee_id || `STF-${String(userCount).padStart(3, "0")}`,
+      status: body.status || "Active",
+      department: body.department,
+      allowedModules: body.allowedModules || body.customModules,
+      customModules: body.customModules || body.allowedModules,
+    }
+    RoleDatabase.upsertUser(newUser)
+    return { success: true, user: newUser, message: "User account created successfully" } as T
+  }
+
+  // PUT /api/admin/users/:id
+  const adminUserPutMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)$/)
+  if (adminUserPutMatch && (method === "PUT" || method === "POST")) {
+    const userId = decodeURIComponent(adminUserPutMatch[1])
+    const allUsers = RoleDatabase.getUsers()
+    const idx = allUsers.findIndex((u) => u.id === userId || u.username === userId)
+    if (idx >= 0) {
+      if (body.roleId || body.role_key) allUsers[idx].roleId = body.roleId || body.role_key
+      if (body.name || body.full_name) allUsers[idx].name = body.name || body.full_name
+      if (body.status) allUsers[idx].status = body.status
+      if (body.staffId || body.employee_id) allUsers[idx].staffId = body.staffId || body.employee_id
+      if (body.password) allUsers[idx].password = body.password
+      if (body.department !== undefined) allUsers[idx].department = body.department
+      if (body.allowedModules !== undefined) allUsers[idx].allowedModules = body.allowedModules
+      if (body.customModules !== undefined) allUsers[idx].customModules = body.customModules
+      RoleDatabase.saveUsers(allUsers)
+    }
+    return { success: true, message: `User ${userId} updated successfully` } as T
+  }
+
+  // DELETE /api/admin/users/:id
+  if (adminUserPutMatch && method === "DELETE") {
+    const userId = decodeURIComponent(adminUserPutMatch[1])
+    RoleDatabase.deleteUser(userId)
+    return { success: true, message: `User ${userId} deleted successfully` } as T
+  }
+
+  // POST /api/admin/users/:id/reset-password
+  const resetPassMatch = pathname.match(/^\/api\/admin\/users\/([^/]+)\/reset-password$/)
+  if (resetPassMatch && method === "POST") {
+    const userId = decodeURIComponent(resetPassMatch[1])
+    const allUsers = RoleDatabase.getUsers()
+    const u = allUsers.find((x) => x.id === userId || x.username === userId)
+    if (u && body.password) {
+      u.password = body.password
+      RoleDatabase.saveUsers(allUsers)
+    }
+    return { success: true, message: "Password updated successfully" } as T
+  }
+
+  // Authentication (/api/auth/*) is deliberately not handled here. apiFetch()
+  // never routes auth requests into this local mock -- see isAuthRequest there --
+  // so a real sign-in always requires the real backend to validate it.
+
   return null
 }
 
 /** Default per-request budget. Overridable via options.timeoutMs. */
 
 export const DEFAULT_TIMEOUT_MS = 3500
+export const AUTH_TIMEOUT_MS = 12000
 
 let isBackendOnline = true
 
@@ -1689,9 +1956,16 @@ export async function apiFetch<T = any>(
   options: RequestInit & { cache?: RequestCache ;timeoutMs?: number } = {},
 ): Promise<T> {
   const method = (options.method || "GET").toUpperCase()
+  // Authentication is never mockable: even a development-only local data
+  // fallback must not create or restore a session without the backend.
+  const isAuthRequest = path.startsWith("/api/auth/")
 
-  // Serve ER, bed management, reports, EMR, and patient notes directly from live persistent store
+  // Serve ER, bed management, reports, EMR, and patient notes directly from live persistent store.
+  // Authentication is excluded here deliberately -- see isAuthRequest below.
   if (
+    !isAuthRequest &&
+    LOCAL_MOCKS_ENABLED && (
+    path.startsWith("/api/admin") ||
     path.startsWith("/api/er") ||
     path.startsWith("/api/reports") ||
     path.startsWith("/api/beds") ||
@@ -1699,6 +1973,7 @@ export async function apiFetch<T = any>(
     path.startsWith("/api/icu") ||
     path.includes("/notes") ||
     path.startsWith("/api/patients")
+    )
   ) {
     const localResult = await handleLocalErMock<T>(path, options)
 
@@ -1711,7 +1986,7 @@ export async function apiFetch<T = any>(
 
   const now = Date.now()
 
-  if (!isBackendOnline && now - lastBackendProbeTime < PROBE_INTERVAL_MS) {
+  if (!isAuthRequest && LOCAL_MOCKS_ENABLED && !isBackendOnline && now - lastBackendProbeTime < PROBE_INTERVAL_MS) {
     const cachedLocalResult = await handleLocalErMock<T>(path, options)
 
     if (cachedLocalResult !== null) {
@@ -1760,7 +2035,7 @@ export async function apiFetch<T = any>(
 
     const timeoutId = setTimeout(
       () => controller.abort(),
-      timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      timeoutMs ?? (isAuthRequest ? AUTH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS),
     )
 
     if (callerSignal) {
@@ -1805,11 +2080,13 @@ export async function apiFetch<T = any>(
         window.dispatchEvent(new Event("app:unauthorized"))
       }
 
-      // If endpoint not implemented or error on backend, fallback to local ER store
-
-      const localResult = await handleLocalErMock<T>(path, options)
-
-      if (localResult !== null) return localResult as T
+      // Browser mocks may answer a failed request only in an explicit dev/test
+      // build (LOCAL_MOCKS_ENABLED). In production a failure is surfaced, never
+      // replaced by a local "success". Never for auth in any build.
+      if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
+        const localResult = await handleLocalErMock<T>(path, options)
+        if (localResult !== null) return localResult as T
+      }
 
       const message = payload.error || payload.message || "Request failed"
 
@@ -1833,12 +2110,20 @@ export async function apiFetch<T = any>(
 
     lastBackendProbeTime = Date.now()
 
-    // Graceful offline fallback to Local ER Store
+    // Offline fallback to browser stores: explicit dev/test builds only, never auth.
+    if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
+      const localResult = await handleLocalErMock<T>(path, options)
+      if (localResult !== null) {
+        return localResult as T
+      }
+    }
 
-    const localResult = await handleLocalErMock<T>(path, options)
-
-    if (localResult !== null) {
-      return localResult as T
+    if (err?.name === "AbortError" && !callerSignal?.aborted) {
+      throw new Error(
+        isAuthRequest
+          ? "Authentication service did not respond. Start the HMS backend and try again."
+          : "The request timed out. Please try again.",
+      )
     }
 
     throw err

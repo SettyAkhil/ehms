@@ -27,6 +27,7 @@ import { getDischargedIcuPatients, type IcuDischargeRecord } from "../icu/IcuDis
 import type { BedRecord } from "../../services/bedDb"
 import { API_BASE } from "../../lib/constants"
 import { withAuthHeaders } from "../../lib/api"
+import { isAppSessionAuthenticated } from "../../lib/authState"
 
 export type JourneyEvent = {
   stage: string
@@ -491,11 +492,7 @@ export type PublicCardPayload = {
 }
 
 function signedInHere(): boolean {
-  try {
-    return Boolean(localStorage.getItem("hospai_current_user"))
-  } catch {
-    return false
-  }
+  return isAppSessionAuthenticated()
 }
 
 /**

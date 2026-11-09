@@ -291,7 +291,19 @@ export default function InstantPatientSearchDropdown({
     } else if (onSelectPatient) {
       onSelectPatient(item)
     } else if (onSelectVisit && item.source === "hospital_db") {
-      // If patient exists in hospital DB but has no active ER visit, quick-create one so they can be triaged
+      // First check if patient already has an active ER visit to prevent duplicates
+      const activeVisits = ErDatabase.getVisits("active")
+      const existing = activeVisits.find(
+        (v) =>
+          (item.patientId && v.patient_id && v.patient_id.trim().toUpperCase() === item.patientId.trim().toUpperCase()) ||
+          (item.name && v.patient_name && v.patient_name.trim().toLowerCase() === item.name.trim().toLowerCase())
+      )
+      if (existing) {
+        onSelectVisit(existing.id, item)
+        return
+      }
+
+      // If patient exists in hospital DB but has no active ER visit, create one with safe defaults
       try {
         const res = await ErDatabase.createVisit({
           patientId: item.patientId,
@@ -303,6 +315,9 @@ export default function InstantPatientSearchDropdown({
           },
           arrivalMode: "Walk-in",
           conditionAtArrival: "Needs Triage Assessment",
+          triageCategory: "B4",
+          triageBedLabel: "ER Bed 08 (Green Zone - Ambulatory)",
+          skipAiTriage: true,
         })
         onSelectVisit(res.visit.id, item)
       } catch {

@@ -233,9 +233,12 @@ export default function Inpatient({
     // Live-polled rather than one-shot -- a ward nurse should see a new ER bed
     // request or a PACU-cleared surgical case without a manual page reload.
     const interval = setInterval(() => load(false), 20000)
+    const onBedReqUpdate = () => load(false)
+    window.addEventListener("hospai_bed_request_updated", onBedReqUpdate)
     return () => {
       cancelled = true
       clearInterval(interval)
+      window.removeEventListener("hospai_bed_request_updated", onBedReqUpdate)
     }
   }, [])
 
