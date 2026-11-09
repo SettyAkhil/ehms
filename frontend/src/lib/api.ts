@@ -695,7 +695,7 @@ async function handleLocalErMock<T = any>(
   if (pathname === "/api/beds/bulk" && method === "POST") {
     const created = BedDatabase.createBedsBulk(body)
 
-    return { created_count: created.length, beds: created } as T
+    return { created_count: created.length, skipped_count: 0, beds: created } as T
   }
 
   // POST /api/beds/:id/assign
