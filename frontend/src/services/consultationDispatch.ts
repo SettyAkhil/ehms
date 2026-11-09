@@ -35,12 +35,17 @@ import {
 export interface DispatchResult {
   prescriptionId?: string
   labOrderId?: string
+  radiologyOrderRef?: string
+  radiologyStudyIds?: string[]
   labTotal: number
+  radiologyTotal?: number
   medicineCount: number
   labTestCount: number
+  radiologyCount?: number
   /** Which halves actually went out on this call. */
   sentToPharmacy: boolean
   sentToLab: boolean
+  sentToRadiology?: boolean
   errors: string[]
 }
 
@@ -75,12 +80,16 @@ export function dispatchableHalves(
     !!record.uploadedPrescription || !!record.whiteboardImage
   const unreadSheet = medicines === 0 && tests === 0 && hasSheetImage
 
+  const pureLabTests = record.labTests.filter((t) => !isRadiologyTest(t.name, t.category))
+  const radTests = record.labTests.filter((t) => isRadiologyTest(t.name, t.category))
+
+  const hasPendingLab = pureLabTests.length > 0 && !record.labOrderId
+  const hasPendingRad = radTests.length > 0 && !record.radiologyOrderRef
+  const investigationsPending = hasPendingLab || hasPendingRad || (tests > 0 && !record.labOrderId && !record.radiologyOrderRef)
+
   return {
-    // Nothing legible and no investigations either means the sheet is a
-    // photograph the AI could not read -- the pharmacist reading the original is
-    // then a real workflow, and the only one left.
     pharmacy: !record.prescriptionId && (medicines > 0 || unreadSheet),
-    lab: !record.labOrderId && tests > 0,
+    lab: investigationsPending,
     unreadSheet,
   }
 }
@@ -242,21 +251,31 @@ export function dispatchConsultation(
     }
   }
 
+  const createdStudies: any[] = []
+  let createdLabOrder: any = undefined
+
   // ── Investigations -> reception/billing, laboratory & radiology ─────────────
   if (toLab) {
     try {
       const radiologyTests = labTests.filter((t) => isRadiologyTest(t.name, t.category))
       const pureLabTests = labTests.filter((t) => !isRadiologyTest(t.name, t.category))
 
-      // Route Radiology Tests strictly to Radiology & Dedicated Radiology Billing
+      // Route Radiology Tests strictly to Radiology
       if (radiologyTests.length > 0) {
-        radiologyTests.forEach((t) => {
+        let radTotal = 0
+        radiologyTests.forEach((t, idx) => {
           const modality = getModalityForTest(t.name)
           const room = getRoomForModality(modality)
           const price = priceForTest(t.name)
-          BillingDatabase.createRadiologyStudy({
+          radTotal += price
+          const studyId = `RAD-${Date.now().toString().slice(-6)}-${idx + 1}`
+          const study = BillingDatabase.createRadiologyStudy({
+            id: studyId,
             patient: encounter.patientName,
-            mrn: encounter.umr,
+            age: encounter.age,
+            gender: encounter.sex,
+            opNumber: encounter.opNumber,
+            mrn: encounter.umr.replace(/\D/g, "") || "10001",
             umr: encounter.umr,
             encounterId: encounter.id,
             department: encounter.dept || doctor.specialty,
@@ -265,20 +284,30 @@ export function dispatchConsultation(
             modality,
             priority: t.urgency === "STAT" ? "STAT" : "Routine",
             ordered: `${OpReportsService.getEncounterDate(encounter) || new Date().toISOString().split("T")[0]} · ${encounter.registrationTime || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+            orderDate: OpReportsService.getEncounterDate(encounter) || new Date().toISOString().split("T")[0],
             provider: doctor.name,
             status: "Orders",
             room,
             price,
             paymentStatus: "Payment Pending",
+            paymentStatusDisplay: "PENDING",
+            isPaid: false,
             indication: record.summary || record.diagnosis || "Doctor Consultation Order",
             technique: `Diagnostic ${modality} imaging scan`,
           })
+          createdStudies.push(study)
         })
+        const radRef = createdStudies[0]?.accessionNo || createdStudies[0]?.id || `RAD-ORD-${Date.now().toString().slice(-4)}`
+        result.radiologyOrderRef = radRef
+        result.radiologyStudyIds = createdStudies.map((s) => s.id)
+        result.sentToRadiology = true
+        result.radiologyCount = radiologyTests.length
+        result.radiologyTotal = radTotal
       }
 
-      // Route Laboratory Investigations strictly to Laboratory Central Billing Queue (ONLY pureLabTests)
+      // Route Laboratory Investigations strictly to Laboratory (ONLY pureLabTests)
       if (pureLabTests.length > 0) {
-        const order = LabOrderDatabase.createOrder({
+        createdLabOrder = LabOrderDatabase.createOrder({
           consultationId: record.id,
           encounterId: encounter.id,
           umr: encounter.umr,
@@ -294,9 +323,19 @@ export function dispatchConsultation(
           clinicalNotes: record.summary,
           tests: pureLabTests,
         })
-        result.labOrderId = order.id
-        result.labTotal = order.billing.total
+        result.labOrderId = createdLabOrder.id
+        result.labTotal = createdLabOrder.billing.total
         result.sentToLab = true
+      }
+
+      // Generate or update Centralized Consolidated Claim for Billing
+      if (createdLabOrder || createdStudies.length > 0) {
+        BillingDatabase.ensureConsolidatedInvestigationClaim({
+          encounter,
+          doctor,
+          labOrder: createdLabOrder,
+          radiologyStudies: createdStudies,
+        })
       }
     } catch (err) {
       result.errors.push(
@@ -313,7 +352,15 @@ export function dispatchConsultation(
   // leaves the visit in the same state as sending them together.
   const prescriptionId = record.prescriptionId || result.prescriptionId
   const labOrderId = record.labOrderId || result.labOrderId
-  const labsStillToSend = labTests.length > 0 && !labOrderId
+  const radiologyOrderRef = record.radiologyOrderRef || result.radiologyOrderRef
+  const radiologyStudyIds = record.radiologyStudyIds || result.radiologyStudyIds
+  const hasRadiology = labTests.some((t) => isRadiologyTest(t.name, t.category))
+  const hasPureLab = labTests.some((t) => !isRadiologyTest(t.name, t.category))
+  const investigationsOrdered = labTests.length > 0
+  const investigationsDispatched =
+    (!hasPureLab || !!labOrderId) &&
+    (!hasRadiology || !!radiologyOrderRef || createdStudies.length > 0)
+  const labsStillToSend = investigationsOrdered && !investigationsDispatched
   const medicinesStillToSend = medications.length > 0 && !prescriptionId
 
   try {
@@ -329,19 +376,20 @@ export function dispatchConsultation(
         instructions: m.instructions,
       })),
       investigations: labTests.map((t) => t.name),
-      // Investigations have to clear reception before the lab starts, so once an
-      // order exists the visit is awaiting billing rather than complete. A visit
-      // with a half still to send is not finished either.
-      status: labOrderId
+      // Investigations have to clear reception before the lab/radiology starts,
+      // so once an order exists the visit is awaiting billing rather than complete.
+      status: investigationsOrdered
         ? "Awaiting Billing"
         : labsStillToSend || medicinesStillToSend
           ? "Under Consultation"
           : "Consultation Completed",
-      furtherAction: labOrderId
+      furtherAction: hasPureLab
         ? "Laboratory"
-        : prescriptionId
-          ? "Pharmacy"
-          : "None",
+        : hasRadiology
+          ? "Radiology"
+          : prescriptionId
+            ? "Pharmacy"
+            : "None",
       timestamps: {
         ...encounter.timestamps,
         consultationEnd: new Date().toLocaleTimeString([], {
@@ -366,6 +414,8 @@ export function dispatchConsultation(
     dispatchedAt: new Date().toISOString(),
     prescriptionId,
     labOrderId,
+    radiologyOrderRef,
+    radiologyStudyIds,
   })
 
   const sent = [
@@ -373,7 +423,10 @@ export function dispatchConsultation(
       ? `${result.medicineCount} medicine(s) to pharmacy (${result.prescriptionId})`
       : "",
     result.sentToLab
-      ? `${result.labTestCount} investigation(s) to billing (${result.labOrderId})`
+      ? `${result.labTestCount} laboratory investigation(s) to billing (${result.labOrderId})`
+      : "",
+    result.sentToRadiology
+      ? `${result.radiologyCount} radiology study(ies) to billing (${result.radiologyOrderRef || "RAD"})`
       : "",
   ].filter(Boolean)
 

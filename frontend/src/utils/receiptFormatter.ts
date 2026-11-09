@@ -287,8 +287,8 @@ export function groupReceiptItems(items: InvoiceItem[]): ReceiptItemSection[] {
         item.description.toLowerCase().includes("dr.") ||
         item.description.toLowerCase().includes("doctor"))
 
-    let mainCategory = "Service Charges"
-    let subCategory = "HOSPITALITY SERVICES"
+    let mainCategory = "Consultation Fee"
+    let subCategory = "CONSULTATION SERVICES"
 
     if (isRegistration) {
       mainCategory = "Registration Fee"
@@ -297,22 +297,27 @@ export function groupReceiptItems(items: InvoiceItem[]): ReceiptItemSection[] {
       mainCategory = "Doctor Consultation Fee"
       subCategory = item.description.toUpperCase().includes("ENT")
         ? "ENT CONSULTATION"
-        : "GENERAL MEDICINE CONSULTATION"
+        : "DOCTOR CONSULTATION"
     } else if (item.category === "Laboratory") {
+      mainCategory = "Laboratory Charges"
       subCategory = "LABORATORY SERVICES"
     } else if (item.category === "Radiology / Imaging") {
+      mainCategory = "Radiology Charges"
       subCategory = "RADIOLOGY & IMAGING"
     } else if (
       item.description.toLowerCase().includes("oxygen") ||
       item.description.toLowerCase().includes("emergency")
     ) {
+      mainCategory = "Emergency Services"
       subCategory = "EMERGENCY"
     } else if (item.category === "Procedure / Surgery") {
+      mainCategory = "Procedure & OT Services"
       subCategory = "PROCEDURE & OT SERVICES"
     } else if (
       item.category === "Room / Bed Charges" ||
       item.category === "Nursing"
     ) {
+      mainCategory = "Hospitalisation Charges"
       subCategory = "HOSPITALITY SERVICES"
     }
 

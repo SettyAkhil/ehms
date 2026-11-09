@@ -243,16 +243,34 @@ export async function compilePatientRecord(code: string): Promise<PatientRecord>
     getJson<{ days: PatientRecord["icuDays"] }>(`/api/icu/${encodeURIComponent(id)}/flowsheets`),
     getJson<{ visits: ServerOpVisit[] }>(`/api/op/patients/${encodeURIComponent(id)}/history`),
   ])
-  const journey = journeyRes.data
-  const bp = journey?.patient ?? {}
-  const currentBed =
+  let journey = journeyRes.data
+  let currentBed =
     bedsRes.data?.beds?.find((b) => b.status === "Occupied" && String(b.patient_id || "").toUpperCase() === idU) ?? null
+  let serverVisits = opRes.data?.visits ?? []
+
+  // Public fallback for QR scans by non-staff without authentication cookies
+  if (!journey) {
+    try {
+      const pubRes = await getJson<any>(`/api/public/patient/${encodeURIComponent(id)}`)
+      if (pubRes.ok && pubRes.data) {
+        journey = {
+          patient: pubRes.data.patient,
+          events: pubRes.data.events || [],
+          summary: pubRes.data.summary || {},
+        } as any
+        if (pubRes.data.bed) currentBed = pubRes.data.bed
+        if (pubRes.data.visits) serverVisits = pubRes.data.visits
+      }
+    } catch {}
+  }
+
+  const bp = journey?.patient ?? {}
 
   const deskVisits: DBOPEncounter[] = db
     .getEncounters()
     .filter((e) => (e.umr || "").toUpperCase() === idU)
     .sort((a, b) => (encounterArrivalMs(b) ?? 0) - (encounterArrivalMs(a) ?? 0))
-  const opVisits = mergeOpVisits(deskVisits, opRes.data?.visits ?? [])
+  const opVisits = mergeOpVisits(deskVisits, serverVisits)
   const consultations = DoctorPortalDatabase.getConsultationsForPatient(id)
     .slice()
     .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
@@ -369,10 +387,25 @@ export function publicAppOrigin(): { origin: string ;reachable: boolean } {
 }
 
 /** What the card's QR encodes: a link straight to this patient's page. */
-export function publicPatientPageUrl(code: string): string {
+export function publicPatientPageUrl(
+  code: string,
+  details?: { name?: string; phone?: string; age?: number | string; gender?: string; dept?: string; doc?: string }
+): string {
   const { origin } = publicAppOrigin()
   const path = window.location.pathname || "/"
-  return `${origin}${path}#/patient/${encodeURIComponent(code.trim().toUpperCase())}`
+  let url = `${origin}${path}#/patient/${encodeURIComponent(code.trim().toUpperCase())}`
+  if (details) {
+    const params = new URLSearchParams()
+    if (details.name) params.set("name", details.name)
+    if (details.phone) params.set("phone", details.phone)
+    if (details.age) params.set("age", String(details.age))
+    if (details.gender) params.set("gender", details.gender)
+    if (details.dept) params.set("dept", details.dept)
+    if (details.doc) params.set("doc", details.doc)
+    const q = params.toString()
+    if (q) url += `?${q}`
+  }
+  return url
 }
 
 // --- No-login card links -----------------------------------------------------

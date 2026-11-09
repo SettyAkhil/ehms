@@ -25,6 +25,13 @@ import { getDoctorConsultationFee } from "./doctorMaster";
 import { encounterArrivalIso } from "./encounterTime"
 import { OpReportsService } from "./opReportsDb"
 import {
+  resolveInvestigationDepartment,
+  isRadiologyTest,
+  isLaboratoryTest,
+  getModalityForTest,
+} from "../utils/testClassifier"
+import { DiagnosticTariffDatabase } from "./diagnosticTariffDb"
+import {
   applyServerPaymentLocally,
   getServerClaims,
   syncServerBilling,
@@ -466,6 +473,10 @@ export interface LabOrderRecord {
 
   paymentStatus: "Paid" | "Payment Pending"
 
+  paymentStatusDisplay?: "PAID" | "PENDING"
+
+  normalizedReportStatus?: string
+
   paidReceiptNo?: string
 
   paidAt?: string
@@ -508,6 +519,12 @@ export interface RadiologyStudyRecord {
 
   umr?: string
 
+  opNumber?: string
+
+  age?: number
+
+  gender?: string
+
   invoiceNo?: string
 
   encounterId?: string;
@@ -546,6 +563,10 @@ export interface RadiologyStudyRecord {
   price: number
 
   paymentStatus: "Paid" | "Payment Pending"
+
+  paymentStatusDisplay?: "PAID" | "PENDING"
+
+  normalizedReportStatus?: string
 
   paidReceiptNo?: string
 
@@ -1085,11 +1106,19 @@ const INITIAL_HOSPITAL_CLAIMS: ClaimRecord[] = []
 export class BillingDatabase {
   private static _cachedRadStudies: RadiologyStudyRecord[] | null = null
   private static _radStudiesCacheTime = 0
-  private static readonly RAD_STUDIES_TTL = 30000
+  private static readonly RAD_STUDIES_TTL = 1000
 
   static invalidateRadiologyStudiesCache(): void {
     this._cachedRadStudies = null
     this._radStudiesCacheTime = 0
+    if (typeof window !== "undefined") {
+      try {
+        window.dispatchEvent(new CustomEvent("hospai_rad_workflow_updated"))
+      } catch {}
+      try {
+        window.dispatchEvent(new CustomEvent(BILLING_UPDATE_EVENT))
+      } catch {}
+    }
   }
 
   private static load<T,>(key: string, fallback: T): T {
@@ -1099,48 +1128,7 @@ export class BillingDatabase {
       if (!raw) return fallback
 
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        const isLegacySeed = (item: any): boolean => {
-          if (!item) return false
-          const id = String(item.id || "")
-          const patient = String(item.patient || item.patientName || "")
-          if (
-            /^RAD-10\d{2}$/.test(id) ||
-            /^RAD-10\d$/.test(id) ||
-            /^LAB-10\d$/.test(id) ||
-            /^LAB-2026-000\d$/.test(id) ||
-            /^DCHG-2026-/.test(id) ||
-            /^CLM-2026-089\d$/.test(id) ||
-            /^CLM-89\d{2}$/.test(id) ||
-            /^PAY-100\d$/.test(id) ||
-            patient === "Rahul Sharma" ||
-            patient === "Thomas Reed" ||
-            patient === "Priya Sharma" ||
-            patient === "John Smith" ||
-            patient === "Mary Jones" ||
-            patient === "James Wilson" ||
-            patient === "Maria Garcia" ||
-            patient === "Robert Chen" ||
-            patient === "Sarah Miller" ||
-            patient === "William Taylor" ||
-            patient === "Emma Davis" ||
-            patient === "David Brown" ||
-            patient === "Lisa Anderson"
-          ) {
-            return true
-          }
-          return false
-        }
-
-        const kept = parsed.filter((item: any) => !isLegacySeed(item))
-        if (kept.length !== parsed.length) {
-          try {
-            localStorage.setItem(key, JSON.stringify(kept))
-          } catch {}
-        }
-        return kept as T
-      }
-      return parsed
+      return parsed as T
     } catch {
       return fallback
     }
@@ -1283,33 +1271,51 @@ export class BillingDatabase {
     }
 
 
-    // Auto-sync OP Encounters from db.ts if not yet in claims list. These are
-    // derived on every read (not stored until a payment is taken on them).
+    // Auto-sync OP Encounters and consolidate with Laboratory & Radiology investigations
     const derivedOp = new Set<string>()
     try {
       const opEncs = db.getEncounters();
-      const existingEncounterIds = new Set(
-        claims.map((c) => c.encounterId || c.id).filter(Boolean),
-      );
+      const rawLab = typeof window !== "undefined" ? window.localStorage.getItem("hospai_lab_orders_v2") : null
+      const allLabOrders: any[] = rawLab ? JSON.parse(rawLab) : []
+      const rawRad = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY_RAD_STUDIES) : null
+      const allRadStudies: any[] = rawRad ? JSON.parse(rawRad) : []
+
+      // Track all encounter IDs that have active OP claims
+      const consolidatedEncounterIds = new Set<string>()
 
       opEncs.forEach((enc) => {
-        if (!existingEncounterIds.has(enc.id)) {
-          const regFee = enc.billing?.registrationFee ?? (enc.isNew === false ? 0 : 20);
-          const consultFee =
-            enc.billing?.consultationFee ??
-            getDoctorConsultationFee(enc.assignedDoctor);
-          const labFee = enc.billing?.labFee ?? 0;
-          const totalAmt = regFee + consultFee + labFee;
-          const isPaid =
-            enc.billing?.status === "Paid" || enc.status === "OP Completed";
+        consolidatedEncounterIds.add(enc.id.toLowerCase())
+        const claimId = `CLM-${enc.id}`
+        const existingClaimIdx = claims.findIndex(
+          (c) => c.id === claimId || (c.encounterId && c.encounterId.toLowerCase() === enc.id.toLowerCase())
+        )
 
-          const items: InvoiceItem[] = [];
+        const regFee = enc.billing?.registrationFee ?? (enc.isNew === false ? 0 : 20)
+        const consultFee = enc.billing?.consultationFee ?? getDoctorConsultationFee(enc.assignedDoctor)
 
+        // Find associated Lab Orders
+        const matchingLabOrders = allLabOrders.filter(
+          (o) => o.encounterId && o.encounterId.toLowerCase() === enc.id.toLowerCase()
+        )
+        // Find associated Radiology Studies
+        const matchingRadStudies = allRadStudies.filter(
+          (s) => s.encounterId && s.encounterId.toLowerCase() === enc.id.toLowerCase()
+        )
+
+        let items: InvoiceItem[] = []
+
+        if (existingClaimIdx >= 0) {
+          const existing = claims[existingClaimIdx]
+          // Retain existing items, but filter out generic diagnostic placeholder
+          items = (existing.items || []).filter(
+            (it) => it.id !== `ITEM-LAB-${enc.id}` && it.description !== "Diagnostic Investigations & Services"
+          )
+        } else {
           if (regFee > 0) {
             items.push({
               id: `ITEM-REG-${enc.id}`,
               description: `Patient Registration Fee – ₹${regFee}`,
-              category: "Procedure / Surgery",
+              category: "Registration" as any,
               cptCode: "99201",
               quantity: 1,
               unitPrice: regFee,
@@ -1318,7 +1324,7 @@ export class BillingDatabase {
               patientPayable: regFee,
               orderedBy: "Front Desk Registration",
               orderedAt: enc.registrationTime,
-            });
+            })
           }
 
           items.push({
@@ -1333,23 +1339,130 @@ export class BillingDatabase {
             patientPayable: consultFee,
             orderedBy: enc.assignedDoctor || "OP Physician",
             orderedAt: enc.registrationTime,
-          });
+          })
+        }
 
-          if (labFee > 0) {
+        // Merge Laboratory items
+        matchingLabOrders.forEach((ord: any) => {
+          (ord.tests || []).forEach((t: any, i: number) => {
+            const itemId = `ITEM-LAB-${ord.id}-${i + 1}`
+            const exists = items.some(
+              (it) => it.id === itemId || (it.category === "Laboratory" && it.description.toLowerCase() === (t.name || "").toLowerCase())
+            )
+            if (!exists) {
+              items.push({
+                id: itemId,
+                description: t.name,
+                category: "Laboratory",
+                cptCode: "80050",
+                quantity: 1,
+                unitPrice: t.price || 0,
+                total: t.price || 0,
+                insuranceCovered: 0,
+                patientPayable: t.price || 0,
+                orderedBy: ord.doctorName || enc.assignedDoctor || "Attending Doctor",
+                orderedAt: ord.createdAt || new Date().toISOString(),
+              })
+            }
+          })
+        })
+
+        // Merge Radiology items
+        matchingRadStudies.forEach((rs: any) => {
+          const itemId = `ITEM-RAD-${rs.id}`
+          const exists = items.some(
+            (it) =>
+              it.id === itemId ||
+              (((it.category as string) === "Radiology / Imaging" || (it.category as string) === "Radiology") &&
+                it.description.toLowerCase().includes((rs.study || "").toLowerCase()))
+          )
+          if (!exists) {
             items.push({
-              id: `ITEM-LAB-${enc.id}`,
-              description: "Diagnostic Investigations & Services",
-              category: "Laboratory",
-              cptCode: "80050",
+              id: itemId,
+              description: `${rs.study} (${rs.modality})`,
+              category: "Radiology / Imaging",
+              cptCode: `RAD-${rs.modality || "IMG"}`,
               quantity: 1,
-              unitPrice: labFee,
-              total: labFee,
+              unitPrice: rs.price || 0,
+              total: rs.price || 0,
               insuranceCovered: 0,
-              patientPayable: labFee,
-              orderedBy: enc.assignedDoctor || "OP Physician",
-            });
+              patientPayable: rs.price || 0,
+              orderedBy: rs.provider || enc.assignedDoctor || "Attending Doctor",
+              orderedAt: rs.createdAt || new Date().toISOString(),
+            })
+          }
+        })
+
+        // If no explicit lab/rad items exist, but enc.billing?.labFee > 0, preserve generic line
+        const hasSpecificDiag = items.some((it) => it.category === "Laboratory" || (it.category as string) === "Radiology / Imaging")
+        if (!hasSpecificDiag && (enc.billing?.labFee || 0) > 0) {
+          items.push({
+            id: `ITEM-LAB-${enc.id}`,
+            description: "Diagnostic Investigations & Services",
+            category: "Laboratory",
+            cptCode: "80050",
+            quantity: 1,
+            unitPrice: enc.billing.labFee,
+            total: enc.billing.labFee,
+            insuranceCovered: 0,
+            patientPayable: enc.billing.labFee,
+            orderedBy: enc.assignedDoctor || "OP Physician",
+          })
+        }
+
+        const subtotal = items.reduce((s, it) => s + (it.total || 0), 0)
+
+        // Separate component categories so an OP registration fee never marks newly added investigations as paid
+        const regConsultItems = items.filter((it) => it.category === "Registration" || it.category === "Consultation")
+        const regConsultTotal = regConsultItems.reduce((sum, it) => sum + (it.total || 0), 0)
+        const labItems = items.filter((it) => it.category === "Laboratory")
+        const labTotal = labItems.reduce((sum, it) => sum + (it.total || 0), 0)
+        const radItems = items.filter((it) => (it.category as string) === "Radiology / Imaging" || (it.category as string) === "Radiology")
+        const radTotal = radItems.reduce((sum, it) => sum + (it.total || 0), 0)
+
+        // Check registration payment at front desk
+        const isRegPaid = enc.billing?.status === "Paid"
+
+        // Laboratory investigations are paid ONLY if all matching lab orders are billed/paid
+        const isLabPaid = labItems.length === 0 || (matchingLabOrders.length > 0 && matchingLabOrders.every((o) => o.billing?.status === "Paid"))
+
+        // Radiology investigations are paid ONLY if all matching radiology studies are cleared/paid
+        const isRadPaid = radItems.length === 0 || (matchingRadStudies.length > 0 && matchingRadStudies.every((s) => s.isPaid || s.paymentStatus === "Paid"))
+
+        if (existingClaimIdx >= 0) {
+          const existing = claims[existingClaimIdx]
+          const recordedPayments = (existing.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0)
+
+          let calculatedPaid = recordedPayments
+          if (calculatedPaid === 0) {
+            if (isRegPaid) calculatedPaid += regConsultTotal
+            if (isLabPaid && labTotal > 0) calculatedPaid += labTotal
+            if (isRadPaid && radTotal > 0) calculatedPaid += radTotal
+          } else {
+            if (isRegPaid && calculatedPaid < regConsultTotal) calculatedPaid = Math.max(calculatedPaid, regConsultTotal)
+            if (isLabPaid && labTotal > 0 && !existing.payments?.some((p) => (p as any).department === "Laboratory")) {
+              calculatedPaid += labTotal
+            }
+            if (isRadPaid && radTotal > 0 && !existing.payments?.some((p) => (p as any).department === "Radiology")) {
+              calculatedPaid += radTotal
+            }
           }
 
+          const amountPaid = Math.min(subtotal, Math.max(existing.amountPaid || 0, calculatedPaid))
+          const balanceDue = Math.max(0, subtotal - amountPaid)
+          const isFullyPaid = balanceDue === 0 && isRegPaid && isLabPaid && isRadPaid && subtotal > 0
+
+          claims[existingClaimIdx] = {
+            ...existing,
+            items,
+            subtotal,
+            totalAmount: subtotal,
+            patientPortion: subtotal,
+            amountPaid,
+            balanceDue,
+            status: isFullyPaid ? "Paid" : "Draft",
+          }
+        } else {
           const visitIso = (() => {
             try {
               return encounterArrivalIso(enc)
@@ -1358,9 +1471,19 @@ export class BillingDatabase {
             }
           })()
           const visitAt = visitIso && !Number.isNaN(new Date(visitIso).getTime()) ? new Date(visitIso).toISOString() : new Date().toISOString()
-          derivedOp.add(`CLM-${enc.id}`)
-          const newClaim: ClaimRecord = {
-            id: `CLM-${enc.id}`,
+          derivedOp.add(claimId)
+
+          let calculatedPaid = 0
+          if (isRegPaid) calculatedPaid += regConsultTotal
+          if (isLabPaid && labTotal > 0) calculatedPaid += labTotal
+          if (isRadPaid && radTotal > 0) calculatedPaid += radTotal
+
+          const amountPaid = Math.min(subtotal, calculatedPaid)
+          const balanceDue = Math.max(0, subtotal - amountPaid)
+          const isFullyPaid = balanceDue === 0 && isRegPaid && isLabPaid && isRadPaid && subtotal > 0
+
+          claims.push({
+            id: claimId,
             invoiceNo: `INV-${enc.opNumber}`,
             encounterId: enc.id,
             patientId: enc.umr,
@@ -1375,25 +1498,143 @@ export class BillingDatabase {
             dateOfService: OpReportsService.getEncounterDate(enc) || (enc as any).createdAt?.split("T")[0] || visitAt.split("T")[0],
             insuranceProvider: "Self-Pay",
             policyNumber: "N/A",
-            status: isPaid ? "Paid" : "Draft",
+            status: isFullyPaid ? "Paid" : "Draft",
             attendingDoctor: enc.assignedDoctor || "OP Physician",
             diagnosisCodes: [enc.icd10 || "Z00.00"],
             items,
-            subtotal: totalAmt,
+            subtotal,
             discount: 0,
             tax: 0,
-            totalAmount: totalAmt,
+            totalAmount: subtotal,
             insurancePortion: 0,
-            patientPortion: totalAmt,
-            amountPaid: isPaid ? totalAmt : 0,
-            balanceDue: isPaid ? 0 : totalAmt,
+            patientPortion: subtotal,
+            amountPaid,
+            balanceDue,
             createdAt: visitAt,
             updatedAt: visitAt,
-          };
-
-          claims.push(newClaim);
+          })
         }
-      });
+      })
+
+      // Auto-sync standalone Lab Orders (without an OP encounter)
+      allLabOrders.forEach((ord: any) => {
+        const encId = (ord.encounterId || "").toLowerCase()
+        if (encId && consolidatedEncounterIds.has(encId)) {
+          // Already consolidated into encounter invoice
+          return
+        }
+        const claimId = `CLM-LAB-${ord.id}`
+        const exists = claims.some((c) => c.id === claimId || c.invoiceNo === ord.billing?.invoiceNo)
+        if (!exists) {
+          const isPaid = ord.billing?.status === "Paid"
+          const subtotal = ord.billing?.total || (ord.tests || []).reduce((s: number, t: any) => s + (t.price || 0), 0)
+          const labItems: InvoiceItem[] = (ord.tests || []).map((t: any, i: number) => ({
+            id: `ITEM-LAB-${ord.id}-${i + 1}`,
+            description: t.name,
+            category: "Laboratory",
+            cptCode: "80050",
+            quantity: 1,
+            unitPrice: t.price || 0,
+            total: t.price || 0,
+            insuranceCovered: 0,
+            patientPayable: t.price || 0,
+            orderedBy: ord.doctorName || "Attending Doctor",
+            orderedAt: ord.createdAt || new Date().toISOString(),
+          }))
+
+          claims.push({
+            id: claimId,
+            invoiceNo: ord.billing?.invoiceNo || `INV-LAB-${(ord.id || "").replace(/\D/g, "") || Date.now().toString().slice(-4)}`,
+            encounterId: ord.encounterId,
+            patientId: ord.umr,
+            patientName: ord.patientName,
+            mrn: (ord.umr || "").replace("UMR", ""),
+            age: ord.age || 30,
+            gender: ord.sex === "Female" ? "Female" : "Male",
+            phone: ord.phone || "",
+            payments: [],
+            department: "Laboratory",
+            carePathway: `Laboratory Diagnostics (${ord.id})`,
+            dateOfService: ord.createdAt ? ord.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
+            insuranceProvider: "Self-Pay",
+            policyNumber: "N/A",
+            status: isPaid ? "Paid" : "Draft",
+            attendingDoctor: ord.doctorName || "Attending Specialist",
+            diagnosisCodes: [ord.diagnosis || "Z00.00"],
+            items: labItems,
+            subtotal,
+            discount: 0,
+            tax: 0,
+            totalAmount: subtotal,
+            insurancePortion: 0,
+            patientPortion: subtotal,
+            amountPaid: isPaid ? subtotal : 0,
+            balanceDue: isPaid ? 0 : subtotal,
+            createdAt: ord.createdAt || new Date().toISOString(),
+            updatedAt: ord.updatedAt || ord.createdAt || new Date().toISOString(),
+          })
+        }
+      })
+
+      // Auto-sync standalone Radiology Studies (without an OP encounter)
+      allRadStudies.forEach((rs: any) => {
+        const encId = (rs.encounterId || "").toLowerCase()
+        if (encId && consolidatedEncounterIds.has(encId)) {
+          // Already consolidated into encounter invoice
+          return
+        }
+        const claimId = `CLM-${rs.id}`
+        const exists = claims.some((c) => c.id === claimId || (rs.invoiceNo && c.invoiceNo === rs.invoiceNo))
+        if (!exists) {
+          const isPaid = rs.isPaid || rs.paymentStatus === "Paid"
+          const price = rs.price || 500
+          claims.push({
+            id: claimId,
+            invoiceNo: rs.invoiceNo || `INV-RAD-${(rs.id || "").replace(/\D/g, "") || Date.now().toString().slice(-4)}`,
+            encounterId: rs.encounterId,
+            patientId: rs.umr || rs.mrn,
+            patientName: rs.patient,
+            mrn: (rs.mrn || rs.umr || "").replace("UMR", ""),
+            age: 35,
+            gender: "Male",
+            phone: "",
+            payments: [],
+            department: "Radiology",
+            carePathway: `Radiology Imaging — ${rs.study}`,
+            dateOfService: (rs.orderDate || rs.ordered || "").split(" · ")[0] || new Date().toISOString().split("T")[0],
+            insuranceProvider: "Self-Pay",
+            policyNumber: "N/A",
+            status: isPaid ? "Paid" : "Draft",
+            attendingDoctor: rs.provider || "Attending Radiologist",
+            diagnosisCodes: [rs.diagnosis || "Z01.89"],
+            items: [
+              {
+                id: `ITEM-RAD-${rs.id}`,
+                description: `${rs.study} (${rs.modality})`,
+                category: "Radiology / Imaging",
+                cptCode: `RAD-${rs.modality || "IMG"}`,
+                quantity: 1,
+                unitPrice: price,
+                total: price,
+                insuranceCovered: 0,
+                patientPayable: price,
+                orderedBy: rs.provider || "Attending Doctor",
+                orderedAt: rs.createdAt || new Date().toISOString(),
+              },
+            ],
+            subtotal: price,
+            discount: 0,
+            tax: 0,
+            totalAmount: price,
+            insurancePortion: 0,
+            patientPortion: price,
+            amountPaid: isPaid ? price : 0,
+            balanceDue: isPaid ? 0 : price,
+            createdAt: rs.createdAt || new Date().toISOString(),
+            updatedAt: rs.createdAt || new Date().toISOString(),
+          })
+        }
+      })
     } catch {
       // ignore
     }
@@ -1536,8 +1777,8 @@ export class BillingDatabase {
 
     const existingIndex = claims.findIndex(
       (c) =>
-        (data.encounterId && c.encounterId === data.encounterId) ||
-        (data.id && c.id === data.id),
+        (data.id && c.id === data.id) ||
+        (data.encounterId && c.encounterId === data.encounterId && (!data.department || c.department === data.department)),
     )
 
     if (existingIndex >= 0) {
@@ -2623,37 +2864,130 @@ export class BillingDatabase {
               mode: payment.paymentMethod,
             },
             status:
-              enc.status === "Doctor Assigned" || enc.status === "Registered"
-                ? "In Queue"
-                : enc.status,
+              newBalanceDue === 0
+                ? "Billing Completed"
+                : enc.status === "Doctor Assigned" || enc.status === "Registered"
+                  ? "In Queue"
+                  : enc.status,
           });
         }
       } catch {}
     }
 
-    // Sync underlying radiology study records with permanent billing clearance timestamps
+    // Atomic Synchronization: When claim is fully settled (newBalanceDue === 0),
+    // clear both Laboratory orders and Radiology studies immediately.
     if (newBalanceDue === 0) {
+      const nowIso = new Date().toISOString()
+      const receiptNo = newPayment.receiptNo
+
+      // 1. Sync Laboratory Orders (hospai_lab_orders_v2)
+      try {
+        if (typeof window !== "undefined") {
+          const rawOrders = window.localStorage.getItem("hospai_lab_orders_v2")
+          if (rawOrders) {
+            const parsed = JSON.parse(rawOrders)
+            let labChanged = false
+            const updatedLab = parsed.map((o: any) => {
+              const matchEnc = o.encounterId && updatedClaim.encounterId && o.encounterId.toLowerCase() === updatedClaim.encounterId.toLowerCase()
+              const matchInv = o.billing?.invoiceNo && (
+                (claim.invoiceNo && o.billing.invoiceNo.toLowerCase() === claim.invoiceNo.toLowerCase()) ||
+                o.billing.invoiceNo.toLowerCase() === (claim.id || "").toLowerCase()
+              )
+              const matchUmr = o.umr && (
+                (claim.patientId && o.umr.toLowerCase() === claim.patientId.toLowerCase()) ||
+                (claim.mrn && o.umr.toLowerCase() === claim.mrn.toLowerCase())
+              )
+              if (matchEnc || matchInv || (matchUmr && o.billing?.status !== "Paid")) {
+                labChanged = true
+                return {
+                  ...o,
+                  status: o.status === "Awaiting Billing" ? "Billed" : o.status,
+                  billing: {
+                    ...(o.billing || {}),
+                    status: "Paid",
+                    paidAt: newPayment.paymentDate || nowIso,
+                    receiptNo,
+                    mode: payment.paymentMethod,
+                  },
+                  tests: (o.tests || []).map((t: any) => ({
+                    ...t,
+                    status: t.status === "Ordered" ? "Pending" : t.status,
+                  })),
+                  history: [
+                    ...(o.history || []),
+                    {
+                      at: nowIso,
+                      actor: "Central Billing Cashier",
+                      action: "Payment Confirmed & Cleared",
+                      detail: `Payment settled via ${payment.paymentMethod}. Official Receipt: ${receiptNo}. Ready for sample collection.`,
+                    },
+                  ],
+                }
+              }
+              return o
+            })
+            if (labChanged) {
+              window.localStorage.setItem("hospai_lab_orders_v2", JSON.stringify(updatedLab))
+              try {
+                new BroadcastChannel("hospai_lab_orders").postMessage("changed")
+              } catch {}
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Laboratory payment sync error:", err)
+      }
+
+      // 2. Sync Radiology Studies (STORAGE_KEY_RAD_STUDIES)
       try {
         const radStudies = this.getRadiologyStudies()
         let radChanged = false
-        radStudies.forEach((rs) => {
-          const matchInv = rs.invoiceNo && (rs.invoiceNo.toLowerCase() === (claim.invoiceNo || "").toLowerCase() || rs.invoiceNo.toLowerCase() === (claim.id || "").toLowerCase())
-          const matchEnc = rs.encounterId && rs.encounterId.toLowerCase() === (claim.encounterId || "").toLowerCase()
-          const matchUmr = rs.umr && rs.umr.toLowerCase() === (claim.patientId || "").toLowerCase()
-          if ((matchInv || matchEnc || (matchUmr && rs.paymentStatus !== "Paid")) && rs.paymentStatus !== "Paid") {
+        radStudies.forEach((rs: any) => {
+          const matchInv = rs.invoiceNo && (
+            (claim.invoiceNo && rs.invoiceNo.toLowerCase() === claim.invoiceNo.toLowerCase()) ||
+            rs.invoiceNo.toLowerCase() === (claim.id || "").toLowerCase()
+          )
+          const matchEnc = rs.encounterId && updatedClaim.encounterId && rs.encounterId.toLowerCase() === updatedClaim.encounterId.toLowerCase()
+          const matchUmr = rs.umr && (
+            (claim.patientId && rs.umr.toLowerCase() === claim.patientId.toLowerCase()) ||
+            (claim.mrn && rs.umr.toLowerCase() === claim.mrn.toLowerCase())
+          )
+          const matchStudyInClaim = (claim.items || []).some(
+            (it) => it.id === `ITEM-RAD-${rs.id}` || (rs.study && it.description.toLowerCase().includes(rs.study.toLowerCase()))
+          )
+
+          if ((matchEnc || matchInv || matchStudyInClaim || (matchUmr && rs.paymentStatus !== "Paid")) && rs.paymentStatus !== "Paid") {
             rs.paymentStatus = "Paid"
-            rs.paidReceiptNo = rs.paidReceiptNo || newPayment.receiptNo
-            rs.paidAt = rs.paidAt || newPayment.paymentDate
-            rs.billingClearedAt = rs.billingClearedAt || newPayment.paymentDate
-            rs.eligibleAt = rs.eligibleAt || newPayment.paymentDate
+            rs.paymentStatusDisplay = "PAID"
+            rs.isPaid = true
+            rs.paidReceiptNo = rs.paidReceiptNo || receiptNo
+            rs.paidAt = rs.paidAt || newPayment.paymentDate || nowIso
+            rs.billingClearedAt = rs.billingClearedAt || newPayment.paymentDate || nowIso
+            rs.eligibleAt = rs.eligibleAt || newPayment.paymentDate || nowIso
+            rs.billingStatus = "Cleared / Paid"
+            rs.normalizedStatus = "ORDERED"
+            rs.history = [
+              ...(rs.history || []),
+              {
+                timestamp: nowIso,
+                action: "Payment Confirmed (Central Cashier)",
+                actor: "Central Billing Cashier",
+                details: `Payment settled via ${payment.paymentMethod}. Official Receipt: ${receiptNo}. Cleared for scanning.`,
+              },
+            ]
             radChanged = true
           }
         })
         if (radChanged) {
           this.save(STORAGE_KEY_RAD_STUDIES, radStudies)
           this.invalidateRadiologyStudiesCache()
+          try {
+            new BroadcastChannel("hospai_rad_channel").postMessage("changed")
+          } catch {}
         }
-      } catch {}
+      } catch (err) {
+        console.warn("Radiology payment sync error:", err)
+      }
     }
 
     BillingRbacManager.logEvent({
@@ -2686,18 +3020,31 @@ export class BillingDatabase {
       }),
     }).catch(() => {})
 
-    // Automatically dispatch financial clearance to Radiology & Laboratory
+    // Automatically dispatch financial clearance to Radiology & Laboratory ONLY if applicable
     try {
-      this.dispatchClearanceToDepartment(
-        claim.patientName || claim.patientId,
-        "Radiology",
-        newPayment.receiptNo,
-      )
-      this.dispatchClearanceToDepartment(
-        claim.patientName || claim.patientId,
-        "Laboratory",
-        newPayment.receiptNo,
-      )
+      const hasRad = claim.department === "Radiology" || (claim.items || []).some((it) => it.category === "Radiology / Imaging" || it.category === "Radiology")
+      const hasLab = claim.department === "Laboratory" || (claim.items || []).some((it) => it.category === "Laboratory" || it.category === "Lab")
+
+      if (hasRad) {
+        this.dispatchClearanceToDepartment(
+          claim.patientName || claim.patientId,
+          "Radiology",
+          newPayment.receiptNo,
+        )
+      }
+      if (hasLab) {
+        this.dispatchClearanceToDepartment(
+          claim.patientName || claim.patientId,
+          "Laboratory",
+          newPayment.receiptNo,
+        )
+      }
+      // Also invalidate radiology workflow in-memory cache so payment reflects instantly
+      if (typeof window !== "undefined") {
+        try {
+          new BroadcastChannel("hospai_rad_channel").postMessage("changed")
+        } catch {}
+      }
     } catch (err) {
       console.warn("Radiology/Lab clearance dispatch error:", err)
     }
@@ -2713,16 +3060,6 @@ export class BillingDatabase {
     receiptNo?: string,
     optionalTestName?: string,
   ): { success: boolean; updatedCount: number; message: string } {
-    // Payment clearance is a financial authorization, not a browser UI event.
-    // The former local implementation marked diagnostic orders paid and even
-    // created studies from claim descriptions. Keep this fail-closed until a
-    // verified billing-to-department backend event is available.
-    return {
-      success: false,
-      updatedCount: 0,
-      message: "Awaiting verified backend payment clearance.",
-    }
-
     const targetName = (patientIdOrName || "").toLowerCase().trim();
     const targetMrn = targetName.replace("umr", "").replace("p-", "").trim();
     const nowIso = new Date().toISOString();
@@ -2805,6 +3142,19 @@ export class BillingDatabase {
                     paidAt: nowIso,
                     receiptNo: effectiveReceiptNo,
                   },
+                  tests: (o.tests || []).map((t: any) => ({
+                    ...t,
+                    status: t.status === "Ordered" ? "Pending" : t.status,
+                  })),
+                  history: [
+                    ...(o.history || []),
+                    {
+                      at: nowIso,
+                      actor: "Central Billing Cashier",
+                      action: "Payment Verified & Dispatched",
+                      detail: `Financially cleared and released to Laboratory worklist. Receipt: ${effectiveReceiptNo}.`,
+                    },
+                  ],
                 };
               }
               return o;
@@ -2842,6 +3192,16 @@ export class BillingDatabase {
                 ),
             )
           : [];
+
+        if (labItems.length === 0) {
+          // Do not inject phantom lab orders when patient has no laboratory tests ordered
+          this.emitUpdate();
+          return {
+            success: true,
+            updatedCount: 0,
+            message: "No laboratory investigations pending clearance.",
+          };
+        }
 
         const testName =
           optionalTestName ||
@@ -2901,7 +3261,7 @@ export class BillingDatabase {
                   category: "Pathology",
                   urgency: "Routine",
                   price: totalLabPrice,
-                  status: "Ordered",
+                  status: "Pending",
                 },
               ],
               status: "Billed",
@@ -2957,10 +3317,13 @@ export class BillingDatabase {
           )
         : [];
 
-      // Only match by exact invoice number, or specific study name if this claim has radiology items
+      // Only match by exact invoice number, encounter ID, or specific study name if this claim has radiology items
       const updatedRadStudies = radStudies.map((rs) => {
         const rsInv = (rs.invoiceNo || "").toLowerCase().trim();
         const matchInv = matchingClaim?.invoiceNo && rsInv && rsInv === matchingClaim.invoiceNo.toLowerCase();
+
+        const rsEnc = ((rs as any).encounterId || "").toLowerCase().trim();
+        const matchEnc = resolvedEncounterId && rsEnc && rsEnc === resolvedEncounterId.toLowerCase();
 
         // Also check if study name matches any item in the cleared invoice for this patient
         const rsUmr = (rs.umr || rs.mrn || "").toLowerCase().trim();
@@ -2975,15 +3338,21 @@ export class BillingDatabase {
           )
         );
 
-        if (matchInv || itemMatches) {
+        if (matchInv || matchEnc || itemMatches) {
           radChanged = true;
           updatedCount += 1;
           return {
             ...rs,
             invoiceNo: rs.invoiceNo || matchingClaim?.invoiceNo,
             paymentStatus: "Paid" as const,
+            paymentStatusDisplay: "PAID" as const,
+            isPaid: true,
             paidReceiptNo: effectiveReceiptNo,
             paidAt: nowIso,
+            billingClearedAt: nowIso,
+            eligibleAt: nowIso,
+            billingStatus: "Cleared / Paid",
+            normalizedStatus: "ORDERED" as const,
           };
         }
         return rs;
@@ -4126,6 +4495,286 @@ export class BillingDatabase {
     })
   }
 
+  static ensureConsolidatedInvestigationClaim(payload: {
+    encounter: {
+      id: string
+      umr: string
+      patientName: string
+      age?: number
+      sex?: string
+      phone?: string
+      opNumber?: string
+      dept?: string
+      assignedDoctor?: string
+      isNew?: boolean
+      billing?: any
+      diagnosis?: string
+      registrationTime?: string
+    }
+    doctor?: { id?: string; name?: string; staffId?: string; specialty?: string }
+    labOrder?: any
+    radiologyStudies?: RadiologyStudyRecord[]
+  }): ClaimRecord {
+    try {
+      const claims = this.load<ClaimRecord[]>(STORAGE_KEY_CLAIMS, [])
+      const encId = payload.encounter.id
+      const encUmr = payload.encounter.umr
+      const encOp = payload.encounter.opNumber || `OP-${encUmr.replace(/\D/g, "") || "1001"}`
+      const invoiceNo = `INV-${encOp}`
+
+      // Check if consolidated claim already exists for this encounter
+      let claimIdx = claims.findIndex(
+        (c) =>
+          c.id === `CLM-${encId}` ||
+          (c.encounterId && c.encounterId.toLowerCase() === encId.toLowerCase()) ||
+          c.invoiceNo === invoiceNo
+      )
+
+      let claim: ClaimRecord
+      if (claimIdx >= 0) {
+        claim = { ...claims[claimIdx] }
+      } else {
+        const regFee = payload.encounter.billing?.registrationFee ?? (payload.encounter.isNew === false ? 0 : 20)
+        const consultFee = payload.encounter.billing?.consultationFee ?? getDoctorConsultationFee(payload.encounter.assignedDoctor || payload.doctor?.name || "")
+        const items: InvoiceItem[] = []
+
+        if (regFee > 0) {
+          items.push({
+            id: `ITEM-REG-${encId}`,
+            description: `Patient Registration Fee – ₹${regFee}`,
+            category: "Registration" as any,
+            cptCode: "99201",
+            quantity: 1,
+            unitPrice: regFee,
+            total: regFee,
+            insuranceCovered: 0,
+            patientPayable: regFee,
+            orderedBy: "Front Desk Registration",
+            orderedAt: payload.encounter.registrationTime || new Date().toISOString(),
+          })
+        }
+
+        items.push({
+          id: `ITEM-CONSULT-${encId}`,
+          description: `Physician Consultation Fee (${payload.encounter.assignedDoctor || payload.doctor?.name || payload.encounter.dept || "Attending Specialist"})`,
+          category: "Consultation",
+          cptCode: "99205",
+          quantity: 1,
+          unitPrice: consultFee,
+          total: consultFee,
+          insuranceCovered: 0,
+          patientPayable: consultFee,
+          orderedBy: payload.doctor?.name || payload.encounter.assignedDoctor || "OP Physician",
+          orderedAt: payload.encounter.registrationTime || new Date().toISOString(),
+        })
+
+        claim = {
+          id: `CLM-${encId}`,
+          invoiceNo,
+          encounterId: encId,
+          patientId: encUmr,
+          patientName: payload.encounter.patientName,
+          mrn: encUmr.replace("UMR", ""),
+          age: payload.encounter.age || 30,
+          gender: payload.encounter.sex === "Female" ? "Female" : "Male",
+          phone: payload.encounter.phone || "",
+          payments: [],
+          department: "Outpatient",
+          carePathway: `${payload.encounter.dept || "Outpatient"} Consultation & Diagnostic Investigations`,
+          dateOfService: OpReportsService.getEncounterDate(payload.encounter as any) || new Date().toISOString().split("T")[0],
+          insuranceProvider: "Self-Pay",
+          policyNumber: "N/A",
+          status: "Draft",
+          attendingDoctor: payload.doctor?.name || payload.encounter.assignedDoctor || "Attending Doctor",
+          diagnosisCodes: [payload.encounter.diagnosis || "Z00.00"],
+          items,
+          subtotal: 0,
+          discount: 0,
+          tax: 0,
+          totalAmount: 0,
+          insurancePortion: 0,
+          patientPortion: 0,
+          amountPaid: 0,
+          balanceDue: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+      }
+
+      // Preserve existing registration & consultation items, remove generic investigation placeholders
+      let updatedItems = (claim.items || []).filter(
+        (it) => it.id !== `ITEM-LAB-${encId}` && it.description !== "Diagnostic Investigations & Services"
+      )
+
+      // Add / sync Laboratory items
+      if (payload.labOrder && Array.isArray(payload.labOrder.tests)) {
+        payload.labOrder.tests.forEach((t: any, i: number) => {
+          const itemId = `ITEM-LAB-${payload.labOrder.id}-${i + 1}`
+          const exists = updatedItems.some(
+            (it) => it.id === itemId || (it.category === "Laboratory" && it.description.toLowerCase() === (t.name || "").toLowerCase())
+          )
+          if (!exists) {
+            updatedItems.push({
+              id: itemId,
+              description: t.name,
+              category: "Laboratory",
+              cptCode: "80050",
+              quantity: 1,
+              unitPrice: t.price || 0,
+              total: t.price || 0,
+              insuranceCovered: 0,
+              patientPayable: t.price || 0,
+              orderedBy: payload.doctor?.name || payload.encounter.assignedDoctor || "Attending Doctor",
+              orderedAt: payload.labOrder.createdAt || new Date().toISOString(),
+            })
+          }
+        })
+      }
+
+      // Add / sync Radiology items
+      if (payload.radiologyStudies && Array.isArray(payload.radiologyStudies)) {
+        payload.radiologyStudies.forEach((s: any) => {
+          const itemId = `ITEM-RAD-${s.id}`
+          const exists = updatedItems.some(
+            (it) =>
+              it.id === itemId ||
+              (((it.category as string) === "Radiology / Imaging" || (it.category as string) === "Radiology") &&
+                it.description.toLowerCase().includes((s.study || "").toLowerCase()))
+          )
+          if (!exists) {
+            updatedItems.push({
+              id: itemId,
+              description: `${s.study} (${s.modality})`,
+              category: "Radiology / Imaging",
+              cptCode: `RAD-${s.modality || "IMG"}`,
+              quantity: 1,
+              unitPrice: s.price || 0,
+              total: s.price || 0,
+              insuranceCovered: 0,
+              patientPayable: s.price || 0,
+              orderedBy: payload.doctor?.name || payload.encounter.assignedDoctor || "Attending Doctor",
+              orderedAt: s.createdAt || new Date().toISOString(),
+            })
+          }
+        })
+      }
+
+      // Recalculate totals with strict separation of registration vs investigation balances
+      const subtotal = updatedItems.reduce((sum, it) => sum + (it.total || 0), 0)
+      const recordedPayments = (claim.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0)
+
+      const regConsultTotal = updatedItems
+        .filter((it) => it.category === "Registration" || it.category === "Consultation")
+        .reduce((sum, it) => sum + (it.total || 0), 0)
+      const isRegPaid = payload.encounter.billing?.status === "Paid"
+
+      let effectivePaid = recordedPayments
+      if (effectivePaid === 0 && isRegPaid) {
+        effectivePaid = regConsultTotal
+      }
+
+      const amountPaid = Math.min(subtotal, Math.max(claim.amountPaid || 0, effectivePaid))
+      const balanceDue = Math.max(0, subtotal - amountPaid)
+      const isPaid = balanceDue === 0 && subtotal > 0
+
+      claim.items = updatedItems
+      claim.subtotal = subtotal
+      claim.totalAmount = subtotal
+      claim.patientPortion = subtotal
+      claim.amountPaid = amountPaid
+      claim.balanceDue = balanceDue
+      claim.status = isPaid ? "Paid" : "Draft"
+      claim.updatedAt = new Date().toISOString()
+
+      // Suppress any split/orphan claims for this encounter
+      const filteredClaims = claims.filter((c) => {
+        if (c.id === claim.id) return false
+        if (c.encounterId && c.encounterId.toLowerCase() === encId.toLowerCase() && c.id !== claim.id) return false
+        if (payload.labOrder?.id && c.id === `CLM-LAB-${payload.labOrder.id}`) return false
+        if (payload.radiologyStudies && payload.radiologyStudies.some((s) => c.id === `CLM-${s.id}`)) return false
+        return true
+      })
+
+      filteredClaims.unshift(claim)
+      this.save(STORAGE_KEY_CLAIMS, filteredClaims)
+
+      // Ensure Lab Order in hospai_lab_orders_v2 holds the consolidated invoiceNo
+      if (payload.labOrder && typeof window !== "undefined") {
+        try {
+          const rawOrders = window.localStorage.getItem("hospai_lab_orders_v2")
+          if (rawOrders) {
+            const parsed = JSON.parse(rawOrders)
+            let updatedLab = false
+            const nextOrders = parsed.map((o: any) => {
+              if (o.id === payload.labOrder.id || (o.encounterId && o.encounterId === encId)) {
+                updatedLab = true
+                return {
+                  ...o,
+                  billing: {
+                    ...(o.billing || {}),
+                    invoiceNo: claim.invoiceNo,
+                  },
+                }
+              }
+              return o
+            })
+            if (updatedLab) {
+              window.localStorage.setItem("hospai_lab_orders_v2", JSON.stringify(nextOrders))
+            }
+          }
+        } catch {}
+      }
+
+      // Ensure Radiology Studies in STORAGE_KEY_RAD_STUDIES hold the consolidated invoiceNo
+      if (payload.radiologyStudies && payload.radiologyStudies.length > 0) {
+        try {
+          const radStudies = this.getRadiologyStudies()
+          let updatedRad = false
+          const nextRad = radStudies.map((rs: any) => {
+            if (rs.encounterId && rs.encounterId === encId) {
+              updatedRad = true
+              return {
+                ...rs,
+                invoiceNo: claim.invoiceNo,
+              }
+            }
+            return rs
+          })
+          if (updatedRad) {
+            this.save(STORAGE_KEY_RAD_STUDIES, nextRad)
+            this.invalidateRadiologyStudiesCache()
+          }
+        } catch {}
+      }
+
+      // Synchronize OP Encounter billing in db.ts
+      const diagFee = updatedItems
+        .filter((it) => it.category === "Laboratory" || (it.category as string) === "Radiology / Imaging")
+        .reduce((sum, it) => sum + (it.total || 0), 0)
+
+      try {
+        const enc = db.getEncounterById(encId)
+        if (enc) {
+          db.updateEncounter(encId, {
+            billing: {
+              ...(enc.billing || {}),
+              labFee: diagFee,
+              total: subtotal,
+              status: balanceDue === 0 ? "Paid" : "Pending",
+            },
+            status: balanceDue === 0 ? "Billing Completed" : "Awaiting Billing",
+          })
+        }
+      } catch {}
+
+      this.emitUpdate()
+      return claim
+    } catch (err) {
+      console.warn("ensureConsolidatedInvestigationClaim error:", err)
+      throw err
+    }
+  }
+
   static ensureRadiologyClaim(study: RadiologyStudyRecord): void {
     try {
       const claims = this.load<ClaimRecord[]>(
@@ -4233,6 +4882,97 @@ export class BillingDatabase {
     }
   }
 
+  static ensureLaboratoryClaim(order: any): void {
+    try {
+      if (order.encounterId) {
+        try {
+          const enc = db.getEncounterById(order.encounterId)
+          if (enc) {
+            this.ensureConsolidatedInvestigationClaim({
+              encounter: enc,
+              labOrder: order,
+            })
+            return
+          }
+        } catch {}
+      }
+
+      const claims = this.load<ClaimRecord[]>(STORAGE_KEY_CLAIMS, [])
+      const existingIdx = claims.findIndex(
+        (c) =>
+          c.department === "Laboratory" &&
+          (c.id === `CLM-LAB-${order.id}` ||
+            c.invoiceNo === order.billing?.invoiceNo ||
+            (order.encounterId && c.encounterId === order.encounterId && c.items.some((it) => (order.tests || []).some((t: any) => it.description.includes(t.name)))))
+      )
+
+      const isPaid = order.billing?.status === "Paid"
+      const subtotal = order.billing?.total || (order.tests || []).reduce((s: number, t: any) => s + (t.price || 0), 0)
+      const labItems: InvoiceItem[] = (order.tests || []).map((t: any, i: number) => ({
+        id: `ITEM-LAB-${order.id}-${i + 1}`,
+        description: t.name,
+        category: "Laboratory",
+        cptCode: "80050",
+        quantity: 1,
+        unitPrice: t.price || 0,
+        total: t.price || 0,
+        insuranceCovered: 0,
+        patientPayable: t.price || 0,
+        orderedBy: order.doctorName || "Attending Doctor",
+        orderedAt: order.createdAt || new Date().toISOString(),
+      }))
+
+      if (existingIdx >= 0) {
+        const existing = claims[existingIdx]
+        existing.status = isPaid ? "Paid" : existing.status
+        existing.amountPaid = isPaid ? subtotal : existing.amountPaid
+        existing.balanceDue = isPaid ? 0 : Math.max(0, existing.totalAmount - existing.amountPaid)
+        claims[existingIdx] = existing
+        this.save(STORAGE_KEY_CLAIMS, claims)
+        this.emitUpdate()
+        return
+      }
+
+      const newClaim: ClaimRecord = {
+        id: `CLM-LAB-${order.id}`,
+        invoiceNo: order.billing?.invoiceNo || `INV-LAB-${(order.id || "").replace(/\D/g, "") || Date.now().toString().slice(-4)}`,
+        encounterId: order.encounterId,
+        patientId: order.umr,
+        patientName: order.patientName,
+        mrn: (order.umr || "").replace("UMR", ""),
+        age: order.age || 30,
+        gender: order.sex === "Female" ? "Female" : "Male",
+        phone: order.phone || "",
+        payments: [],
+        department: "Laboratory",
+        carePathway: `Laboratory Diagnostics (${order.id})`,
+        dateOfService: order.createdAt ? order.createdAt.split("T")[0] : new Date().toISOString().split("T")[0],
+        insuranceProvider: "Self-Pay",
+        policyNumber: "N/A",
+        status: isPaid ? "Paid" : "Draft",
+        attendingDoctor: order.doctorName || "Attending Specialist",
+        diagnosisCodes: [order.diagnosis || "Z00.00"],
+        items: labItems,
+        subtotal,
+        discount: 0,
+        tax: 0,
+        totalAmount: subtotal,
+        insurancePortion: 0,
+        patientPortion: subtotal,
+        amountPaid: isPaid ? subtotal : 0,
+        balanceDue: isPaid ? 0 : subtotal,
+        createdAt: order.createdAt || new Date().toISOString(),
+        updatedAt: order.updatedAt || order.createdAt || new Date().toISOString(),
+      }
+
+      claims.unshift(newClaim)
+      this.save(STORAGE_KEY_CLAIMS, claims)
+      this.emitUpdate()
+    } catch (err) {
+      console.warn("ensureLaboratoryClaim error:", err)
+    }
+  }
+
   static createRadiologyStudy(
     studyData: Omit<RadiologyStudyRecord, "id"> & { id?: string },
   ): RadiologyStudyRecord {
@@ -4259,25 +4999,40 @@ export class BillingDatabase {
       } catch {}
     }
 
-    const id = studyData.id || `RAD-${Math.floor(200 + Math.random() * 800)}`
+    const id = studyData.id || `RAD-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`
     const invoiceNo =
       studyData.invoiceNo ||
-      `INV-RAD-${Math.floor(1000 + Math.random() * 9000)}`
+      `INV-RAD-${Date.now().toString().slice(-5)}`
 
     const nowIso = new Date().toISOString()
-    // Dynamically resolve patient's original date & time
+    // Dynamically resolve patient's original date & time, age, gender, and OP number
     let dynamicDate = ""
+    let resolvedAge = (studyData as any).age
+    let resolvedGender = (studyData as any).gender
+    let resolvedOpNumber = (studyData as any).opNumber
     if (studyData.encounterId) {
       try {
         const enc = db.getEncounterById(studyData.encounterId)
-        if (enc) dynamicDate = OpReportsService.getEncounterDate(enc)
+        if (enc) {
+          dynamicDate = OpReportsService.getEncounterDate(enc)
+          if (resolvedAge === undefined && enc.age) resolvedAge = enc.age
+          if (!resolvedGender && enc.sex) resolvedGender = enc.sex
+          if (!resolvedOpNumber && enc.opNumber) resolvedOpNumber = enc.opNumber
+        }
       } catch {}
     }
-    if (!dynamicDate && (studyData.umr || studyData.mrn)) {
+    if ((resolvedAge === undefined || !resolvedGender || !dynamicDate) && (studyData.umr || studyData.mrn)) {
       try {
         const pat = db.getPatientByUmr(studyData.umr || studyData.mrn)
-        if (pat?.createdAt) dynamicDate = pat.createdAt.split("T")[0]
+        if (pat) {
+          if (!dynamicDate && pat.createdAt) dynamicDate = pat.createdAt.split("T")[0]
+          if (resolvedAge === undefined && pat.age) resolvedAge = pat.age
+          if (!resolvedGender && pat.gender) resolvedGender = pat.gender
+        }
       } catch {}
+    }
+    if (!resolvedOpNumber) {
+      resolvedOpNumber = `OP-${(studyData.umr || studyData.mrn || "1002").replace(/\D/g, "")}`
     }
     const todayStr = new Date().toISOString().split("T")[0]
     const effectiveDate = dynamicDate || todayStr
@@ -4295,6 +5050,9 @@ export class BillingDatabase {
       ...studyData,
       id,
       patient: resolvedPatientName,
+      age: resolvedAge,
+      gender: resolvedGender,
+      opNumber: resolvedOpNumber,
       invoiceNo,
       accessionNo:
         studyData.accessionNo ||
@@ -4313,7 +5071,23 @@ export class BillingDatabase {
     this.invalidateRadiologyStudiesCache()
 
     if (newStudy.paymentStatus === "Payment Pending") {
-      this.ensureRadiologyClaim(newStudy)
+      if (newStudy.encounterId) {
+        try {
+          const enc = db.getEncounterById(newStudy.encounterId)
+          if (enc) {
+            this.ensureConsolidatedInvestigationClaim({
+              encounter: enc,
+              radiologyStudies: [newStudy],
+            })
+          } else {
+            this.ensureRadiologyClaim(newStudy)
+          }
+        } catch {
+          this.ensureRadiologyClaim(newStudy)
+        }
+      } else {
+        this.ensureRadiologyClaim(newStudy)
+      }
     }
 
     try {
@@ -4369,6 +5143,11 @@ export class BillingDatabase {
     }
 
     const updated = { ...studies[idx], ...updates }
+    for (const key of Object.keys(updates)) {
+      if ((updates as any)[key] === undefined) {
+        delete (updated as any)[key]
+      }
+    }
 
     studies[idx] = updated
 

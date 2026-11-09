@@ -390,7 +390,7 @@ const NAV: NavItem[] = [
       { key: "billing_op", label: "OP Billing", group: "Counters" },
       { key: "billing_ip", label: "IP Billing", group: "Counters" },
       { key: "billing_er", label: "Emergency Billing", group: "Counters" },
-      { key: "lab_billing", label: "Lab Test Billing", group: "Counters" },
+      { key: "lab_billing", label: "Investigation Billing", group: "Counters" },
       { key: "billing_unified", label: "Unified Patient Bill", group: "Records" },
       { key: "payments", label: "Payment History", group: "Records" },
       { key: "billing_revenue", label: "Revenue & Dues", group: "Records" },

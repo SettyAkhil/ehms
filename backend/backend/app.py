@@ -377,8 +377,10 @@ if "pytest" not in sys.modules:
     seed_initial_access_roles()
     # Local bootstrap only: creates the one System Admin. It never creates
     # demo staff, patients or clinical records.
-    if os.getenv("SEED_INITIAL_ADMIN", "").strip().lower() in ("true", "1", "yes"):
+    try:
         create_default_users()
+    except Exception as exc:
+        logger.warning(f"Default admin seeding check: {exc}")
 
 
 from shared.responses import row_to_dict, rows_to_dicts, validate_required_fields

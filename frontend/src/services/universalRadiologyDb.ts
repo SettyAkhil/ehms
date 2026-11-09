@@ -113,7 +113,7 @@ const RAD_CHANNEL = "hospai_universal_radiology_channel"
 const INITIAL_SUITES: RadiologySuite[] = [
   { id: "suite_xr_1", code: "XR-01", name: "Digital X-Ray Suite 1", room: "Room 101", modality: "X-Ray", status: "Available" },
   { id: "suite_xr_2", code: "XR-02", name: "Digital X-Ray Suite 2", room: "Room 102", modality: "X-Ray", status: "Available" },
-  { id: "suite_ct_1", code: "CT-01", name: "64-Slice High-Speed CT", room: "CT Gantry 1", modality: "CT Scan", status: "In Use" },
+  { id: "suite_ct_1", code: "CT-01", name: "64-Slice High-Speed CT", room: "CT Gantry 1", modality: "CT Scan", status: "Available" },
   { id: "suite_ct_2", code: "CT-02", name: "128-Slice Dual-Source CT", room: "CT Gantry 2", modality: "CT Scan", status: "Available" },
   { id: "suite_mr_1", code: "MR-01", name: "3.0T High-Field MRI", room: "MRI Suite 1", modality: "MRI", status: "Available" },
   { id: "suite_us_1", code: "US-01", name: "4D Color Ultrasound Suite", room: "USG Room A", modality: "Ultrasound (USG)", status: "Available" },
@@ -153,12 +153,70 @@ export class UniversalRadiologyDb {
 
   // ── Equipment Suites ──────────────────────────────────────────────────────────
   public static getSuites(): RadiologySuite[] {
+    let suites: RadiologySuite[] = []
     try {
       const data = localStorage.getItem(STORAGE_KEY_SUITES)
-      if (data) return JSON.parse(data)
+      if (data) suites = JSON.parse(data)
     } catch {}
-    this.saveSuites(INITIAL_SUITES)
-    return INITIAL_SUITES
+    if (!suites || suites.length === 0) {
+      suites = INITIAL_SUITES
+      this.saveSuites(INITIAL_SUITES)
+    }
+
+    // Dynamic verification: a suite can only be "In Use" if there is an actual live study currently scanning
+    try {
+      const allStudies = RadiologyWorkflowDb.getStudies()
+      const inProgressStudies = allStudies.filter(
+        (s) => s.normalizedStatus === "IN PROGRESS" || s.workflowStatus === "IN_PROGRESS" || (s as any).workflowStatus === "scanning"
+      )
+
+      let hasChanged = false
+      const validatedSuites = suites.map((suite) => {
+        const activeStudy = inProgressStudies.find((s) => {
+          const room = (s.room || "").toLowerCase().trim()
+          const code = (suite.code || "").toLowerCase().trim()
+          const suiteRoom = (suite.room || "").toLowerCase().trim()
+          const sMod = (s.modality || "").toLowerCase().trim()
+          const suiteMod = (suite.modality || "").toLowerCase().trim()
+
+          const roomMatches = room && (room === code || room === suiteRoom || room.replace(/\D/g, "") === code.replace(/\D/g, ""))
+          const modMatches = sMod && suiteMod && (suiteMod.includes(sMod) || sMod.includes(suiteMod))
+
+          return roomMatches || (modMatches && inProgressStudies.length === 1)
+        })
+
+        if (activeStudy) {
+          if (suite.status !== "In Use" || (suite as any).currentPatient !== activeStudy.patient) {
+            hasChanged = true
+          }
+          return {
+            ...suite,
+            status: "In Use" as SuiteOperationalStatus,
+            currentPatient: activeStudy.patient,
+            currentStudy: activeStudy.study,
+          }
+        } else if (suite.status === "In Use") {
+          // No active patient is currently scanning in this machine: automatically reset to Available
+          hasChanged = true
+          return {
+            ...suite,
+            status: "Available" as SuiteOperationalStatus,
+            currentPatient: undefined,
+            currentStudy: undefined,
+          }
+        }
+        return suite
+      })
+
+      if (hasChanged) {
+        try {
+          localStorage.setItem(STORAGE_KEY_SUITES, JSON.stringify(validatedSuites))
+        } catch {}
+      }
+      return validatedSuites
+    } catch {
+      return suites
+    }
   }
 
   public static saveSuites(suites: RadiologySuite[]): void {
@@ -376,8 +434,42 @@ export class UniversalRadiologyDb {
     try {
       const data = localStorage.getItem(STORAGE_KEY_AUDIT)
       if (data) {
-        const parsed: RadiologyAuditEvent[] = JSON.parse(data)
-        return parsed.sort((a, b) => {
+        let parsed: RadiologyAuditEvent[] = JSON.parse(data)
+        const activeStudies = RadiologyWorkflowDb.getStudies()
+
+        const isMockEvent = (ev: RadiologyAuditEvent): boolean => {
+          const p = (ev.patientName || "").toLowerCase()
+          const d = (ev.details || "").toLowerCase()
+          const act = (ev.action || "").toLowerCase()
+          if (
+            p.includes("rahul sharma") ||
+            p.includes("patricia okonkwo") ||
+            p.includes("thomas reed") ||
+            p.includes("priya sharma") ||
+            p.includes("john smith") ||
+            p.includes("mary jones") ||
+            d.includes("rahul sharma") ||
+            d.includes("patricia okonkwo") ||
+            d.includes("umr10030") ||
+            d.includes("umr100149")
+          ) {
+            return true
+          }
+          if (ev.studyId && (act.includes("scan") || act.includes("procedure") || act.includes("examination") || act.includes("reporting"))) {
+            const exists = activeStudies.some((s) => s.id && s.id.toLowerCase() === ev.studyId!.toLowerCase())
+            if (!exists) return true
+          }
+          return false
+        }
+
+        const validEvents = parsed.filter((ev) => !isMockEvent(ev))
+        if (validEvents.length !== parsed.length) {
+          try {
+            localStorage.setItem(STORAGE_KEY_AUDIT, JSON.stringify(validEvents))
+          } catch {}
+        }
+
+        return validEvents.sort((a, b) => {
           const timeA = new Date(a.timestamp || 0).getTime()
           const timeB = new Date(b.timestamp || 0).getTime()
           if (timeA !== timeB) return timeB - timeA // Latest department activity first
@@ -385,16 +477,7 @@ export class UniversalRadiologyDb {
         })
       }
     } catch {}
-    return [
-      {
-        id: "AUD-INIT-01",
-        timestamp: new Date(Date.now() - 3600000).toISOString(),
-        action: "Department System Initialized",
-        actor: "System Administrator",
-        role: "SuperAdmin",
-        details: "Universal Radiology Center active with 11 standardized clinical modalities."
-      }
-    ]
+    return []
   }
 
   public static logAudit(event: Omit<RadiologyAuditEvent, "id" | "timestamp">): void {
@@ -429,7 +512,7 @@ export class UniversalRadiologyDb {
     // Filter studies strictly within the selected date range using actual persisted order creation timestamp
     const studies = allStudies.filter((s) => {
       const ts = RadiologyWorkflowDb.getOrderCreationTimestamp(s)
-      return ts >= cutoff || ts === 0
+      return ts >= cutoff || ts < 10000000000
     })
 
     const totalStudies = studies.length
@@ -535,8 +618,18 @@ export class UniversalRadiologyDb {
       openExceptions,
       modalityCounts,
       chronologicalTrend,
-      suitesInUse: suites.filter((s) => s.status === "In Use").length,
-      suitesAvailable: suites.filter((s) => s.status === "Available").length,
+      suitesInUse: Math.max(
+        new Set(allStudies.filter((s) => s.normalizedStatus === "IN PROGRESS").map((s) => s.room).filter(Boolean)).size,
+        suites.filter((s) => s.status === "In Use").length
+      ),
+      suitesAvailable: Math.max(
+        0,
+        suites.length -
+          Math.max(
+            new Set(allStudies.filter((s) => s.normalizedStatus === "IN PROGRESS").map((s) => s.room).filter(Boolean)).size,
+            suites.filter((s) => s.status === "In Use").length
+          )
+      ),
       turnaroundTime: {
         orderToScan: countOrderToScan > 0 ? `${avgOrderToScanMinutes} mins` : "—",
         scanToReport: countScanToReport > 0 ? `${avgScanToReportMinutes} mins` : "—",

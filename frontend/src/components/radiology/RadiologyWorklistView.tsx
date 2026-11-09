@@ -22,14 +22,13 @@ import {
   Check,
 } from "lucide-react"
 import { RadiologyWorkflowDb, ExtendedRadiologyRecord } from "../../services/radiologyWorkflowDb"
-import { BillingDatabase, RadiologyStudyRecord, ClaimRecord, PaymentRecord } from "../../services/billingDb"
+import { BillingDatabase, RadiologyStudyRecord, ClaimRecord } from "../../services/billingDb"
 import { UniversalRadiologyDb } from "../../services/universalRadiologyDb"
 import { RADIOLOGY_MODALITIES } from "../../services/radiologyTariffsData"
 import { getCanonicalRadiologyModality } from "../../utils/testClassifier"
 import { RadiologyTemplateDatabase } from "../../services/radiologyTemplateDb"
 import PatientDetailsModal from "./PatientDetailsModal"
 import RadiologyReportPdfModal from "./RadiologyReportPdfModal"
-import HospitalReceiptModal from "../HospitalReceiptModal"
 
 export type DisplayReportingStatus =
   | "Awaiting Scan"
@@ -171,7 +170,7 @@ function getStudyTimestamp(study: Partial<ExtendedRadiologyRecord>): number {
 interface RadiologyWorklistViewProps {
   onNavigateToScanning: (studyId: string) => void
   onNavigateToReporting: (studyId: string) => void
-  onOpenOrderModal: () => void
+  onOpenOrderModal?: () => void
   initialModalityFilter?: string
   initialStatusFilter?: string
 }
@@ -209,6 +208,13 @@ export default function RadiologyWorklistView({
     setCurrentPage(1)
   }, [initialModalityFilter])
 
+  useEffect(() => {
+    if (initialStatusFilter && initialStatusFilter !== "all") {
+      setExamStatusFilter(initialStatusFilter)
+      setCurrentPage(1)
+    }
+  }, [initialStatusFilter])
+
   // 4 Independent Status Filters
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("all")
   const [billingStatusFilter, setBillingStatusFilter] = useState<string>("all")
@@ -239,29 +245,6 @@ export default function RadiologyWorklistView({
   const [authUserRole, setAuthUserRole] = useState("Clinical Supervisor")
   const [authReason, setAuthReason] = useState("Emergency clinical urgency / supervisor authorization")
   const [authRef, setAuthRef] = useState("AUTH-RAD-" + Math.floor(1000 + Math.random() * 9000))
-
-  // Direct Settlement / Receipt Modal State
-  const [receiptData, setReceiptData] = useState<{ claim: ClaimRecord; payment: PaymentRecord } | null>(null)
-
-  const handleDirectPayment = (study: ExtendedRadiologyRecord) => {
-    try {
-      BillingDatabase.ensureRadiologyClaim(study)
-      const invId = study.invoiceNo || `INV-RAD-${study.id.replace(/\D/g, "") || Date.now().toString().slice(-4)}`
-      const res = BillingDatabase.recordPayment(invId, {
-        amount: study.price || 500,
-        paymentMethod: "Cash",
-        collectedBy: authUserName || "Radiology Cashier",
-        notes: `Radiology Examination Settled for ${study.study} (${study.modality})`,
-      })
-      BillingDatabase.dispatchClearanceToDepartment(study.patient, "Radiology", res.payment.receiptNo, study.study)
-      setReceiptData({ claim: res.claim, payment: res.payment })
-      setAuthExceptionStudy(null)
-      showToast(`✓ Payment of ₹${(study.price || 500).toLocaleString("en-IN")} recorded! Receipt ${res.payment.receiptNo} generated.`, "success")
-      setTick((t) => t + 1)
-    } catch (err: any) {
-      showToast(err.message || "Failed to process payment", "error")
-    }
-  }
 
   // Pagination & Sorting
   const [currentPage, setCurrentPage] = useState(1)
@@ -315,7 +298,7 @@ export default function RadiologyWorklistView({
 
       // 5. Billing Status Filter
       if (billingStatusFilter === "paid" && !study.isPaid && study.billingStatus !== "Authorized Exception") return false
-      if (billingStatusFilter === "pending" && study.isPaid) return false
+      if ((billingStatusFilter === "pending" || billingStatusFilter === "awaiting") && study.isPaid) return false
       if (billingStatusFilter === "exception" && study.billingStatus !== "Authorized Exception") return false
 
       // 6. Examination Status Filter
@@ -548,7 +531,7 @@ export default function RadiologyWorklistView({
           >
             <option value="all">Billing: All States</option>
             <option value="paid">Cleared / Paid</option>
-            <option value="pending">Payment Pending</option>
+            <option value="pending">Awaiting Billing</option>
             <option value="exception">Authorized Exception</option>
           </select>
 
@@ -674,28 +657,39 @@ export default function RadiologyWorklistView({
 
                       {/* Patient & UMR */}
                       <td className="py-3 px-4">
-                        <div className="font-bold text-[#0F172A] group-hover:text-[#1B4FD8] transition-colors flex items-center gap-1.5">
+                        <div className="font-bold text-[#0F172A] group-hover:text-[#1B4FD8] transition-colors flex items-center gap-1.5 flex-wrap">
                           <span>{study.patient}</span>
+                          {(study.age || study.gender) && (
+                            <span className="text-[11.5px] font-medium text-slate-500">
+                              ({study.age ? `${study.age} Y` : ""}{study.age && study.gender ? " · " : ""}{study.gender || ""})
+                            </span>
+                          )}
                           {study.priority === "STAT" && (
                             <span className="bg-red-100 text-red-800 text-[9.5px] px-1.5 py-0.2 rounded font-bold uppercase animate-pulse">
                               STAT
                             </span>
                           )}
                         </div>
-                        <div className="text-[11px] text-[#64748B] font-mono mt-0.5 flex items-center gap-2">
+                        <div className="text-[11px] text-[#64748B] font-mono mt-0.5 flex items-center gap-2 flex-wrap">
                           <span>UMR: {study.umr || study.mrn || "—"}</span>
-                          {study.encounterId && <span>• {study.encounterId}</span>}
+                          <span>OP: {study.opNumber || (study.encounterId?.startsWith("OP-") ? study.encounterId : `OP-${(study.umr || study.mrn || "").replace(/\D/g, "")}`) || "—"}</span>
+                          <span className="text-[#1B4FD8] font-bold">Order: {study.id}</span>
+                          {study.encounterId && !study.encounterId.startsWith("OP-") && <span>• {study.encounterId}</span>}
                         </div>
                       </td>
 
                       {/* Examination & Modality */}
                       <td className="py-3 px-3">
                         <div className="font-semibold text-[#0F172A]">{study.study}</div>
-                        <div className="text-[11px] text-[#1B4FD8] font-medium mt-0.5 flex items-center gap-1.5">
+                        <div className="text-[11px] text-[#1B4FD8] font-medium mt-0.5 flex items-center gap-1.5 flex-wrap">
                           <span>{getCanonicalRadiologyModality(study)}</span>
                           {study.department && study.department !== getCanonicalRadiologyModality(study) && (
                             <span className="text-slate-400 font-normal">• {study.department}</span>
                           )}
+                        </div>
+                        <div className="text-[10.5px] text-slate-500 mt-0.5 flex items-center gap-1">
+                          <span>Ordered by:</span>
+                          <span className="font-semibold text-slate-700">{study.provider || "Attending Doctor"}</span>
                         </div>
                       </td>
 
@@ -718,15 +712,15 @@ export default function RadiologyWorklistView({
                         <div className="flex flex-col gap-1 items-start">
                           {study.isPaid ? (
                             <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                              ✓ Cleared (Paid)
+                              ✓ PAID {study.paidReceiptNo ? `(${study.paidReceiptNo})` : ""}
                             </span>
                           ) : study.billingStatus === "Authorized Exception" ? (
                             <span className="text-[11px] font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded" title={study.authorizedException ? `Authorized by ${study.authorizedException.user}: ${study.authorizedException.reason}` : "Authorized Exception"}>
                               ★ Auth Exception
                             </span>
                           ) : (
-                            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-                              ⏳ Pending Billing
+                            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded" title="Payment pending at Central Billing desk">
+                              ⏳ AWAITING BILLING
                             </span>
                           )}
                           {study.hasBillingDiscrepancy && (
@@ -839,16 +833,30 @@ export default function RadiologyWorklistView({
               {/* Patient Identity Card */}
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="font-bold text-[#0F172A] text-base">{selectedDrawerStudy.patient}</div>
-                  <span className="text-[11px] font-mono bg-white border border-slate-300 px-2 py-0.5 rounded font-bold">
-                    UMR: {selectedDrawerStudy.umr || selectedDrawerStudy.mrn || "—"}
-                  </span>
+                  <div className="font-bold text-[#0F172A] text-base flex items-center gap-2">
+                    <span>{selectedDrawerStudy.patient}</span>
+                    {(selectedDrawerStudy.age || selectedDrawerStudy.gender) && (
+                      <span className="text-[12px] font-normal text-slate-500">
+                        ({selectedDrawerStudy.age ? `${selectedDrawerStudy.age} Y` : ""}{selectedDrawerStudy.age && selectedDrawerStudy.gender ? " · " : ""}{selectedDrawerStudy.gender || ""})
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 font-mono text-[11px]">
+                    <span className="bg-white border border-slate-300 px-2 py-0.5 rounded font-bold">
+                      UMR: {selectedDrawerStudy.umr || selectedDrawerStudy.mrn || "—"}
+                    </span>
+                    <span className="bg-white border border-slate-300 px-2 py-0.5 rounded font-bold text-blue-700">
+                      OP: {selectedDrawerStudy.opNumber || (selectedDrawerStudy.encounterId?.startsWith("OP-") ? selectedDrawerStudy.encounterId : `OP-${(selectedDrawerStudy.umr || selectedDrawerStudy.mrn || "").replace(/\D/g, "")}`) || "—"}
+                    </span>
+                  </div>
                 </div>
                 <div className="text-[12px] text-slate-600 grid grid-cols-2 gap-2">
                   <div>Referring Doctor: <span className="font-semibold text-slate-900">{selectedDrawerStudy.provider || "Attending Physician"}</span></div>
-                  <div>Encounter ID: <span className="font-mono text-slate-900">{selectedDrawerStudy.encounterId || "OP-1002"}</span></div>
+                  <div>Order ID: <span className="font-mono text-blue-700 font-bold">{selectedDrawerStudy.id}</span></div>
+                  <div>Encounter ID: <span className="font-mono text-slate-900">{selectedDrawerStudy.encounterId || "—"}</span></div>
                   <div>Modality: <span className="font-semibold text-[#1B4FD8]">{getCanonicalRadiologyModality(selectedDrawerStudy)}</span></div>
                   <div>Room / Suite: <span className="font-mono text-slate-900">{selectedDrawerStudy.room || "Unassigned"}</span></div>
+                  <div>Order Time: <span className="font-mono text-slate-900">{selectedDrawerStudy.ordered || "—"}</span></div>
                 </div>
               </div>
 
@@ -868,17 +876,13 @@ export default function RadiologyWorklistView({
                     <div>
                       <span className="text-slate-500 block text-[10.5px]">Billing Clearance:</span>
                       <span className={`font-bold ${selectedDrawerStudy.isPaid ? "text-emerald-700" : "text-amber-700"}`}>
-                        {selectedDrawerStudy.isPaid ? "Paid (Cleared)" : "Payment Pending"}
+                        {selectedDrawerStudy.isPaid ? `PAID ${selectedDrawerStudy.paidReceiptNo ? `(${selectedDrawerStudy.paidReceiptNo})` : ""}` : "PENDING_PAYMENT (Central Cashier)"}
                       </span>
                     </div>
                     {!selectedDrawerStudy.isPaid && (
-                      <button
-                        type="button"
-                        onClick={() => handleDirectPayment(selectedDrawerStudy)}
-                        className="mt-1.5 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded shadow-2xs cursor-pointer flex items-center justify-center gap-1"
-                      >
-                        💳 Pay Bill (₹{selectedDrawerStudy.price || 0})
-                      </button>
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        Payments are settled exclusively at the Central Billing counter.
+                      </span>
                     )}
                   </div>
                   <div className="p-2.5 border rounded bg-slate-50">
@@ -974,6 +978,16 @@ export default function RadiologyWorklistView({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => {
+                      if (
+                        RadiologyWorkflowDb.isBillingClearanceRequired(selectedDrawerStudy) &&
+                        !selectedDrawerStudy.isPaid &&
+                        selectedDrawerStudy.billingStatus !== "Authorized Exception"
+                      ) {
+                        setAuthExceptionStudy(selectedDrawerStudy)
+                        setAuthRef("AUTH-RAD-" + Math.floor(1000 + Math.random() * 9000))
+                        showToast(`⚠️ Payment pending at Central Billing Cashier. Authorized clinical clearance required before scanning.`, "error")
+                        return
+                      }
                       onNavigateToScanning(selectedDrawerStudy.id)
                       setSelectedDrawerStudy(null)
                     }}
@@ -986,6 +1000,10 @@ export default function RadiologyWorklistView({
                   {selectedDrawerStudy.normalizedStatus === "DONE" && (
                     <button
                       onClick={() => {
+                        if (!selectedDrawerStudy.isPaid && selectedDrawerStudy.billingStatus !== "Authorized Exception") {
+                          showToast(`⚠️ Payment pending at Central Billing Cashier. Reports cannot be opened until payment is cleared.`, "error")
+                          return
+                        }
                         onNavigateToReporting(selectedDrawerStudy.id)
                         setSelectedDrawerStudy(null)
                       }}
@@ -1176,41 +1194,23 @@ export default function RadiologyWorklistView({
                 />
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
-                  type="button"
-                  onClick={() => handleDirectPayment(authExceptionStudy)}
-                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[12px] font-bold cursor-pointer flex items-center gap-1 shadow-2xs"
+                  onClick={() => setAuthExceptionStudy(null)}
+                  className="px-3.5 py-1.5 border border-slate-300 rounded text-slate-700 text-[12px] font-semibold cursor-pointer hover:bg-slate-50"
                 >
-                  💳 Pay Bill & Clear (₹{authExceptionStudy.price || 0})
+                  Cancel
                 </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setAuthExceptionStudy(null)}
-                    className="px-3.5 py-1.5 border border-slate-300 rounded text-slate-700 text-[12px] font-semibold cursor-pointer hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirmAuthorizeException}
-                    className="px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded text-[12px] font-bold cursor-pointer"
-                  >
-                    Record Authorization
-                  </button>
-                </div>
+                <button
+                  onClick={handleConfirmAuthorizeException}
+                  className="px-3.5 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded text-[12px] font-bold cursor-pointer"
+                >
+                  Record Authorization
+                </button>
               </div>
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── Official Payment Receipt Modal ── */}
-      {receiptData && (
-        <HospitalReceiptModal
-          claim={receiptData.claim}
-          payment={receiptData.payment}
-          onClose={() => setReceiptData(null)}
-        />
       )}
 
       {/* ── PDF Preview Modal ── */}

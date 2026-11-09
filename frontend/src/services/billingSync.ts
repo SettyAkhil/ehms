@@ -152,6 +152,7 @@ const MODULE_DEPT: Record<string, DepartmentType> = {
   ICU: "ICU",
   LAB: "Laboratory",
   LABORATORY: "Laboratory",
+  RAD: "Radiology",
   RADIOLOGY: "Radiology",
   PHARMACY: "Pharmacy",
   OT: "Surgery",

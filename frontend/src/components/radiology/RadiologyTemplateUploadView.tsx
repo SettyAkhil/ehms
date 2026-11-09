@@ -63,7 +63,7 @@ export default function RadiologyTemplateUploadView({
 
   // ── 3. Extracted Document & Preview State (initially empty) ──
   const [extractedDoc, setExtractedDoc] = useState<ExtractedDocument | null>(null)
-  const [previewTab, setPreviewTab] = useState<"preview" | "raw_text">("preview")
+  const [previewTab, setPreviewTab] = useState<"preview" | "raw_text" | "original_file">("preview")
   const [editingExtractedText, setEditingExtractedText] = useState("")
   const [zoomLevel, setZoomLevel] = useState(1.0)
   const [isFullScreen, setIsFullScreen] = useState(false)
@@ -889,7 +889,7 @@ export default function RadiologyTemplateUploadView({
                   }`}
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>Preview</span>
+                  <span>Extracted Report Content</span>
                 </button>
 
                 <button
@@ -902,8 +902,23 @@ export default function RadiologyTemplateUploadView({
                   }`}
                 >
                   <span className="font-mono text-[11px]">&lt;/&gt;</span>
-                  <span>Raw Text</span>
+                  <span>Raw Text Editor</span>
                 </button>
+
+                {fileDataUrl && (selectedFile?.name?.toLowerCase().endsWith(".pdf") || extractedDoc?.originalFileType === "PDF") && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTab("original_file")}
+                    className={`flex items-center gap-1.5 font-bold pb-2 -mb-2.5 border-b-2 transition-colors cursor-pointer ${
+                      previewTab === "original_file"
+                        ? "text-[#1B4FD8] border-[#1B4FD8]"
+                        : "text-slate-500 border-transparent hover:text-slate-800"
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Original Source File</span>
+                  </button>
+                )}
               </div>
 
               {/* Zoom & Fullscreen Controls */}
@@ -953,28 +968,40 @@ export default function RadiologyTemplateUploadView({
                   Upload a report template file on the left and click <strong className="text-blue-600 font-semibold">Extract Text</strong> to preview and edit the exact extracted document content here.
                 </p>
               </div>
-            ) : previewTab === "preview" ? (
-              /* ── Preview Tab: High-Fidelity Document Viewer (Shows EXACTLY what the file looks like) ── */
+            ) : previewTab === "original_file" && fileDataUrl ? (
+              /* ── Optional Original PDF File Viewer ── */
               <div className="bg-slate-100/70 p-3 rounded-lg overflow-auto max-h-[540px] min-h-[380px] border border-slate-200">
                 <div
                   style={{ transform: `scale(${zoomLevel})`, transformOrigin: "top center" }}
                   className="transition-transform duration-150"
                 >
-                  {/* If PDF fileDataUrl is present, render the exact PDF with full visual fidelity */}
-                  {fileDataUrl && (selectedFile?.name?.toLowerCase().endsWith(".pdf") || extractedDoc.originalFileType === "PDF") ? (
-                    <div className="w-full h-[520px] rounded-lg overflow-hidden border border-slate-300 shadow-sm bg-white">
-                      <iframe
-                        src={`${fileDataUrl}#toolbar=0&navpanes=0&view=FitH`}
-                        title="Document Preview"
-                        className="w-full h-full border-0 bg-white"
-                      />
+                  <div className="w-full h-[520px] rounded-lg overflow-hidden border border-slate-300 shadow-sm bg-white">
+                    <iframe
+                      src={`${fileDataUrl}#toolbar=0&navpanes=0&view=FitH`}
+                      title="Document Preview"
+                      className="w-full h-full border-0 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : previewTab === "preview" ? (
+              /* ── Preview Tab: Clean Extracted Text Document from PDF / Word / Text ── */
+              <div className="bg-slate-100/70 p-3 rounded-lg overflow-auto max-h-[540px] min-h-[380px] border border-slate-200">
+                <div
+                  style={{ transform: `scale(${zoomLevel})`, transformOrigin: "top center" }}
+                  className="transition-transform duration-150"
+                >
+                  <div className="bg-white border border-slate-300 rounded-lg shadow-sm p-6 mx-auto max-w-[620px] text-slate-800 text-[12.5px] leading-relaxed whitespace-pre-wrap font-sans">
+                    <div className="border-b border-slate-200 pb-2.5 mb-4 flex items-center justify-between text-slate-500 text-[11px]">
+                      <span className="font-bold text-slate-800 uppercase tracking-wide">
+                        {templateName || selectedFile?.name?.replace(/\.[^/.]+$/, "") || "Extracted Report Template"}
+                      </span>
+                      <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-medium">
+                        ✓ Extracted Content
+                      </span>
                     </div>
-                  ) : (
-                    /* For Word / Text / Non-PDF: render the clean, authentic extracted text */
-                    <div className="bg-white border border-slate-300 rounded-lg shadow-sm p-6 mx-auto max-w-[620px] text-slate-800 text-[12.5px] leading-relaxed whitespace-pre-wrap font-sans">
-                      {editingExtractedText}
-                    </div>
-                  )}
+                    {editingExtractedText}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1395,7 +1422,7 @@ export default function RadiologyTemplateUploadView({
 
           <div className="flex-1 overflow-auto p-6 flex justify-center items-start">
             <div className="bg-white rounded-lg p-6 shadow-2xl max-w-4xl w-full text-slate-900">
-              {fileDataUrl && (selectedFile?.name?.toLowerCase().endsWith(".pdf") || extractedDoc?.originalFileType === "PDF") ? (
+              {previewTab === "original_file" && fileDataUrl && (selectedFile?.name?.toLowerCase().endsWith(".pdf") || extractedDoc?.originalFileType === "PDF") ? (
                 <div className="w-full h-[85vh] rounded overflow-hidden">
                   <iframe
                     src={`${fileDataUrl}#toolbar=0&navpanes=0&view=FitH`}
@@ -1405,6 +1432,14 @@ export default function RadiologyTemplateUploadView({
                 </div>
               ) : (
                 <div className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-800">
+                  <div className="border-b border-slate-200 pb-3 mb-4 flex items-center justify-between text-slate-500 text-[12px]">
+                    <span className="font-bold text-slate-900 uppercase tracking-wide">
+                      {templateName || selectedFile?.name || "Extracted Report Template"}
+                    </span>
+                    <span className="text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded border border-emerald-200 font-semibold text-[11px]">
+                      ✓ Extracted Text Content
+                    </span>
+                  </div>
                   {editingExtractedText}
                 </div>
               )}

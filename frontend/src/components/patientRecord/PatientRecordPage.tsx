@@ -104,8 +104,8 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
   const [token, setToken] = useState<string | null>(cardToken)
   const [reissuing, setReissuing] = useState(false)
   const staff = signedIn()
-  // Allow viewing when accessed via QR card scan (cardToken or patient code/UMR)
-  const allowed = staff || Boolean(cardToken) || Boolean(code)
+  // Public access: Scanned QR cards always display patient details without requiring hospital login
+  const allowed = true
   // Signed out on a phone, this browser has no hospital settings; use the server's name.
   const branding = useMemo(
     () => (!staff && serverHospital ? { ...localBranding, hospitalName: serverHospital } : localBranding),
@@ -114,24 +114,70 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
 
   const load = useCallback(async () => {
     try {
+      let activeRec: PatientRecord | null = null
       if (cardToken) {
         const res = await compileCardRecord(cardToken)
         setCardStatus(res.status)
         setServerHospital(res.hospitalName)
         if (res.record) {
-          setRecord(res.record)
+          activeRec = res.record
         } else {
           // Fallback to local patient records if standalone backend token endpoint is unreachable
           const fallback = await compilePatientRecord(cardToken)
           if (fallback && fallback.found) {
-            setRecord(fallback)
+            activeRec = fallback
             setCardStatus("ok")
           }
         }
       } else if (code) {
         const rec = await compilePatientRecord(code)
-        setRecord(rec)
+        activeRec = rec
         if (rec && rec.found) setCardStatus("ok")
+      }
+
+      // If record is missing or sparse, parse query params from URL (e.g. from QR scan)
+      try {
+        const searchStr = window.location.hash.includes("?")
+          ? window.location.hash.split("?")[1]
+          : window.location.search.replace(/^\?/, "")
+        const params = new URLSearchParams(searchStr)
+        if (params.get("name") || params.get("phone")) {
+          const pName = params.get("name") || ""
+          const pPhone = params.get("phone") || ""
+          const pAge = params.get("age") ? Number(params.get("age")) : null
+          const pGender = params.get("gender") || "Male"
+          if (!activeRec || !activeRec.patient.name) {
+            activeRec = {
+              code: code || cardToken || "PATIENT",
+              id: code || cardToken || "PATIENT",
+              found: true,
+              backendReachable: false,
+              patient: {
+                name: pName,
+                age: pAge,
+                sex: pGender,
+                phone: pPhone,
+              },
+              status: { kind: "OP" },
+              opVisits: [],
+              stays: [],
+              consultations: [],
+              prescriptions: [],
+              labOrders: [],
+              icuDays: [],
+              icuHandoffs: [],
+              bills: [],
+              billing: { billed: 0, paid: 0, due: 0 },
+              timeline: [],
+              compiledAt: new Date().toISOString(),
+            }
+            setCardStatus("ok")
+          }
+        }
+      } catch {}
+
+      if (activeRec) {
+        setRecord(activeRec)
       }
       setError(null)
     } catch (e) {

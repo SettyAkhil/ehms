@@ -44,6 +44,7 @@ import {
   WHISPER_LANGUAGES,
 } from "../../lib/medicalVoiceAI"
 import { formatElapsed, useLiveClinic } from "../../hooks/useLiveClinic"
+import { isRadiologyTest } from "../../utils/testClassifier"
 import {
   buildDoctorLiveBoard,
   LONG_WAIT_MINUTES,
@@ -4088,7 +4089,29 @@ function ReviewAndDispatch({
   // not be edited here -- the pharmacist is looking at them -- but investigations
   // that have not gone anywhere yet are still the doctor's to change.
   const pharmacySent = !!consultation?.prescriptionId
-  const labSent = !!consultation?.labOrderId
+  const hasPureLab = labTests.some((t) => !isRadiologyTest(t.name, t.category))
+  const hasRadiology = labTests.some((t) => isRadiologyTest(t.name, t.category))
+  const pureLabSent = !!consultation?.labOrderId
+  const radSent = !!consultation?.radiologyOrderRef
+  const labSent =
+    (!hasPureLab || pureLabSent) &&
+    (!hasRadiology || radSent) &&
+    (hasPureLab || hasRadiology)
+
+  const investigationsDestination =
+    hasPureLab && hasRadiology
+      ? "Reception billing → Laboratory & Radiology Worklist"
+      : hasRadiology
+      ? "Reception billing → Radiology Examination Worklist"
+      : "Reception billing → Laboratory"
+
+  const investigationsSentLabel = [
+    consultation?.labOrderId,
+    consultation?.radiologyOrderRef,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+
   const medicineCount = medications.filter((m) => m.name.trim()).length
   const labTestCount = labTests.filter((t) => t.name.trim()).length
 
@@ -4578,16 +4601,16 @@ function ReviewAndDispatch({
           />
           <DispatchHalf
             title="Investigations"
-            destination="Reception billing → Laboratory"
+            destination={investigationsDestination}
             tone="amber"
             count={labTestCount}
             sent={labSent}
-            sentLabel={consultation?.labOrderId}
+            sentLabel={investigationsSentLabel || consultation?.labOrderId || consultation?.radiologyOrderRef}
             pending={pending.lab}
             emptyLabel="No investigations on this sheet"
             note={
               labTestCount > 0 && !labSent
-                ? "Sent to reception for patient lab billing."
+                ? "Sent to reception for centralized billing before departmental processing."
                 : undefined
             }
             onSend={() => onDispatch({ pharmacy: false, lab: true })}
@@ -4633,8 +4656,8 @@ function ReviewAndDispatch({
         <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded p-4">
           <h3 className="text-[13px] font-bold text-[#15803D] mb-2">
             ✓{" "}
-            {dispatchResult.sentToPharmacy && dispatchResult.sentToLab
-              ? "Both halves sent"
+            {dispatchResult.sentToPharmacy && (dispatchResult.sentToLab || dispatchResult.sentToRadiology)
+              ? "All orders dispatched to reception billing and departments"
               : dispatchResult.sentToPharmacy
                 ? "Medicines sent to pharmacy"
                 : "Investigations sent for billing"}
@@ -4654,9 +4677,18 @@ function ReviewAndDispatch({
                 <span className="font-mono font-bold">
                   {dispatchResult.labOrderId}
                 </span>{" "}
-                — {dispatchResult.labTestCount} investigation(s) sent to reception
-                for patient lab billing. They reach the laboratory as soon as
+                — {dispatchResult.labTestCount} laboratory investigation(s) sent to reception
+                for patient billing. They reach the laboratory worklist as soon as
                 payment is collected at reception.
+              </li>
+            )}
+            {dispatchResult.sentToRadiology && (dispatchResult.radiologyOrderRef || dispatchResult.radiologyCount) && (
+              <li>
+                <span className="font-mono font-bold">
+                  {dispatchResult.radiologyOrderRef || "RAD-ORDER"}
+                </span>{" "}
+                — {dispatchResult.radiologyCount} radiology study(ies) sent to reception
+                for patient billing. They appear in the Radiology Examination Worklist with Pending Payment status, and unlock for scanning upon payment confirmation.
               </li>
             )}
             {pending.pharmacy && (
