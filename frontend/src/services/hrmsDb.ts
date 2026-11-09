@@ -518,25 +518,6 @@ export class HrmsDatabase {
         localStorage.removeItem("hrms_payroll_run")
       } catch (_) {}
     }
-
-    // Fetch authoritative state from PostgreSQL backend
-    await this.refreshFromBackend()
-
-    // Setup Server-Sent Events (SSE) for real-time live synchronization
-    if (typeof window !== "undefined" && typeof EventSource !== "undefined") {
-      try {
-        this.eventSource = new EventSource(`${API_BASE}/api/hr/events`)
-        this.eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            if (data.type !== "CONNECTED") {
-              this.refreshFromBackend()
-            }
-          } catch (_) {}
-        }
-        this.eventSource.onerror = () => {}
-      } catch (_) {}
-    }
   }
 
   public static async refreshFromBackend(): Promise<void> {

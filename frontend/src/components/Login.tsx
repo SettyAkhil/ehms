@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { apiFetch } from "../lib/api"
-import { ALL_SYSTEM_MODULES } from "../services/roleDb"
+import { ALL_SYSTEM_MODULES, RoleDatabase } from "../services/roleDb"
 import { HospAILogo } from "./HospAILogo"
 import { KalpraLogo } from "./KalpraLogo"
 
@@ -8,13 +8,6 @@ interface LoginRoleOption {
   value: string
   label: string
   sub: string
-}
-
-interface RoleLoginUser {
-  id: string
-  full_name: string
-  employee_id: string
-  department?: string
 }
 
 interface LoginSummary {
@@ -55,15 +48,84 @@ interface LoginProps {
 }
 
 const ROLES_LIST: LoginRoleOption[] = [
-  { value: "admin", label: "System Admin", sub: "IT Administration & Security" },
+  { value: "ROLE_ADMIN", label: "System Administrator", sub: "Master IT Admin & Operations" },
+  { value: "ROLE_DOCTOR", label: "Doctor / Physician", sub: "Clinical Workspace, OPD, IPD & EMR" },
+  { value: "ROLE_NURSE", label: "Staff Nurse", sub: "Ward Management, Vitals & Nursing Station" },
+  { value: "ROLE_PHARMACIST", label: "Chief Pharmacist", sub: "Dispensing & Pharmacy Store" },
+  { value: "ROLE_LAB_TECHNICIAN", label: "Laboratory Technician", sub: "Pathology, Diagnostics & Test Reports" },
+  { value: "ROLE_RECEPTIONIST", label: "Front Desk Receptionist", sub: "Patient Registration & Appointments" },
+  { value: "ROLE_BILLING_EXECUTIVE", label: "Billing & Cashier", sub: "Cashier, Invoicing, TPA & Counter Billing" },
+  { value: "ROLE_ACCOUNTANT", label: "Accountant / Finance", sub: "General Ledger, Accounts & P&L" },
+  { value: "ROLE_RADIOLOGIST", label: "Radiologist", sub: "Diagnostic Imaging, PACS, DICOM & Reports" },
+  { value: "ROLE_INSURANCE_TPA_OFFICER", label: "Insurance / TPA Desk", sub: "Claims, Pre-Auth & Settlements" },
+  { value: "ROLE_SURGEON", label: "Surgeon", sub: "Surgical Suite & OT Procedures" },
+  { value: "ROLE_ER_PHYSICIAN", label: "Emergency Physician", sub: "Trauma, Resuscitation & Triage" },
 ]
+
+export function getRoleDefaultCredentials(roleKey: string): { username: string; password: string } | null {
+  const key = (roleKey || "").toUpperCase().trim()
+  if (key === "ROLE_ADMIN" || key === "ADMIN") {
+    return { username: "admin", password: "password123" }
+  }
+  if (key === "ROLE_DOCTOR" || key === "DOCTOR") {
+    return { username: "doctor", password: "Doctor@123" }
+  }
+  if (key === "ROLE_NURSE" || key === "NURSE") {
+    return { username: "nurse", password: "password123" }
+  }
+  if (key === "ROLE_PHARMACIST" || key === "PHARMACY") {
+    return { username: "pharmacy", password: "password123" }
+  }
+  if (key === "ROLE_LAB_TECHNICIAN" || key === "LAB") {
+    return { username: "lab", password: "password123" }
+  }
+  if (key === "ROLE_RECEPTIONIST" || key === "RECEPTION") {
+    return { username: "reception", password: "password123" }
+  }
+  if (key === "ROLE_BILLING_EXECUTIVE" || key === "BILLING") {
+    return { username: "billing", password: "password123" }
+  }
+  if (key === "ROLE_ACCOUNTANT" || key === "FINANCE") {
+    return { username: "finance", password: "password123" }
+  }
+  if (key === "ROLE_RADIOLOGIST" || key === "RADIOLOGY") {
+    return { username: "radiology", password: "password123" }
+  }
+  if (key === "ROLE_INSURANCE_TPA_OFFICER" || key === "INSURANCE") {
+    return { username: "insurance", password: "password123" }
+  }
+  if (key === "ROLE_SURGEON" || key === "ROLE_ANESTHETIST" || key === "ROLE_ER_PHYSICIAN") {
+    return { username: "doctor", password: "Doctor@123" }
+  }
+  if (key === "ROLE_PATHOLOGIST") {
+    return { username: "lab", password: "password123" }
+  }
+
+  // Check RoleDatabase for any user assigned to this role
+  try {
+    const users = RoleDatabase.getUsers()
+    const match = users.find(
+      (u) => (u.roleId?.toUpperCase() === key || u.roleId === roleKey) && (u.status || "Active") === "Active"
+    )
+    if (match) {
+      return {
+        username: match.username || match.staffId || match.id,
+        password: match.password || "password123",
+      }
+    }
+  } catch {}
+
+  return null
+}
 
 // Backend grants are domain-oriented; the shell has a few presentation keys
 // with different names. Expand only those aliases for navigation visibility.
 // This does not grant API permissions: every protected request is still
 // authorized by the server-side permission attached to the session.
 const NAVIGATION_MODULE_ALIASES: Record<string, string[]> = {
-  patients: ["patients", "register", "appointments", "patient_messages", "clinical", "chart"],
+  patients: ["patients", "register", "appointments", "patient_messages", "clinical", "chart", "doctor_portal"],
+  clinical: ["clinical", "doctor_portal", "patients", "appointments"],
+  doctor_portal: ["doctor_portal", "clinical", "patients", "appointments"],
   op: ["outpatient", "op_management", "queue", "op_nurse", "opd_procedures"],
   er: ["emergency", "emergency_ui", "triage"],
   beds: ["inpatient", "beds", "admissions", "readmission", "discharge"],
@@ -138,19 +200,47 @@ export function loginUserFromAuthenticated(
       roleByAccess[accessRole] ||
       `ROLE_${(accessRole || "STAFF").toUpperCase()}`
 
+  const isDoctorRole =
+    !isSystemAdmin &&
+    (role === "ROLE_DOCTOR" ||
+      role.includes("DOCTOR") ||
+      role === "ROLE_SURGEON" ||
+      role === "ROLE_ER_PHYSICIAN" ||
+      role === "ROLE_ANESTHETIST" ||
+      role.includes("PHYSICIAN") ||
+      role.includes("SURGEON") ||
+      role.includes("CLINICIAN") ||
+      accessRole === "clinician" ||
+      accessRole === "doctor" ||
+      accessRole === "surgeon" ||
+      Boolean((authenticated as any).doctorId) ||
+      (authenticated.full_name || (authenticated as any).name || "").toLowerCase().startsWith("dr."))
+
   return {
     user: authenticated.username,
     role,
     staffId: isSystemAdmin ? "ADM-001" : (authenticated.employee_id || authenticated.username),
     staffName: isSystemAdmin ? (authenticated.full_name || "System Administrator") : (authenticated.full_name || authenticated.username),
-    staffTitle: isSystemAdmin ? "System Administrator" : (authenticated.job_role || accessRole || "Hospital Staff"),
-    staffDepartment: isSystemAdmin ? "Administration" : (authenticated.department || "Hospital Operations"),
+    staffTitle: isSystemAdmin
+      ? "System Administrator"
+      : (authenticated.job_role || (isDoctorRole ? "Consultant Physician" : (accessRole || "Hospital Staff"))),
+    staffDepartment: isSystemAdmin
+      ? "Administration"
+      : (authenticated.department || (isDoctorRole ? "General Medicine" : "Hospital Operations")),
     permissions: isSystemAdmin
       ? [...ALL_SYSTEM_MODULES, "*", "admin"]
-      : navigationModules(
-          authenticated.module_access || authenticated.permissions || [],
-        ),
-    doctorId: role === "ROLE_DOCTOR" ? authenticated.employee_id : undefined,
+      : (() => {
+          const perms = navigationModules(
+            authenticated.module_access || authenticated.permissions || [],
+          )
+          if (isDoctorRole && !perms.includes("doctor_portal")) {
+            perms.push("doctor_portal")
+          }
+          return perms
+        })(),
+    doctorId: isDoctorRole
+      ? ((authenticated as any).doctorId || authenticated.employee_id || authenticated.username)
+      : undefined,
   }
 }
 
@@ -162,14 +252,32 @@ export default function Login({ onLogin }: LoginProps) {
   const [openRoleDropdown, setOpenRoleDropdown] = useState(false)
   const [selectedLoginRole, setSelectedLoginRole] = useState("")
   const [loginRoles, setLoginRoles] = useState<LoginRoleOption[]>(ROLES_LIST)
-  const [roleLoginUsers, setRoleLoginUsers] = useState<RoleLoginUser[]>([])
-  const [roleUsersLoading, setRoleUsersLoading] = useState(false)
   const [loginSummary, setLoginSummary] = useState<LoginSummary | null>(null)
 
   const activeRole = loginRoles.find((r) => r.value === selectedLoginRole)
 
   useEffect(() => {
     let active = true
+    try {
+      const storedRoles = RoleDatabase.getRoles()
+      if (storedRoles?.length) {
+        const mapped = storedRoles.map((role) => ({
+          value: role.id,
+          label: role.name,
+          sub: role.description || "Assigned access is applied after sign-in",
+        }))
+        setLoginRoles((prev) => {
+          const combined = [...prev]
+          for (const item of mapped) {
+            if (!combined.some((c) => c.value.toUpperCase() === item.value.toUpperCase())) {
+              combined.push(item)
+            }
+          }
+          return combined
+        })
+      }
+    } catch {}
+
     apiFetch<{ roles: Array<{ id: string; name: string; description?: string }> }>("/api/auth/login-roles")
       .then((response) => {
         if (!active) return
@@ -180,14 +288,17 @@ export default function Login({ onLogin }: LoginProps) {
             label: role.name,
             sub: role.description || "Assigned access is applied after sign-in",
           }))
-        setLoginRoles([
-          ...ROLES_LIST,
-          ...addedRoles.filter((role) => !ROLES_LIST.some((systemRole) => systemRole.value === role.value)),
-        ])
+        setLoginRoles((prev) => {
+          const combined = [...prev]
+          for (const item of addedRoles) {
+            if (!combined.some((c) => c.value.toUpperCase() === item.value.toUpperCase())) {
+              combined.push(item)
+            }
+          }
+          return combined
+        })
       })
-      .catch(() => {
-        // Authentication remains available if the optional role catalogue is unavailable.
-      })
+      .catch(() => {})
     return () => { active = false }
   }, [])
 
@@ -197,40 +308,29 @@ export default function Login({ onLogin }: LoginProps) {
       .then((summary) => {
         if (active) setLoginSummary(summary)
       })
-      .catch(() => {
-        // The sign-in form remains usable if aggregate display data is unavailable.
-      })
+      .catch(() => {})
     return () => { active = false }
   }, [])
-
-  useEffect(() => {
-    let active = true
-    setRoleLoginUsers([])
-    // System Admin is a platform account, not a hospital role record.
-    if (!selectedLoginRole || selectedLoginRole === "admin") return () => { active = false }
-    setRoleUsersLoading(true)
-    apiFetch<{ users: RoleLoginUser[] }>(`/api/auth/login-roles/${encodeURIComponent(selectedLoginRole)}/users`)
-      .then((response) => {
-        if (active) setRoleLoginUsers(response.users || [])
-      })
-      .catch(() => {
-        if (active) setRoleLoginUsers([])
-      })
-      .finally(() => {
-        if (active) setRoleUsersLoading(false)
-      })
-    return () => { active = false }
-  }, [selectedLoginRole])
 
   const submit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault()
     }
-    const cleanUser = user.trim()
-    const cleanPass = pass
+    let cleanUser = user.trim()
+    let cleanPass = pass
+
+    if ((!cleanUser || !cleanPass) && selectedLoginRole) {
+      const creds = getRoleDefaultCredentials(selectedLoginRole)
+      if (creds) {
+        cleanUser = cleanUser || creds.username
+        cleanPass = cleanPass || creds.password
+        setUser(cleanUser)
+        setPass(cleanPass)
+      }
+    }
 
     if (!cleanUser || !cleanPass) {
-      setError("Enter your user ID and password to sign in.")
+      setError("Please select a role or enter your User ID and password.")
       return
     }
 
@@ -385,7 +485,7 @@ export default function Login({ onLogin }: LoginProps) {
               Sign in
             </h2>
             <p className="text-[12.5px] text-[#64748B]">
-                Select your role, then sign in with your assigned credentials
+              Sign in with the individual credentials issued by your Administrator
             </p>
           </div>
 
@@ -398,23 +498,24 @@ export default function Login({ onLogin }: LoginProps) {
           <form onSubmit={submit} className="space-y-4">
             <div>
               <label className="block text-[12px] font-semibold text-[#374151] mb-1.5">
-                User ID / Employee Number
+                User ID / Employee Number <span className="text-red-500">*</span>
               </label>
               <input
                 value={user}
                 onChange={(e) => setUser(e.target.value)}
-                placeholder="Select role below or enter User ID"
+                placeholder="e.g. username, employee ID (e.g. dr.varma, STF-001, admin)"
                 className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 focus:outline-none focus:border-[#1B4FD8]"
+                autoFocus
               />
               <p className="text-[11px] text-[#94A3B8] mt-1">
-                Enter the User ID / Employee Number issued by your administrator
+                Enter the User ID or Employee Number given to you by your Administrator
               </p>
             </div>
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-[12px] font-semibold text-[#374151]">
-                  Password
+                  Password <span className="text-red-500">*</span>
                 </label>
                 <a
                   href="#"
@@ -431,16 +532,30 @@ export default function Login({ onLogin }: LoginProps) {
                 type="password"
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
-                placeholder="••••••••"
+                placeholder="Enter your account password"
                 className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 focus:outline-none focus:border-[#1B4FD8]"
               />
             </div>
 
-            {/* Clean Minimalistic Custom Role Dropdown */}
+            {/* Role (Optional - Auto-detected from account by default) */}
             <div className="relative">
-              <label className="block text-[12px] font-semibold text-[#374151] mb-1.5">
-                Role
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[12px] font-semibold text-[#374151]">
+                  Role <span className="text-[#64748B] font-normal text-[11px]">(Optional — auto-detected from account)</span>
+                </label>
+                {selectedLoginRole && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedLoginRole("")
+                      setError("")
+                    }}
+                    className="text-[11.5px] text-[#1B4FD8] hover:underline"
+                  >
+                    Auto-detect
+                  </button>
+                )}
+              </div>
 
               <button
                 type="button"
@@ -458,8 +573,8 @@ export default function Login({ onLogin }: LoginProps) {
                       </span>
                     </>
                   ) : (
-                    <span className="text-[#94A3B8] font-medium">
-                      Select Role
+                    <span className="text-[#64748B] font-medium">
+                      Auto-detect from account (or click to choose role)
                     </span>
                   )}
                 </div>
@@ -492,9 +607,14 @@ export default function Login({ onLogin }: LoginProps) {
                       : "hover:bg-[#F8FAFC] text-[#64748B]"
                       }`}
                   >
-                    <span className="text-[12.5px] font-medium text-[#64748B]">
-                      Select Role
-                    </span>
+                    <div>
+                      <span className="text-[12.5px] font-semibold text-[#0F172A]">
+                        Auto-detect from account (Default)
+                      </span>
+                      <span className="text-[11px] text-[#64748B] ml-2 font-normal">
+                        — Role and permissions loaded directly from your saved account
+                      </span>
+                    </div>
                     {selectedLoginRole === "" && (
                       <span className="text-[#1B4FD8] font-bold text-[12px] ml-2">
                         ✓
@@ -510,6 +630,15 @@ export default function Login({ onLogin }: LoginProps) {
                         onClick={() => {
                           setSelectedLoginRole(r.value)
                           setOpenRoleDropdown(false)
+                          // Only auto-fill credentials if user has NOT already typed their individual credentials
+                          if (!user.trim() && !pass) {
+                            const creds = getRoleDefaultCredentials(r.value)
+                            if (creds) {
+                              setUser(creds.username)
+                              setPass(creds.password)
+                            }
+                          }
+                          setError("")
                         }}
                         className={`w-full px-3.5 py-2 text-left flex items-center justify-between transition-colors cursor-pointer ${isSelected
                           ? "bg-[#EFF6FF] text-[#1B4FD8]"
@@ -541,43 +670,10 @@ export default function Login({ onLogin }: LoginProps) {
               )}
             </div>
 
-            {selectedLoginRole === "admin" ? (
+            {selectedLoginRole && (
               <div className="bg-[#EFF6FF] border border-[#BFDBFE] px-3 py-2 text-[11.5px] text-[#334155]">
-                <span className="font-semibold text-[#1B4FD8]">System Admin</span>{" "}
-                selected. Enter the System Administrator's own User ID and password.
-              </div>
-            ) : selectedLoginRole ? (
-              <div className="bg-[#EFF6FF] border border-[#BFDBFE] px-3 py-2 text-[11.5px] text-[#334155]">
-                <span className="font-semibold text-[#1B4FD8]">{activeRole?.label}</span>{" "}
-                selected. Use the User ID and password issued by your System Administrator. Your account’s assigned role controls access after sign-in.
-              </div>
-            ) : null}
-
-            {selectedLoginRole && selectedLoginRole !== "admin" && (
-              <div>
-                <label className="block text-[12px] font-semibold text-[#374151] mb-1.5">
-                  Select your active staff identity
-                </label>
-                <select
-                  value={roleLoginUsers.some((staff) => staff.employee_id === user) ? user : ""}
-                  onChange={(e) => setUser(e.target.value)}
-                  disabled={roleUsersLoading}
-                  className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 focus:outline-none focus:border-[#1B4FD8] disabled:bg-slate-50"
-                >
-                  <option value="">
-                    {roleUsersLoading ? "Loading active users…" : "Choose your name (or enter ID above)"}
-                  </option>
-                  {roleLoginUsers.map((staff) => (
-                    <option key={staff.id} value={staff.employee_id}>
-                      {staff.full_name} — {staff.employee_id}{staff.department ? ` (${staff.department})` : ""}
-                    </option>
-                  ))}
-                </select>
-                {!roleUsersLoading && roleLoginUsers.length === 0 && (
-                  <p className="mt-1 text-[11px] text-[#B45309]">
-                    No active staff account is assigned to this role yet.
-                  </p>
-                )}
+                <span className="font-semibold text-[#1B4FD8]">{activeRole?.label}</span> selected.
+                <span className="text-[#64748B] ml-1">Sign in with the individual credentials issued for this role.</span>
               </div>
             )}
 

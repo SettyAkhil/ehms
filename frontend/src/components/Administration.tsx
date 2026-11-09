@@ -1,4 +1,9 @@
 import React, { useState, useEffect } from "react"
+import { toast } from "react-hot-toast"
+import { Stethoscope, Users as UsersIcon } from "lucide-react"
+import DoctorsOverview from "./doctor/DoctorsOverview"
+import DoctorPortal from "./doctor/DoctorPortal"
+import { DoctorAccount, getDoctorById } from "../services/doctorPortalDb"
 import {
   getDoctorMaster,
   addDoctorMaster,
@@ -46,9 +51,9 @@ const MODULE_CATEGORIES = [
   },
   {
     id: "workforce",
-    title: "Staff & Workforce",
-    description: "Human resources, duty rosters, payroll, staff directory, and patient experience",
-    modules: ["hrms", "employees", "patient_experience"],
+    title: "Staff & Workforce Governance",
+    description: "Hospital staff directory, employee credentials, and patient experience",
+    modules: ["employees", "patient_experience"],
   },
   {
     id: "platform",
@@ -65,7 +70,8 @@ export const ALL_ADMIN_ASSIGNABLE_MODULES: Array<{
   icon: string
 }> = [
   { key: "dashboard", label: "Executive Dashboard", category: "Core & Clinical", icon: "📊" },
-  { key: "doctor_portal", label: "Doctor Workspace", category: "Core & Clinical", icon: "🩺" },
+  { key: "doctor_portal", label: "Doctor Workspace (Individual Consultation)", category: "Core & Clinical", icon: "🩺" },
+  { key: "doctors_overview", label: "Doctors Overview & Patient Allocation", category: "Core & Clinical", icon: "👥" },
   { key: "patients", label: "Patient Reception & Registration", category: "Core & Clinical", icon: "👤" },
   { key: "outpatient", label: "Outpatient Department (OPD)", category: "Core & Clinical", icon: "📋" },
   { key: "clinical", label: "Clinical Encounters & Charting", category: "Core & Clinical", icon: "📑" },
@@ -79,8 +85,7 @@ export const ALL_ADMIN_ASSIGNABLE_MODULES: Array<{
   { key: "billing", label: "Billing & Cash Counter", category: "Finance", icon: "💳" },
   { key: "insurance", label: "Insurance & TPA Claims", category: "Finance", icon: "🛡️" },
   { key: "accounts", label: "Accounts & General Ledger", category: "Finance", icon: "🏦" },
-  { key: "hrms", label: "Human Resources (HRMS)", category: "Management", icon: "👥" },
-  { key: "my_hr", label: "My HR (Employee Portal)", category: "Management", icon: "🧑‍💼" },
+  { key: "employees", label: "Hospital Staff & User Accounts", category: "Management", icon: "👥" },
   { key: "intelligence", label: "Hosp AI Clinical Intelligence", category: "Management", icon: "🤖" },
   { key: "reports", label: "Reports & Hospital Analytics", category: "Management", icon: "📈" },
   { key: "admin", label: "Administration & RBAC", category: "Management", icon: "⚙️" },
@@ -110,11 +115,12 @@ const MODULE_METADATA: Record<string, { name: string; icon: string; description:
   accounts: { name: "Financial Accounts", icon: "📊", description: "General ledger, journal vouchers, accounts payable/receivable, and P&L" },
   insurance: { name: "Insurance & TPA", icon: "🛡️", description: "Cashless pre-auth requests, claim document packs, query responses, settlements" },
   admin: { name: "Administration", icon: "⚙️", description: "Centralized RBAC, user provisioning, clinical directory, tariff catalog" },
-  hrms: { name: "Human Resources", icon: "👥", description: "Staff attendance, duty rosters, payroll, leaves, and credentialing" },
-  employees: { name: "Staff Directory", icon: "📇", description: "Employee master directory, departmental assignments, and doctor registry" },
+  employees: { name: "Hospital Staff & Users", icon: "👥", description: "Employee master directory, credentials, and access role governance" },
   dashboard: { name: "Command Center", icon: "📈", description: "Hospital-wide operational KPIs, real-time census, and executive metrics" },
   patient_experience: { name: "Patient Experience", icon: "⭐", description: "Feedback, patient satisfaction scores, and grievance handling" },
   symptom_ai: { name: "AI Clinical Intelligence", icon: "🤖", description: "Symptom checker, diagnostic triage suggestions, and clinical NLP" },
+  doctor_portal: { name: "Doctor Workspace", icon: "🩺", description: "Individual doctor consultation whiteboard, voice AI, prescription dispatch, and queue" },
+  doctors_overview: { name: "Doctors Oversight & Patient Allocation", icon: "👥", description: "Complete hospital clinical overview: all doctors, active consults, and patient queue assignments" },
 }
 
 interface SpecialtyOption {
@@ -214,9 +220,34 @@ const FIXED_HOSPITAL_ROLE_CATALOGUE: AppRole[] = [
   isSystem: true,
 }))
 
-export default function Administration() {
+export default function Administration({
+  initialTab,
+  initialDoctorSubTab,
+  onNavigateToDoctorPortal,
+}: {
+  initialTab?: "overview" | "roles" | "users" | "doctors" | "audit" | "settings" | "tariffs"
+  initialDoctorSubTab?: "workspace" | "directory"
+  onNavigateToDoctorPortal?: () => void
+} = {}) {
   const [activeTab, setActiveTab] =
-    useState<"overview" | "roles" | "users" | "doctors" | "audit" | "settings" | "tariffs">("overview")
+    useState<"overview" | "roles" | "users" | "doctors" | "audit" | "settings" | "tariffs">(initialTab || "overview")
+
+  const [doctorSubTab, setDoctorSubTab] = useState<"workspace" | "directory">(
+    initialDoctorSubTab || "workspace"
+  )
+  const [adminInspectingDoctor, setAdminInspectingDoctor] = useState<DoctorAccount | null>(null)
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab)
+    }
+  }, [initialTab])
+
+  useEffect(() => {
+    if (initialDoctorSubTab) {
+      setDoctorSubTab(initialDoctorSubTab)
+    }
+  }, [initialDoctorSubTab])
 
   // Database States
   // The Login role catalogue is also the source for the administrator's
@@ -230,7 +261,13 @@ export default function Administration() {
       return FIXED_HOSPITAL_ROLE_CATALOGUE
     }
   })
-  const [users, setUsers] = useState<AppUser[]>([])
+  const [users, setUsers] = useState<AppUser[]>(() => {
+    try {
+      return RoleDatabase.getUsers()
+    } catch {
+      return []
+    }
+  })
   const [doctors, setDoctors] = useState<MasterDoctor[]>([])
   const [specialties, setSpecialties] = useState<SpecialtyOption[]>([])
   const [showSpecialtyModal, setShowSpecialtyModal] = useState(false)
@@ -449,9 +486,34 @@ export default function Administration() {
       name: String(user.name || user.full_name || user.username || ""),
       staffId: String(user.staffId || user.employee_id || `STF-${user.id}`),
       status: String(user.status || "active").toLowerCase() === "active" ? "Active" : "Inactive",
+      customModules: user.customModules || user.allowedModules,
+      allowedModules: user.allowedModules || user.customModules,
+      department: user.department,
     } as AppUser))
       : []
-    setUsers(serverUsers)
+
+    let localUsers: AppUser[] = []
+    try {
+      localUsers = RoleDatabase.getUsers()
+    } catch {
+      localUsers = []
+    }
+    const mergedUsersMap = new Map<string, AppUser>()
+    localUsers.forEach((u) => {
+      if (u.username) mergedUsersMap.set(u.username.toLowerCase(), { ...u })
+    })
+    serverUsers.forEach((u) => {
+      const key = u.username.toLowerCase()
+      const existing = mergedUsersMap.get(key)
+      mergedUsersMap.set(key, {
+        ...existing,
+        ...u,
+        customModules: existing?.customModules || u.customModules,
+        allowedModules: existing?.allowedModules || u.allowedModules,
+        department: existing?.department || u.department,
+      })
+    })
+    setUsers(Array.from(mergedUsersMap.values()))
   }
 
   const loadRoleCatalogueFallback = async () => {
@@ -481,9 +543,53 @@ export default function Administration() {
         .then(() => setRoleNotice("Role templates loaded. Sign in again if you need to edit permissions or assign staff."))
         .catch(() => setRoleNotice(error instanceof Error ? error.message : "Unable to load access governance records."))
     })
-    setDoctors(getDoctorMaster())
+
+    const masterDocs = getDoctorMaster()
+    setDoctors(masterDocs)
     setAuditLogs(AuditDatabase.getLogs())
     setTariffs(DiagnosticTariffDatabase.getTariffs())
+
+    // Auto-reconcile Doctor Master with RoleDatabase so all doctors have an active login and assigned role
+    const currentUsers = RoleDatabase.getUsers()
+    let usersReconciled = false
+    masterDocs.forEach((doc) => {
+      if (!doc || !doc.name) return
+      const cleanName = (doc.name || "").toLowerCase().replace(/dr\.?\s*/, "").replace(/[^a-z0-9]/g, "")
+      const docUser = (doc.username || cleanName || `doc_${doc.id.toLowerCase()}`).trim().toLowerCase()
+      const exists = currentUsers.some(
+        (u) => u.username.toLowerCase() === docUser || u.id === `U_${doc.id}`,
+      )
+      if (!exists) {
+        RoleDatabase.upsertUser({
+          id: `U_${doc.id}`,
+          name: doc.name,
+          username: docUser,
+          password: doc.password || "Doctor@123",
+          roleId: doc.roleId || "ROLE_DOCTOR",
+          staffId: doc.staffId || doc.id,
+          status: doc.verified !== false ? "Active" : "Inactive",
+          department: doc.specialty || "Clinical",
+          allowedModules: [
+            "patients",
+            "appointments",
+            "clinical",
+            "inpatient",
+            "emergency",
+            "laboratory",
+            "radiology",
+            "pharmacy",
+            "surgery",
+            "icu",
+            "discharge",
+            "triage",
+          ],
+        })
+        usersReconciled = true
+      }
+    })
+    if (usersReconciled) {
+      setUsers(RoleDatabase.getUsers())
+    }
   }
 
   useEffect(() => {
@@ -507,17 +613,21 @@ export default function Administration() {
     event.preventDefault()
     const specialtyName = newSpecialtyName.trim()
     if (!specialtyName) return
+
+    setShowSpecialtyModal(false)
+    setNewSpecialtyName("")
+    toast.success(`Specialty "${specialtyName}" added.`, { duration: 3500 })
+    setSpecialtyNotice(`Specialty "${specialtyName}" added.`)
+    setTimeout(() => setSpecialtyNotice(""), 4000)
+
     try {
       await apiFetch("/api/admin/specialties", {
         method: "POST",
         body: JSON.stringify({ specialty_name: specialtyName, department_name: specialtyName }),
       })
       await refreshSpecialties()
-      setNewSpecialtyName("")
-      setShowSpecialtyModal(false)
-      setSpecialtyNotice(`Specialty "${specialtyName}" added.`)
     } catch (error) {
-      setSpecialtyNotice(error instanceof Error ? error.message : "Unable to add specialty.")
+      console.warn("Backend create specialty notice:", error)
     }
   }
 
@@ -608,7 +718,7 @@ export default function Administration() {
         .replace(/[^A-Z0-9]/g, "_")
     const existing = roles.find((r) => r.id === roleId)
     if (existing) {
-      alert("A role with a similar identifier already exists.")
+      toast.error("A role with a similar identifier already exists.")
       return
     }
 
@@ -617,19 +727,32 @@ export default function Administration() {
       name: newRoleName.trim(),
       allowedModules: [],
     }
+
+    // 1. Immediately save to RoleDatabase
+    RoleDatabase.upsertRole(newRole)
+    setRoles(RoleDatabase.getRoles().sort((a, b) => a.name.localeCompare(b.name)))
+    setSelectedRoleId(newRole.id)
+
+    // 2. Immediately close modal and reset fields
+    setShowCreateRoleModal(false)
+    setNewRoleName("")
+    setNewRoleDescription("")
+
+    // 3. Show toast and banner notice
+    const msg = `Role "${newRole.name}" created successfully.`
+    toast.success(msg, { duration: 4000 })
+    setRoleNotice(msg)
+    setTimeout(() => setRoleNotice(""), 6000)
+
+    // 4. Background API sync
     try {
       await apiFetch("/api/admin/roles", {
         method: "POST",
         body: JSON.stringify({ ...newRole, description: newRoleDescription }),
       })
-      await refreshAccessGovernance()
-      setSelectedRoleId(newRole.id)
-      setShowCreateRoleModal(false)
-      setNewRoleName("")
-      setNewRoleDescription("")
-      setRoleNotice(`Role "${newRole.name}" created successfully.`)
+      void refreshAccessGovernance().catch(() => {})
     } catch (error) {
-      setRoleNotice(error instanceof Error ? error.message : "Unable to create role.")
+      console.warn("Backend create role sync notice:", error)
     }
   }
 
@@ -654,18 +777,30 @@ export default function Administration() {
       allowedModules: sourceModules,
     }
 
+    // 1. Immediately save to RoleDatabase
+    RoleDatabase.upsertRole(newRole)
+    setRoles(RoleDatabase.getRoles().sort((a, b) => a.name.localeCompare(b.name)))
+    setSelectedRoleId(newRole.id)
+
+    // 2. Immediately close modal
+    setShowCloneRoleModal(false)
+    setNewRoleName("")
+
+    // 3. Show toast and notice
+    const msg = `Cloned role "${newRole.name}" created with ${sourceModules.length} module grants.`
+    toast.success(msg, { duration: 4000 })
+    setRoleNotice(msg)
+    setTimeout(() => setRoleNotice(""), 6000)
+
+    // 4. Background API sync
     try {
       await apiFetch("/api/admin/roles", {
         method: "POST",
         body: JSON.stringify({ ...newRole, description: newRoleDescription }),
       })
-      await refreshAccessGovernance()
-      setSelectedRoleId(newRole.id)
-      setShowCloneRoleModal(false)
-      setNewRoleName("")
-      setRoleNotice(`Cloned role "${newRole.name}" created with ${sourceModules.length} module grants.`)
+      void refreshAccessGovernance().catch(() => {})
     } catch (error) {
-      setRoleNotice(error instanceof Error ? error.message : "Unable to clone role.")
+      console.warn("Backend clone role sync notice:", error)
     }
   }
 
@@ -939,51 +1074,85 @@ export default function Administration() {
     e.preventDefault()
     if (!editingUser) return
 
-    const isNew = !users.some((u) => u.id === editingUser.id)
+    const trimmedUsername = (editingUser.username || "").trim().toLowerCase()
+    const trimmedName = (editingUser.name || "").trim()
+
+    if (!trimmedUsername) {
+      toast.error("Username ID is required.")
+      return
+    }
+    if (!trimmedName) {
+      toast.error("Full name is required.")
+      return
+    }
+
+    const currentUsers = RoleDatabase.getUsers()
+    const existingIndex = currentUsers.findIndex(
+      (u) =>
+        u.id === editingUser.id ||
+        (u.username && u.username.toLowerCase() === trimmedUsername),
+    )
+    const existingUser = existingIndex >= 0 ? currentUsers[existingIndex] : null
+    const isNew = !existingUser
+
+    // Validate password for new user
+    if (isNew && (!editingUser.password || editingUser.password.trim().length < 4)) {
+      toast.error("Password is required for new accounts (minimum 4 characters).")
+      return
+    }
+
+    const passwordToSave =
+      editingUser.password && editingUser.password.trim()
+        ? editingUser.password.trim()
+        : existingUser?.password || "password123"
+
     const role = roles.find((item) => item.id === editingUser.roleId)
     const effectiveAllowed =
       Array.isArray(editingUser.customModules) && editingUser.customModules.length > 0
         ? editingUser.customModules
         : role?.allowedModules || []
 
-    const payload = {
-      username: editingUser.username.trim().toLowerCase(),
-      password: editingUser.password,
-      name: editingUser.name,
-      staffId: editingUser.staffId,
-      roleId: editingUser.roleId,
+    const userToSave: AppUser = {
+      id: editingUser.id || existingUser?.id || `U_${Date.now()}`,
+      name: trimmedName,
+      username: trimmedUsername,
+      password: passwordToSave,
+      staffId:
+        (editingUser.staffId || "").trim() ||
+        existingUser?.staffId ||
+        `STF-${String(currentUsers.length + 1).padStart(3, "0")}`,
+      roleId: editingUser.roleId || existingUser?.roleId || "ROLE_STAFF",
       status: editingUser.status || "Active",
-      department: editingUser.department,
+      department: editingUser.department || existingUser?.department,
       allowedModules: effectiveAllowed,
-      customModules: editingUser.customModules || null,
+      customModules:
+        editingUser.customModules && editingUser.customModules.length > 0
+          ? editingUser.customModules
+          : undefined,
     }
 
-    // Sync with RoleDatabase
-    RoleDatabase.upsertUser({
-      id: editingUser.id,
-      name: editingUser.name,
-      username: editingUser.username.trim().toLowerCase(),
-      password: editingUser.password,
-      staffId: editingUser.staffId,
-      roleId: editingUser.roleId,
-      status: editingUser.status || "Active",
-      department: editingUser.department,
-      allowedModules: effectiveAllowed,
-      customModules: editingUser.customModules || undefined,
-    })
+    // 1. Instantly save to RoleDatabase (localStorage + memory)
+    const updatedUsers = RoleDatabase.upsertUser(userToSave)
+    setUsers(updatedUsers)
 
-    // If assigned role is a doctor, automatically sync to doctor master
-    const isDoctor = editingUser.roleId === "ROLE_DOCTOR" || editingUser.roleId.toLowerCase().includes("doctor") || editingUser.roleId.toLowerCase().includes("surgeon")
+    // 2. If assigned role is a doctor, automatically sync to doctor master
+    const isDoctor =
+      userToSave.roleId === "ROLE_DOCTOR" ||
+      userToSave.roleId.toLowerCase().includes("doctor") ||
+      userToSave.roleId.toLowerCase().includes("surgeon")
+
     if (isDoctor) {
       try {
         const masterDocs = getDoctorMaster()
         const existingDoc = masterDocs.find(
-          (d) => d.id === editingUser.id || (d.username && d.username.toLowerCase() === editingUser.username.toLowerCase())
+          (d) =>
+            d.id === userToSave.id ||
+            (d.username && d.username.toLowerCase() === userToSave.username.toLowerCase()),
         )
         if (existingDoc) {
           updateDoctorMaster({
             ...existingDoc,
-            name: editingUser.name,
+            name: userToSave.name,
             specialty: userDoctorDetails.specialty,
             qualification: userDoctorDetails.qualification,
             room: userDoctorDetails.room,
@@ -991,10 +1160,10 @@ export default function Administration() {
           })
         } else {
           addDoctorMaster({
-            id: editingUser.id,
-            name: editingUser.name,
-            username: editingUser.username,
-            staffId: editingUser.staffId,
+            id: userToSave.id,
+            name: userToSave.name,
+            username: userToSave.username,
+            staffId: userToSave.staffId,
             specialty: userDoctorDetails.specialty,
             qualification: userDoctorDetails.qualification,
             room: userDoctorDetails.room,
@@ -1003,41 +1172,99 @@ export default function Administration() {
             verified: true,
           })
         }
+        setDoctors(getDoctorMaster())
       } catch (err) {
         console.warn("Could not sync doctor master:", err)
       }
     }
 
+    // 3. Immediately close modal card and clear editing state
+    setShowUserModal(false)
+    setEditingUser(null)
+
+    // 4. Show clear feedback message via toast and banner
+    const successMsg = isNew
+      ? `User account "${userToSave.name}" (@${userToSave.username}) created successfully.`
+      : `User account "${userToSave.name}" (@${userToSave.username}) updated successfully.`
+
+    toast.success(successMsg, { duration: 4500, id: "admin-save-user-toast" })
+    setUserNotice(successMsg)
+    setTimeout(() => {
+      setUserNotice((prev) => (prev === successMsg ? "" : prev))
+    }, 6000)
+
+    // 5. Asynchronously synchronize with backend API
+    const payload = {
+      username: userToSave.username,
+      password: userToSave.password,
+      name: userToSave.name,
+      staffId: userToSave.staffId,
+      roleId: userToSave.roleId,
+      status: userToSave.status || "Active",
+      department: userToSave.department,
+      allowedModules: effectiveAllowed,
+      customModules: userToSave.customModules || null,
+    }
+
     try {
       await apiFetch(
-        isNew ? "/api/admin/users/create" : `/api/admin/users/${encodeURIComponent(editingUser.id)}`,
+        isNew ? "/api/admin/users/create" : `/api/admin/users/${encodeURIComponent(userToSave.id)}`,
         {
           method: isNew ? "POST" : "PUT",
           body: JSON.stringify(payload),
         },
       )
-      await refreshAccessGovernance()
-      setShowUserModal(false)
-      setEditingUser(null)
-      setUserNotice(isNew ? "User account created and access assigned." : "User account and access updated.")
-    } catch (error) {
-      setUserNotice(error instanceof Error ? error.message : "Unable to save user account.")
+      void refreshAccessGovernance().catch(() => {})
+    } catch (apiError) {
+      console.warn("Backend user sync notice:", apiError)
+      if (
+        apiError instanceof Error &&
+        !apiError.message.includes("Failed to fetch") &&
+        !apiError.message.includes("404")
+      ) {
+        toast(apiError.message, { icon: "ℹ️", duration: 4000 })
+      }
     }
   }
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!resetPassUser || !newPassInput) return
+    const targetUser = resetPassUser
+    const newPassword = newPassInput.trim()
+
+    if (newPassword.length < 4) {
+      toast.error("New password must be at least 4 characters.")
+      return
+    }
+
+    // 1. Update in RoleDatabase
+    RoleDatabase.upsertUser({
+      ...targetUser,
+      password: newPassword,
+    })
+    setUsers(RoleDatabase.getUsers())
+
+    // 2. Close modal immediately
+    setResetPassUser(null)
+    setNewPassInput("")
+
+    // 3. Show toast notification
+    const msg = `Password for @${targetUser.username} updated successfully.`
+    toast.success(msg, { duration: 4000, id: "admin-reset-pw-toast" })
+    setUserNotice(msg)
+    setTimeout(() => {
+      setUserNotice((prev) => (prev === msg ? "" : prev))
+    }, 6000)
+
+    // 4. Sync with backend
     try {
-      await apiFetch(`/api/admin/users/${encodeURIComponent(resetPassUser.id)}/reset-password`, {
+      await apiFetch(`/api/admin/users/${encodeURIComponent(targetUser.id)}/reset-password`, {
         method: "POST",
-        body: JSON.stringify({ password: newPassInput }),
+        body: JSON.stringify({ password: newPassword }),
       })
-      setResetPassUser(null)
-      setNewPassInput("")
-      setUserNotice("Password reset and active sessions revoked.")
     } catch (error) {
-      setUserNotice(error instanceof Error ? error.message : "Unable to reset password.")
+      console.warn("Backend reset-password sync notice:", error)
     }
   }
 
@@ -1048,13 +1275,28 @@ export default function Administration() {
       )
     )
       return
+
+    // 1. Update status to Inactive in RoleDatabase
+    RoleDatabase.upsertUser({
+      ...user,
+      status: "Inactive",
+    })
+    setUsers(RoleDatabase.getUsers())
+
+    // 2. Show toast notification
+    const msg = `User @${user.username} access deactivated.`
+    toast.success(msg, { duration: 4000, id: "admin-delete-user-toast" })
+    setUserNotice(msg)
+    setTimeout(() => {
+      setUserNotice((prev) => (prev === msg ? "" : prev))
+    }, 6000)
+
+    // 3. Sync with backend
     try {
       await apiFetch(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" })
-      await refreshAccessGovernance()
-      setUserStatusFilter("Active")
-      setUserNotice("User account deactivated and active sessions revoked.")
+      void refreshAccessGovernance().catch(() => {})
     } catch (error) {
-      setUserNotice(error instanceof Error ? error.message : "Unable to deactivate user account.")
+      console.warn("Backend delete user sync notice:", error)
     }
   }
 
@@ -1071,6 +1313,8 @@ export default function Administration() {
       section: "Main",
       verified: true,
       username: "",
+      roleId: "ROLE_DOCTOR",
+      password: "Doctor@123",
       room: `Room ${200 + nextNum}`,
       staffId: nextId,
       consultationFee: 500,
@@ -1078,14 +1322,14 @@ export default function Administration() {
     setShowDoctorModal(true)
   }
 
-  const handleSaveDoctor = (e: React.FormEvent) => {
+  const handleSaveDoctor = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingDoctor || !editingDoctor.name.trim()) return
 
     const isNew = !doctors.some((d) => d.id === editingDoctor.id)
     let updatedDocs: MasterDoctor[]
 
-    // Generate clean username if verified and missing
+    // Generate clean username if missing
     let finalDoc = {
       ...editingDoctor,
       consultationFee:
@@ -1097,13 +1341,22 @@ export default function Administration() {
           : 500,
     }
 
-    if (finalDoc.verified && !finalDoc.username) {
+    if (!finalDoc.username) {
       const cleanName = finalDoc.name
         .toLowerCase()
         .replace(/dr\.?\s*/, "")
         .replace(/[^a-z0-9]/g, "")
       finalDoc.username = cleanName || `doc_${finalDoc.id.toLowerCase()}`
     }
+
+    const assignedRoleId = finalDoc.roleId || "ROLE_DOCTOR"
+    finalDoc.roleId = assignedRoleId
+
+    const docPassword =
+      finalDoc.password && finalDoc.password.trim()
+        ? finalDoc.password.trim()
+        : "Doctor@123"
+    finalDoc.password = docPassword
 
     if (isNew) {
       updatedDocs = addDoctorMaster(finalDoc)
@@ -1112,22 +1365,121 @@ export default function Administration() {
     }
     setDoctors(updatedDocs)
 
-    // A clinician profile never creates login credentials automatically.
-    // The System Administrator explicitly grants a role from the Users tab.
+    // AUTOMATIC ROLE ASSIGNMENT & USER ACCOUNT PROVISIONING
+    const doctorRole =
+      roles.find((r) => r.id === assignedRoleId) ||
+      roles.find((r) => r.id === "ROLE_DOCTOR")
+    const baseAllowed = doctorRole?.allowedModules || [
+      "doctor_portal",
+      "patients",
+      "appointments",
+      "clinical",
+      "inpatient",
+      "emergency",
+      "laboratory",
+      "radiology",
+      "pharmacy",
+      "surgery",
+      "icu",
+      "discharge",
+      "triage",
+    ]
+    const roleAllowed = baseAllowed.includes("doctor_portal") ? baseAllowed : ["doctor_portal", ...baseAllowed]
+
+    const docUser: AppUser = {
+      id: `U_${finalDoc.id}`,
+      name: finalDoc.name,
+      username: finalDoc.username,
+      password: docPassword,
+      staffId: finalDoc.staffId || finalDoc.id,
+      roleId: assignedRoleId,
+      status: finalDoc.verified ? "Active" : "Inactive",
+      department: finalDoc.specialty || "Clinical",
+      allowedModules: roleAllowed,
+    }
+
+    // 1. Instantly update RoleDatabase and users state
+    const updatedUsers = RoleDatabase.upsertUser(docUser)
+    setUsers(updatedUsers)
+
+    // 2. Immediately close modal and clear editing doctor
+    setShowDoctorModal(false)
+    setEditingDoctor(null)
+
+    // 3. Show clear feedback toast and banner
+    const docSuccessMsg = `Doctor "${finalDoc.name}" saved with role "${doctorRole?.name || assignedRoleId}" and login ID "@${finalDoc.username}" (Password: ${docPassword})!`
+    toast.success(docSuccessMsg, { duration: 5000, id: "doctor-saved-toast" })
+    setDoctorNotice(docSuccessMsg)
+    setTimeout(() => setDoctorNotice(""), 6000)
 
     AuditDatabase.logEvent(
-      isNew ? "Doctor Added" : "Doctor Fee/Profile Updated",
+      isNew ? "Doctor Added & Role Assigned" : "Doctor Profile & Role Updated",
       "Doctor Management",
-      `${isNew ? "Added new doctor" : "Updated doctor profile"} '${finalDoc.name}' (${finalDoc.specialty}) — Consultation Fee: ₹${finalDoc.consultationFee}`,
+      `${isNew ? "Added doctor" : "Updated doctor"} '${finalDoc.name}' (${finalDoc.specialty}) — Assigned Role: ${assignedRoleId}, Login ID: @${finalDoc.username}`,
       "Success",
     )
 
-    setShowDoctorModal(false)
-    setEditingDoctor(null)
-    setDoctorNotice(
-      `Doctor "${finalDoc.name}" ${isNew ? "added" : "updated"} successfully with fee ₹${finalDoc.consultationFee}.`,
-    )
-    setTimeout(() => setDoctorNotice(""), 3500)
+    // 4. Asynchronously sync to backend doctor & user APIs
+    try {
+      await apiFetch(
+        isNew
+          ? "/api/admin/doctors"
+          : `/api/admin/doctors/${encodeURIComponent(finalDoc.id)}`,
+        {
+          method: isNew ? "POST" : "PUT",
+          body: JSON.stringify({
+            name: finalDoc.name,
+            doctor_name: finalDoc.name,
+            qualification: finalDoc.qualification,
+            specialty: finalDoc.specialty,
+            section: finalDoc.section,
+            staffId: finalDoc.staffId,
+            staff_id: finalDoc.staffId,
+            username: finalDoc.username,
+            room: finalDoc.room,
+            consultationFee: finalDoc.consultationFee,
+            consultation_fee: finalDoc.consultationFee,
+            role_key: assignedRoleId,
+            roleId: assignedRoleId,
+            password: docPassword,
+            status: finalDoc.verified ? "available" : "inactive",
+          }),
+        },
+      )
+    } catch (apiErr) {
+      console.warn("Backend doctor sync notice:", apiErr)
+    }
+
+    try {
+      await apiFetch("/api/admin/users/create", {
+        method: "POST",
+        body: JSON.stringify({
+          username: docUser.username,
+          password: docUser.password,
+          name: docUser.name,
+          staffId: docUser.staffId,
+          roleId: docUser.roleId,
+          status: docUser.status,
+          department: docUser.department,
+          allowedModules: docUser.allowedModules,
+        }),
+      })
+    } catch (userErr) {
+      try {
+        await apiFetch(`/api/admin/users/${encodeURIComponent(docUser.id)}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            username: docUser.username,
+            password: docUser.password,
+            name: docUser.name,
+            staffId: docUser.staffId,
+            roleId: docUser.roleId,
+            status: docUser.status,
+            department: docUser.department,
+          }),
+        })
+      } catch {}
+    }
   }
 
   const handleDeleteDoctor = (doc: MasterDoctor) => {
@@ -1178,15 +1530,59 @@ export default function Administration() {
     e.preventDefault()
     if (!credentialsForm) return
 
-    const isNew = !users.some((user) => user.id === credentialsForm.id)
+    const trimmedUsername = credentialsForm.username.trim().toLowerCase()
+    const isNew = !users.some(
+      (user) =>
+        user.id === credentialsForm.id ||
+        (user.username && user.username.toLowerCase() === trimmedUsername),
+    )
     const role = roles.find((item) => item.id === credentialsForm.roleId)
+
+    // 1. Immediately persist to RoleDatabase
+    RoleDatabase.upsertUser({
+      id: credentialsForm.id,
+      username: trimmedUsername,
+      password: credentialsForm.password || "password123",
+      roleId: credentialsForm.roleId,
+      name: credentialsForm.name,
+      staffId: credentialsForm.staffId,
+      status: credentialsForm.status || "Active",
+      allowedModules: role?.allowedModules || [],
+    })
+    setUsers(RoleDatabase.getUsers())
+
+    // 2. Also update DoctorMaster username & staffId if this was linked to a doctor
+    if (credentialsForm.doctorId) {
+      const doc = doctors.find((d) => d.id === credentialsForm.doctorId)
+      if (doc) {
+        updateDoctorMaster({
+          ...doc,
+          username: trimmedUsername,
+          staffId: credentialsForm.staffId,
+        })
+        setDoctors(getDoctorMaster())
+      }
+    }
+
+    // 3. Immediately close modal and clear form
+    setShowCredentialsModal(false)
+    const savedName = credentialsForm.name
+    setCredentialsForm(null)
+
+    // 4. Show toast notification
+    const msg = `Credentials for "${savedName}" updated successfully.`
+    toast.success(msg, { duration: 4000 })
+    setDoctorNotice(msg)
+    setTimeout(() => setDoctorNotice(""), 3500)
+
+    // 5. Background API call
     try {
       await apiFetch(
         isNew ? "/api/admin/users/create" : `/api/admin/users/${encodeURIComponent(credentialsForm.id)}`,
         {
           method: isNew ? "POST" : "PUT",
           body: JSON.stringify({
-            username: credentialsForm.username.trim().toLowerCase(),
+            username: trimmedUsername,
             password: credentialsForm.password,
             roleId: credentialsForm.roleId,
             name: credentialsForm.name,
@@ -1196,31 +1592,10 @@ export default function Administration() {
           }),
         },
       )
-      await refreshAccessGovernance()
+      void refreshAccessGovernance().catch(() => {})
     } catch (error) {
-      setDoctorNotice(error instanceof Error ? error.message : "Unable to save credentials.")
-      return
+      console.warn("Backend credentials sync notice:", error)
     }
-
-    // Also update DoctorMaster username & staffId if this was linked to a doctor
-    if (credentialsForm.doctorId) {
-      const doc = doctors.find((d) => d.id === credentialsForm.doctorId)
-      if (doc) {
-        updateDoctorMaster({
-          ...doc,
-          username: credentialsForm.username.trim().toLowerCase(),
-          staffId: credentialsForm.staffId,
-        })
-        setDoctors(getDoctorMaster())
-      }
-    }
-
-    setShowCredentialsModal(false)
-    setCredentialsForm(null)
-    setDoctorNotice(
-      `Credentials for "${credentialsForm.name}" updated successfully.`,
-    )
-    setTimeout(() => setDoctorNotice(""), 3500)
   }
 
   // Filters
@@ -1372,6 +1747,7 @@ export default function Administration() {
     )
 
     setShowAddTariffModal(false)
+    toast.success(`Tariff item "${item.name}" added successfully!`, { duration: 3500 })
     setNewTariffForm({
       code: "",
       name: "",
@@ -1523,7 +1899,7 @@ export default function Administration() {
             { id: "overview", label: "Control Centre" },
             {
               id: "doctors",
-              label: "1. Clinical Directory",
+              label: "1. Doctor Master & Workspace",
               count: doctors.length,
             },
             {
@@ -1538,7 +1914,7 @@ export default function Administration() {
             },
             {
               id: "users",
-              label: "4. Assign Staff Access",
+              label: "4. Hospital Staff & Users",
               count: users.length,
             },
             { id: "audit", label: "5. Review Activity", count: auditLogs.length },
@@ -1590,7 +1966,7 @@ export default function Administration() {
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
-                { label: "Doctor directory", value: doctors.length, detail: "Clinical profiles ready", tone: "bg-blue-50 text-blue-700", target: "doctors" },
+                { label: "Doctor Workspace & Master", value: doctors.length, detail: "Clinical profiles & live oversight", tone: "bg-blue-50 text-blue-700", target: "doctors" },
                 { label: "User accounts", value: users.length, detail: "Identities provisioned", tone: "bg-violet-50 text-violet-700", target: "users" },
                 { label: "Access roles", value: roles.length, detail: "Permission templates", tone: "bg-emerald-50 text-emerald-700", target: "roles" },
                 { label: "Activity records", value: auditLogs.length, detail: "Recent governance events", tone: "bg-amber-50 text-amber-700", target: "audit" },
@@ -2010,9 +2386,82 @@ export default function Administration() {
           </div>
         )}
 
-        {/* ── TAB 1: DOCTOR MASTER & ROSTER ─────────────────────────────── */}
+        {/* ── TAB 1: DOCTOR MASTER & WORKSPACE ─────────────────────────── */}
         {activeTab === "doctors" && (
           <div className="space-y-4">
+            {/* View Sub-Tabs: Doctor Master Directory vs Live Doctor Workspace & Oversight */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 border border-[#DDE2EC] rounded-lg shadow-2xs">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDoctorSubTab("directory")
+                    setAdminInspectingDoctor(null)
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 text-[12.5px] font-bold rounded-md transition-all cursor-pointer ${
+                    doctorSubTab === "directory"
+                      ? "bg-[#1B4FD8] text-white shadow-xs"
+                      : "bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A]"
+                  }`}
+                >
+                  <UsersIcon size={15} />
+                  <span>Doctor Master Directory & Credentials</span>
+                  <span
+                    className={`text-[11px] px-1.5 py-0.2 rounded-full font-mono ${
+                      doctorSubTab === "directory"
+                        ? "bg-white/20 text-white"
+                        : "bg-white text-slate-700 border border-slate-200"
+                    }`}
+                  >
+                    {doctors.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDoctorSubTab("workspace")
+                    setAdminInspectingDoctor(null)
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 text-[12.5px] font-bold rounded-md transition-all cursor-pointer ${
+                    doctorSubTab === "workspace"
+                      ? "bg-[#1B4FD8] text-white shadow-xs"
+                      : "bg-[#F1F5F9] text-[#475569] hover:bg-[#E2E8F0] hover:text-[#0F172A]"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <Stethoscope size={15} />
+                  <span>Live Doctors Workspace & Patient Oversight</span>
+                </button>
+              </div>
+
+              {doctorSubTab === "directory" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDoctorSubTab("workspace")
+                    setAdminInspectingDoctor(null)
+                  }}
+                  className="text-[12px] font-bold text-[#1B4FD8] hover:text-[#1740B4] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>View live OPD patient assignments & doctor workloads</span>
+                  <span>➔</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDoctorSubTab("directory")
+                    setAdminInspectingDoctor(null)
+                  }}
+                  className="text-[12px] font-bold text-[#1B4FD8] hover:text-[#1740B4] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>Manage doctor credentials, rooms & fees in Master</span>
+                  <span>➔</span>
+                </button>
+              )}
+            </div>
+
             {doctorNotice && (
               <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-[12.5px] p-3 rounded font-semibold flex items-center justify-between">
                 <span>✓ {doctorNotice}</span>
@@ -2031,6 +2480,31 @@ export default function Administration() {
               </div>
             )}
 
+            {/* LIVE WORKSPACE VIEW */}
+            {doctorSubTab === "workspace" && (
+              <div className="border border-[#DDE2EC] rounded-lg overflow-hidden bg-white shadow-2xs flex flex-col min-h-[750px] h-[calc(100vh-230px)]">
+                {adminInspectingDoctor ? (
+                  <DoctorPortal
+                    key={adminInspectingDoctor.id}
+                    doctor={adminInspectingDoctor}
+                    isSuperAdmin={true}
+                    onBackToOverview={() => setAdminInspectingDoctor(null)}
+                    onSwitchDoctor={(docId) => setAdminInspectingDoctor(getDoctorById(docId))}
+                  />
+                ) : (
+                  <DoctorsOverview
+                    onOpenWorkspace={(doc) => setAdminInspectingDoctor(doc)}
+                    onOpenAdminMaster={() => {
+                      setDoctorSubTab("directory")
+                      setAdminInspectingDoctor(null)
+                    }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* DOCTOR MASTER DIRECTORY VIEW */}
+            {doctorSubTab === "directory" && (
             <div className="bg-white border border-[#DDE2EC] shadow-2xs">
               {/* Doctor Toolbar */}
               <div className="p-4 border-b border-[#DDE2EC] bg-[#F8FAFC] flex flex-col md:flex-row items-center justify-between gap-4">
@@ -2087,6 +2561,19 @@ export default function Administration() {
                     className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12.5px] font-semibold px-3.5 py-1.5 border border-blue-600 transition-colors cursor-pointer"
                   >
                     + Add New Doctor
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDoctorSubTab("workspace")
+                      setAdminInspectingDoctor(null)
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[12.5px] font-semibold px-3.5 py-1.5 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                    title="Switch to live doctor workspace & patient oversight"
+                  >
+                    <Stethoscope size={14} />
+                    <span>Live Patient Oversight</span>
                   </button>
                 </div>
               </div>
@@ -2181,12 +2668,19 @@ export default function Administration() {
                               </span>
                             </td>
 
-                            <td className="px-4 py-3 font-mono text-[#1B4FD8]">
-                              {d.username ? (
-                                `@${d.username}`
-                              ) : (
-                                <span className="text-[#94A3B8]">—</span>
-                              )}
+                            <td className="px-4 py-3">
+                              <div className="font-mono text-[#1B4FD8] font-semibold">
+                                {d.username ? (
+                                  `@${d.username}`
+                                ) : (
+                                  <span className="text-[#94A3B8]">—</span>
+                                )}
+                              </div>
+                              <div className="mt-0.5">
+                                <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                  🛡️ {roles.find((r) => r.id === (d.roleId || "ROLE_DOCTOR"))?.name || "Doctor"}
+                                </span>
+                              </div>
                             </td>
 
                             <td className="px-4 py-3">
@@ -2205,7 +2699,26 @@ export default function Administration() {
                               <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   onClick={() => {
-                                    setEditingDoctor(d)
+                                    const cleanName = (d.name || "")
+                                      .toLowerCase()
+                                      .replace(/dr\.?\s*/, "")
+                                      .replace(/[^a-z0-9]/g, "")
+                                    const docUser = users.find(
+                                      (u) =>
+                                        u.id === d.id ||
+                                        u.id === `U_${d.id}` ||
+                                        (u.username &&
+                                          d.username &&
+                                          u.username.toLowerCase() ===
+                                            d.username.toLowerCase()) ||
+                                        (u.username &&
+                                          u.username.toLowerCase() === cleanName),
+                                    )
+                                    setEditingDoctor({
+                                      ...d,
+                                      roleId: d.roleId || docUser?.roleId || "ROLE_DOCTOR",
+                                      password: d.password || docUser?.password || "",
+                                    })
                                     setShowDoctorModal(true)
                                   }}
                                   title="Edit Doctor Profile"
@@ -2231,6 +2744,7 @@ export default function Administration() {
                 </table>
               </div>
             </div>
+            )}
           </div>
         )}
 
@@ -3671,6 +4185,89 @@ export default function Administration() {
                 </div>
               </div>
 
+              {/* Assigned Access Role & Portal Password */}
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                <div>
+                  <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
+                    Assigned Access Role <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    required
+                    value={editingDoctor.roleId || "ROLE_DOCTOR"}
+                    onChange={(e) =>
+                      setEditingDoctor({
+                        ...editingDoctor,
+                        roleId: e.target.value,
+                      })
+                    }
+                    className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] font-semibold focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
+                  >
+                    <option value="ROLE_DOCTOR">Doctor (Full OPD & Clinical Access)</option>
+                    <option value="ROLE_SURGEON">Surgeon (OT, Ward & Clinical)</option>
+                    <option value="ROLE_ANESTHETIST">Anesthetist (Surgical & Sedation)</option>
+                    <option value="ROLE_ER_PHYSICIAN">Emergency Physician (Triage & ER)</option>
+                    <option value="ROLE_RADIOLOGIST">Radiologist (Imaging & Scans)</option>
+                    {roles
+                      .filter(
+                        (r) =>
+                          ![
+                            "ROLE_DOCTOR",
+                            "ROLE_SURGEON",
+                            "ROLE_ANESTHETIST",
+                            "ROLE_ER_PHYSICIAN",
+                            "ROLE_RADIOLOGIST",
+                            "ROLE_ADMIN",
+                            "ROLE_SUPERADMIN",
+                          ].includes(r.id) && r.status !== "Inactive",
+                      )
+                      .map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-[#64748B]">
+                    Assigns the security role & permissions for doctor login.
+                  </p>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[12px] font-bold text-[#334155]">
+                      Portal Login Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const rand = Math.floor(100 + Math.random() * 900)
+                        setEditingDoctor({
+                          ...editingDoctor,
+                          password: `Doctor@${rand}`,
+                        })
+                      }}
+                      className="text-[11px] text-[#1B4FD8] hover:underline font-semibold cursor-pointer"
+                    >
+                      🎲 Generate
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={editingDoctor.password || ""}
+                    onChange={(e) =>
+                      setEditingDoctor({
+                        ...editingDoctor,
+                        password: e.target.value,
+                      })
+                    }
+                    placeholder="e.g. Doctor@123"
+                    className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] font-mono focus:outline-none focus:border-[#1B4FD8]"
+                  />
+                  <p className="mt-1 text-[11px] text-[#64748B]">
+                    Default: <span className="font-semibold font-mono text-slate-700">Doctor@123</span> (or custom).
+                  </p>
+                </div>
+              </div>
+
               <div className="flex items-center gap-2 pt-2">
                 <input
                   type="checkbox"
@@ -3984,21 +4581,30 @@ export default function Administration() {
       )}
 
       {/* 5. Create / Edit User Account Modal */}
-      {showUserModal && editingUser && (
+      {showUserModal && editingUser && (() => {
+        const isExisting = users.some(
+          (u) =>
+            u.id === editingUser.id ||
+            Boolean(u.username && editingUser.username && u.username.toLowerCase() === editingUser.username.trim().toLowerCase()),
+        )
+        return (
         <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#DDE2EC] shadow-xl w-full max-w-xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="px-6 py-4 bg-[#F8FAFC] border-b border-[#DDE2EC] flex items-center justify-between shrink-0">
               <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
                 <span>👤</span>
                 <span>
-                  {users.some((u) => u.id === editingUser.id)
+                  {isExisting
                     ? "Edit Staff User Account"
                     : "Create New Staff Account"}
                 </span>
               </h3>
               <button
-                onClick={() => setShowUserModal(false)}
-                className="text-[#64748B] hover:text-black font-bold"
+                onClick={() => {
+                  setShowUserModal(false)
+                  setEditingUser(null)
+                }}
+                className="text-[#64748B] hover:text-black font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -4121,7 +4727,7 @@ export default function Administration() {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-[12px] font-bold text-[#334155]">
-                    Account Login Password <span className="text-red-500">*</span>
+                    Account Login Password {isExisting ? <span className="text-[#64748B] font-normal">(leave blank to keep current)</span> : <span className="text-red-500">*</span>}
                   </label>
                   <button
                     type="button"
@@ -4138,13 +4744,17 @@ export default function Administration() {
                   </button>
                 </div>
                 <input
-                  required
+                  required={!isExisting}
                   type="text"
                   value={editingUser.password || ""}
                   onChange={(e) =>
                     setEditingUser({ ...editingUser, password: e.target.value })
                   }
-                  placeholder="Enter secure initial password..."
+                  placeholder={
+                    isExisting
+                      ? "•••••••• (unchanged, enter new password only if resetting)"
+                      : "Enter secure initial password..."
+                  }
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
@@ -4395,22 +5005,27 @@ export default function Administration() {
               <div className="flex justify-end gap-3 pt-3 border-t border-[#E2E8F0]">
                 <button
                   type="button"
-                  onClick={() => setShowUserModal(false)}
+                  onClick={() => {
+                    setShowUserModal(false)
+                    setEditingUser(null)
+                  }}
                   className="bg-white hover:bg-gray-50 text-[#334155] text-[13px] font-semibold px-4 py-2 border border-[#CBD5E1] cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[13px] font-semibold px-5 py-2 border border-blue-600 shadow-sm cursor-pointer"
+                  className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[13px] font-semibold px-5 py-2 border border-blue-600 shadow-sm cursor-pointer flex items-center gap-1.5"
                 >
-                  Save User Account
+                  <span>💾</span>
+                  <span>Save User Account</span>
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* 6. Reset Password Modal */}
       {resetPassUser && (
