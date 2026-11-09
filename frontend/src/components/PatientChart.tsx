@@ -1023,10 +1023,12 @@ export default function PatientChart({
           onBack={onBack}
           setNotice={setNotice}
         />
-        <PatientJourneyModal
-          encounter={selectedJourneyEncounter}
-          onClose={() => setSelectedJourneyEncounter(null)}
-        />
+        {selectedJourneyEncounter && (
+          <PatientJourneyModal
+            encounter={selectedJourneyEncounter}
+            onClose={() => setSelectedJourneyEncounter(null)}
+          />
+        )}
       </>
     );
   }
@@ -1594,10 +1596,12 @@ export default function PatientChart({
         />
       )}
 
-      <PatientJourneyModal
-        encounter={selectedJourneyEncounter}
-        onClose={() => setSelectedJourneyEncounter(null)}
-      />
+      {selectedJourneyEncounter && (
+        <PatientJourneyModal
+          encounter={selectedJourneyEncounter}
+          onClose={() => setSelectedJourneyEncounter(null)}
+        />
+      )}
     </div>
   );
 }

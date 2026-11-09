@@ -543,10 +543,12 @@ export default function Registration({
       </div>
 
       {/* Clinical Journey Modal */}
-      <PatientJourneyModal
-        encounter={selectedJourneyEncounter}
-        onClose={() => setSelectedJourneyEncounter(null)}
-      />
+      {selectedJourneyEncounter && (
+        <PatientJourneyModal
+          encounter={selectedJourneyEncounter}
+          onClose={() => setSelectedJourneyEncounter(null)}
+        />
+      )}
 
       {/* Edit Existing Patient Details Modal */}
       {editingPatient && (

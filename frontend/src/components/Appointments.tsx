@@ -855,12 +855,14 @@ export default function Appointments({
       )}
 
       {/* Complete Outpatient Clinical Journey Modal */}
-      <PatientJourneyModal
-        encounter={selectedJourneyEncounter}
-        onClose={() => setSelectedJourneyEncounter(null)}
-        onNavigateToDoctorPortal={onNavigateToDoctorWorkflow}
-        onNavigateToOPWorkflow={onNavigateToOPWorkflow}
-      />
+      {selectedJourneyEncounter && (
+        <PatientJourneyModal
+          encounter={selectedJourneyEncounter}
+          onClose={() => setSelectedJourneyEncounter(null)}
+          onNavigateToDoctorPortal={onNavigateToDoctorWorkflow}
+          onNavigateToOPWorkflow={onNavigateToOPWorkflow}
+        />
+      )}
 
       {/* Top Header */}
       <div className="bg-white border-b border-[#DDE2EC] px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 flex-shrink-0">

@@ -439,10 +439,12 @@ export default function PatientSearch({
       </div>
 
       {/* Outpatient Clinical Journey & Consultation History Modal */}
-      <PatientJourneyModal
-        encounter={selectedJourneyEncounter}
-        onClose={() => setSelectedJourneyEncounter(null)}
-      />
+      {selectedJourneyEncounter && (
+        <PatientJourneyModal
+          encounter={selectedJourneyEncounter}
+          onClose={() => setSelectedJourneyEncounter(null)}
+        />
+      )}
     </div>
   )
 }

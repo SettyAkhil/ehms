@@ -39,10 +39,15 @@ export default function PatientJourneyModal({
   onNavigateToDoctorPortal,
   onNavigateToOPWorkflow,
 }: PatientJourneyModalProps) {
+  const branding = useBranding()
   const [activeTab, setActiveTab] =
     useState<"current_journey" | "previous_consultations">("current_journey")
   const [selectedReportStudy, setSelectedReportStudy] = useState<RadiologyStudyRecord | null>(null)
   const [tick, setTick] = useState(0)
+  const [showOpCard, setShowOpCard] = useState(false)
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
+  const [sendNotice, setSendNotice] = useState<string | null>(null)
+  const [showPrintPreview, setShowPrintPreview] = useState(false)
 
   React.useEffect(() => {
     const unsubDb = db.subscribe(() => setTick((t) => t + 1))
@@ -107,12 +112,6 @@ export default function PatientJourneyModal({
 
     return false
   })
-
-  const branding = useBranding()
-  const [showOpCard, setShowOpCard] = useState(false)
-  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
-  const [sendNotice, setSendNotice] = useState<string | null>(null)
-  const [showPrintPreview, setShowPrintPreview] = useState(false)
 
   const journeyInput: BuildJourneyDocumentInput = {
     name: liveEncounter.patientName || "Patient",
