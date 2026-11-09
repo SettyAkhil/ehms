@@ -260,8 +260,8 @@ function hmsApiMockMiddleware() {
         return res.end()
       }
 
-      const sendJson = (data: any) => {
-        res.statusCode = 200
+      const sendJson = (data: any, statusCode?: number) => {
+        res.statusCode = statusCode ?? res.statusCode ?? 200
         res.setHeader("Content-Type", "application/json")
         res.end(JSON.stringify(data))
       }
@@ -406,8 +406,7 @@ function hmsApiMockMiddleware() {
 
       // Route-specific stand-ins when port 8010 is down
       if (pathname.startsWith("/api/auth/")) {
-        res.statusCode = 503
-        return sendJson({ error: "Authentication service is unavailable." })
+        return sendJson({ error: "Authentication service is unavailable." }, 503)
       }
       const fallback = getSafeFallbackPayload(pathname)
       if (fallback) return sendJson(fallback)
