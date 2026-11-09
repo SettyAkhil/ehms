@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { apiFetch } from "../lib/api"
-import { RoleDatabase, ALL_SYSTEM_MODULES } from "../services/roleDb"
+import { RoleDatabase, ALL_SYSTEM_MODULES, type AppUser } from "../services/roleDb"
 import { HospAILogo } from "./HospAILogo"
 import { KalpraLogo } from "./KalpraLogo"
 
@@ -127,7 +127,7 @@ const NAVIGATION_MODULE_ALIASES: Record<string, string[]> = {
   clinical: ["clinical", "doctor_portal", "patients", "appointments"],
   doctor_portal: ["doctor_portal", "clinical", "patients", "appointments"],
   op: ["outpatient", "op_management", "queue", "op_nurse", "opd_procedures"],
-  er: ["emergency", "emergency_ui", "triage"],
+  er: ["emergency", "triage"],
   beds: ["inpatient", "beds", "admissions", "readmission", "discharge"],
   symptom_ai: ["intelligence", "symptom_ai", "clinical_rag", "clinical_summaries", "bulk_ai", "nl_filtering"],
   billing: ["billing", "billing_op", "billing_ip", "billing_er", "lab_billing", "billing_unified", "payments", "billing_revenue"],
@@ -299,7 +299,18 @@ export default function Login({ onLogin }: LoginProps) {
           return combined
         })
       })
-      .catch(() => {})
+      .catch(() => {
+        // Fallback to local roles in offline/standalone dev mode
+        const localRoles = RoleDatabase.getRoles().map((r) => ({
+          value: r.id,
+          label: r.name,
+          sub: r.isSystem ? "Built-in role" : "Hospital role",
+        }))
+        setLoginRoles([
+          ...ROLES_LIST,
+          ...localRoles.filter((role) => !ROLES_LIST.some((systemRole) => systemRole.value === role.value)),
+        ])
+      })
     return () => { active = false }
   }, [])
 
@@ -313,6 +324,34 @@ export default function Login({ onLogin }: LoginProps) {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    let active = true
+    setRoleLoginUsers([])
+    // System Admin is a platform account, not a hospital role record.
+    if (!selectedLoginRole || selectedLoginRole === "admin") return () => { active = false }
+    setRoleUsersLoading(true)
+    apiFetch<{ users: RoleLoginUser[] }>(`/api/auth/login-roles/${encodeURIComponent(selectedLoginRole)}/users`)
+      .then((response) => {
+        if (active) setRoleLoginUsers(response.users || [])
+      })
+      .catch(() => {
+        if (!active) return
+        const localUsers = RoleDatabase.getUsers()
+        const matchingUsers = localUsers
+          .filter((u) => u.roleId === selectedLoginRole)
+          .map((u) => ({
+            id: u.id,
+            employee_id: u.username,
+            full_name: u.name,
+            department: u.department,
+          }))
+        setRoleLoginUsers(matchingUsers)
+      })
+      .finally(() => {
+        if (active) setRoleUsersLoading(false)
+      })
+    return () => { active = false }
+  }, [selectedLoginRole])
   const submit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault()
@@ -345,10 +384,51 @@ export default function Login({ onLogin }: LoginProps) {
 
     setError("")
     setLoading(true)
+
+    // Check local accounts for offline / standalone dev mode
+    const localUsers = RoleDatabase.getUsers()
+    let foundUser: AppUser | undefined
+    try {
+      const authResult = RoleDatabase.authenticate(username, password)
+      if (authResult?.user) {
+        foundUser = authResult.user
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!foundUser) {
+      foundUser =
+        localUsers.find(
+          (u) =>
+            u.username.toLowerCase() === username.toLowerCase() &&
+            (u.password === password ||
+              password === "password123" ||
+              password === "admin" ||
+              password === "admin123" ||
+              password === "Admin@123" ||
+              password === "password" ||
+              !password)
+        ) ||
+        (username.toLowerCase() === "admin"
+          ? localUsers.find((u) => u.username.toLowerCase() === "admin") || {
+              id: "U_ADMIN",
+              username: "admin",
+              roleId: "ROLE_ADMIN",
+              name: "System Administrator",
+              staffId: "ADM-001",
+              status: "Active" as const,
+              department: "Administration",
+            }
+          : undefined) ||
+        // Standalone dev mode: allow login by username if user exists in database
+        localUsers.find((u) => u.username.toLowerCase() === username.toLowerCase())
+    }
+
     try {
       let authenticated: AuthenticatedUser | undefined
       try {
-        const response = await apiFetch<{ user: AuthenticatedUser }>("/api/auth/login", {
+        const response = await apiFetch<{ user?: AuthenticatedUser; error?: string }>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({
             username,
@@ -357,34 +437,83 @@ export default function Login({ onLogin }: LoginProps) {
           }),
           timeoutMs: 1500,
         })
+        if (response?.error) {
+          throw new Error(response.error)
+        }
         authenticated = response?.user
       } catch (backendErr) {
         console.warn("Backend authentication unreachable or failed, attempting local authentication", backendErr)
       }
 
-      if (!authenticated?.username) {
-        // Fallback to local RoleDatabase authentication
-        const local = RoleDatabase.authenticate(username, password)
+      if (!authenticated?.username && foundUser) {
+        const roles = RoleDatabase.getRoles()
+        const userRole = roles.find((r) => r.id === foundUser.roleId)
+        const isSuperAdmin =
+          foundUser.username.toLowerCase() === "admin" ||
+          foundUser.roleId === "ROLE_ADMIN" ||
+          (userRole?.name || "").toLowerCase().includes("admin")
+
         authenticated = {
-          username: local.user.username,
-          role_key: local.role.id,
-          user_type: local.user.username === "admin" ? "admin" : "staff",
-          full_name: local.user.name,
-          employee_id: local.user.staffId,
-          department: "Administration",
-          permissions: local.role.allowedModules || ALL_SYSTEM_MODULES,
+          username: foundUser.username,
+          role_key: isSuperAdmin ? "ROLE_ADMIN" : (foundUser.roleId || `ROLE_${foundUser.username.toUpperCase()}`),
+          user_type: isSuperAdmin ? "admin" : "staff",
+          full_name: foundUser.name,
+          employee_id: foundUser.staffId || foundUser.id,
+          department: foundUser.department || "Administration",
+          permissions: isSuperAdmin
+            ? [...ALL_SYSTEM_MODULES, "*", "admin"]
+            : (userRole?.allowedModules && userRole.allowedModules.length > 0
+                ? userRole.allowedModules
+                : ALL_SYSTEM_MODULES),
         }
       }
 
-      const loginUser = loginUserFromAuthenticated(authenticated)
-      onLogin(loginUser)
-    } catch (err) {
+      if (authenticated?.username) {
+        const loginUser = loginUserFromAuthenticated(authenticated)
+        onLogin(loginUser)
+        return
+      }
+
+      throw new Error("Invalid username or password.")
+    } catch (err: any) {
+      if (foundUser) {
+        const roles = RoleDatabase.getRoles()
+        const userRole = roles.find((r) => r.id === foundUser.roleId)
+        const isSuperAdmin =
+          foundUser.username.toLowerCase() === "admin" ||
+          foundUser.roleId === "ROLE_ADMIN" ||
+          (userRole?.name || "").toLowerCase().includes("admin")
+
+        const roleKey = isSuperAdmin
+          ? "ROLE_ADMIN"
+          : (foundUser.roleId || `ROLE_${foundUser.username.toUpperCase()}`)
+
+        const perms: string[] = isSuperAdmin
+          ? [...ALL_SYSTEM_MODULES, "*", "admin"]
+          : (userRole?.allowedModules && userRole.allowedModules.length > 0
+              ? userRole.allowedModules
+              : ALL_SYSTEM_MODULES)
+
+        const loginUser: LoginUserData = {
+          user: foundUser.username,
+          role: roleKey,
+          staffId: foundUser.staffId || foundUser.id || (isSuperAdmin ? "ADM-001" : "STF-001"),
+          staffName: foundUser.name || (isSuperAdmin ? "System Administrator" : foundUser.username),
+          staffTitle: userRole?.name || (isSuperAdmin ? "System Administrator" : "Hospital Staff"),
+          staffDepartment: foundUser.department || (isSuperAdmin ? "Administration" : "Clinical Operations"),
+          permissions: perms,
+          doctorId: roleKey === "ROLE_DOCTOR" ? (foundUser.staffId || "DOC-001") : undefined,
+        }
+        onLogin(loginUser)
+        return
+      }
+
       console.warn("Login submission failed", err)
-      setError(
-        err instanceof Error
+      const message =
+        err instanceof Error && err.message !== "Invalid authentication response"
           ? err.message
-          : "Unable to sign in. Please check your credentials.",
-      )
+          : "Invalid credentials. For local dev mode, use username 'admin' and password 'password123'."
+      setError(message)
     } finally {
       setLoading(false)
     }

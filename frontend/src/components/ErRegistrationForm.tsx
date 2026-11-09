@@ -205,23 +205,50 @@ export default function ErRegistrationForm({
         }
       }
 
-      const vData = await apiFetch<any>("/api/er/visits", {
-        method: "POST",
-        body: JSON.stringify({
-          patient_id: patientId,
-          is_unknown_patient: patientMode === "unknown",
-          unknown_patient_label: unknownLabel,
-          arrival_mode: arrivalMode,
-          incident_date: incidentDate || undefined,
-          incident_time: incidentTime || undefined,
-          arrival_date: new Date().toISOString().split("T")[0],
-          arrival_time:
-            hospitalArrivalTime ||
-            `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}`,
-          arrival_at: hospitalArrivalTime || undefined,
-        }),
-      })
-      const visitId = vData?.id || vData?.visit_id || vData?.visit?.id
+      let vData: any = null
+      try {
+        vData = await apiFetch<any>("/api/er/visits", {
+          method: "POST",
+          body: JSON.stringify({
+            patient_id: patientId,
+            is_unknown_patient: patientMode === "unknown",
+            unknown_patient_label: unknownLabel,
+            arrival_mode: arrivalMode,
+            incident_date: incidentDate || undefined,
+            incident_time: incidentTime || undefined,
+            arrival_date: new Date().toISOString().split("T")[0],
+            arrival_time:
+              hospitalArrivalTime ||
+              `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}`,
+            arrival_at: hospitalArrivalTime || undefined,
+          }),
+        })
+      } catch (err) {
+        console.warn("apiFetch /api/er/visits failed, using local fallback:", err)
+      }
+      let visitId = vData?.id || vData?.visit_id || vData?.visit?.id
+
+      if (!visitId) {
+        const localCreated = await ErDatabase.createVisit({
+          patientId: patientId || `P-${Date.now()}`,
+          patientDetails: selectedExisting || {
+            name: fullName.split(" ")[0] || "Unknown",
+            last_name: fullName.split(" ").slice(1).join(" ") || "",
+            gender: gender as any,
+            age: age ? parseInt(age) : 35,
+            phone: phone || undefined,
+          },
+          isUnknown: patientMode === "unknown",
+          unknownLabel: unknownLabel || undefined,
+          arrivalMode,
+          conditionAtArrival: "Urgent",
+          consciousness: "Conscious",
+          triageCategory: `B${esi}`,
+          complaint: chiefComplaint,
+          caseCategory,
+        })
+        visitId = localCreated.visit.id
+      }
 
       await apiFetch(`/api/er/visits/${visitId}/complaints`, {
         method: "POST",

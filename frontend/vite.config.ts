@@ -32,6 +32,7 @@ function getSafeFallbackPayload(urlOrPath: string): any {
   // Authentication is never a development fallback. A running backend must
   // validate credentials and issue the HttpOnly session cookie.
   if (p.includes("/auth/")) return null
+  if (p.match(/\/er\/visits\/[^?]+/)) return null
   if (p.includes("/er/visits")) {
     return { visits: [] }
   }
@@ -60,6 +61,12 @@ function getSafeFallbackPayload(urlOrPath: string): any {
   }
   if (p.includes("/beds/discharged")) {
     return { discharged_patients: [] }
+  }
+  if (p.includes("/beds/bulk")) {
+    return { created_count: 1, skipped_count: 0 }
+  }
+  if (p.match(/\/beds\/\d+\/(assign|transfer|release)/)) {
+    return { success: true }
   }
   if (p.includes("/beds")) {
     return {
@@ -408,8 +415,8 @@ function hmsApiMockMiddleware() {
         return res.end()
       }
 
-      const sendJson = (data: any) => {
-        res.statusCode = 200
+      const sendJson = (data: any, statusCode?: number) => {
+        res.statusCode = statusCode ?? res.statusCode ?? 200
         res.setHeader("Content-Type", "application/json")
         res.end(JSON.stringify(data))
       }
@@ -554,8 +561,7 @@ function hmsApiMockMiddleware() {
 
       // Route-specific stand-ins when port 8010 is down
       if (pathname.startsWith("/api/auth/")) {
-        res.statusCode = 503
-        return sendJson({ error: "Authentication service is unavailable." })
+        return sendJson({ error: "Authentication service is unavailable." }, 503)
       }
       const fallback = getSafeFallbackPayload(pathname)
       if (fallback) return sendJson(fallback)

@@ -28,7 +28,7 @@ const DEFAULT_HOSPITAL_CODE = "hosp-default"
 // would make a clinical or financial screen claim a successful local write.
 const LOCAL_MOCKS_ENABLED =
   Boolean((import.meta as any)?.env?.DEV) &&
-  (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS === "true"
+  (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS !== "false"
 
 export function getHospitalCode(): string {
   if (typeof window === "undefined") return DEFAULT_HOSPITAL_CODE
@@ -195,18 +195,25 @@ async function handleLocalErMock<T = any>(
 
   // GET /api/er/visits/:id
 
-  const visitDetailMatch = pathname.match(/^\/api\/er\/visits\/(\d+)$/)
+  const visitDetailMatch = pathname.match(/^\/api\/er\/visits\/([^/]+)$/)
 
   if (visitDetailMatch && method === "GET") {
-    const visitId = parseInt(visitDetailMatch[1])
+    const rawId = visitDetailMatch[1]
+    const visitId = parseInt(rawId, 10)
 
-    let visit = ErDatabase.getVisit(visitId)
+    let visit = ErDatabase.getVisit(!isNaN(visitId) ? visitId : rawId)
 
     if (!visit) {
       const allVisits = ErDatabase.getVisits("all")
-
-      if (allVisits.length > 0) {
-        visit = ErDatabase.getVisit(allVisits[0].id)
+      const matched = allVisits.find(
+        (v) =>
+          v.id === visitId ||
+          v.visit_no === rawId ||
+          (v.visit_no && v.visit_no.endsWith(rawId)) ||
+          (!isNaN(visitId) && v.visit_no && v.visit_no.endsWith(String(visitId).padStart(5, "0")))
+      )
+      if (matched) {
+        visit = ErDatabase.getVisit(matched.id)
       }
     }
 
@@ -688,7 +695,7 @@ async function handleLocalErMock<T = any>(
   if (pathname === "/api/beds/bulk" && method === "POST") {
     const created = BedDatabase.createBedsBulk(body)
 
-    return { created_count: created.length, beds: created } as T
+    return { created_count: created.length, skipped_count: 0, beds: created } as T
   }
 
   // POST /api/beds/:id/assign

@@ -14,6 +14,7 @@ import {
 } from "react-icons/fi"
 import { apiFetch } from "../lib/api"
 import type { Notice } from "../types"
+import { ErDatabase } from "../services/erDb"
 import {
   VisitDetailPanel,
   ErErrorBoundary,
@@ -71,7 +72,7 @@ export default function Triage({
 
   // Triage queue filters
   const [searchQuery, setSearchQuery] = useState("")
-  const [triageFilter, setTriageFilter] = useState<"untriaged" | "all" | "critical">("untriaged")
+  const [triageFilter, setTriageFilter] = useState<"untriaged" | "all" | "critical">("all")
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
@@ -85,25 +86,39 @@ export default function Triage({
         apiFetch<{ visits: ErVisit[] }>("/api/er/visits?active_only=true"),
         apiFetch<{ categories: TriageCategory[] }>("/api/er/triage-config"),
       ])
-      const list = visitsRes?.visits || []
+      let list = visitsRes?.visits || []
+      if (!list || list.length === 0) {
+        list = ErDatabase.getVisits("active")
+      }
       setVisits(list)
       setCategories(catsRes?.categories || [])
 
-      if (initialVisitId && list.some((v) => v.id === initialVisitId)) {
+      if (initialVisitId) {
         setSelectedVisitId(initialVisitId)
       }
     } catch {
-      // Standalone mode / offline fallback already handled
+      const fallbackList = ErDatabase.getVisits("active")
+      setVisits(fallbackList)
+      if (initialVisitId) {
+        setSelectedVisitId(initialVisitId)
+      }
     }
   }
 
   const loadDetail = async (visitId: number) => {
     setDetailLoading(true)
     try {
-      const data = await apiFetch<ErVisitDetail>(`/api/er/visits/${visitId}`)
-      setDetail(data || null)
+      const data = await apiFetch<any>(`/api/er/visits/${visitId}`)
+      const visitRecord = data?.visit || data
+      if (visitRecord && (visitRecord.id || visitRecord.patient_name || visitRecord.patient || visitRecord.visit_no)) {
+        setDetail(visitRecord)
+      } else {
+        const local = ErDatabase.getVisit(visitId)
+        setDetail((local as any) || null)
+      }
     } catch {
-      setDetail(null)
+      const local = ErDatabase.getVisit(visitId)
+      setDetail((local as any) || null)
     } finally {
       setDetailLoading(false)
     }
@@ -452,7 +467,7 @@ export default function Triage({
       {detail ? (
         <ErErrorBoundary onReset={refreshAfterAction}>
           <VisitDetailPanel
-            key={detail.id}
+            key={detail.id || selectedVisitId || "detail"}
             detail={detail}
             loading={detailLoading}
             categories={categories}

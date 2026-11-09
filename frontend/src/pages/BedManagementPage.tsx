@@ -646,11 +646,17 @@ export default function BedManagementPage({
       setActivePendingAllocation(null)
     }
 
+    const handleBedRequestUpdated = () => {
+      void Promise.all([loadBeds(), loadErRequests()])
+    }
+
     window.addEventListener("bed:initiate_allocation", handleInitiate)
     window.addEventListener("bed:clear_allocation", handleClear)
+    window.addEventListener("hospai_bed_request_updated", handleBedRequestUpdated)
     return () => {
       window.removeEventListener("bed:initiate_allocation", handleInitiate)
       window.removeEventListener("bed:clear_allocation", handleClear)
+      window.removeEventListener("hospai_bed_request_updated", handleBedRequestUpdated)
     }
   }, [])
 
@@ -766,21 +772,38 @@ export default function BedManagementPage({
   // they commit. Also catches the cases the old form let through silently: a
   // reversed range, and a typo like "to bed 100" that would create 100 rows.
   const newBedPlan = useMemo(() => {
-    const from = Number.parseInt(newBedRange.from_bed, 10)
-    const toRaw = newBedRange.to_bed.trim()
-    const to = toRaw ? Number.parseInt(toRaw, 10) : from
     const ward = newBedRange.ward.trim()
     const room = newBedRange.room_no.trim()
 
     if (!ward || !room) {
       return {
+        from: 1,
+        to: 1,
         count: 0,
         invalid: false,
         message: "Enter a ward and room number to continue.",
       }
     }
+
+    const existingBedsInRoom = beds.filter((b) => b.ward === ward && b.room_no === room)
+    const existing = new Set(
+      existingBedsInRoom.map((b) => String(b.bed_no).replace(/^B/i, "")),
+    )
+    const maxExisting = existingBedsInRoom.reduce((max, b) => {
+      const n = parseInt(String(b.bed_no).replace(/\D/g, ""), 10)
+      return !isNaN(n) && n > max ? n : max
+    }, 0)
+    const suggestedFrom = maxExisting + 1 || 1
+
+    const fromRaw = newBedRange.from_bed.trim()
+    const from = fromRaw ? Number.parseInt(fromRaw, 10) : suggestedFrom
+    const toRaw = newBedRange.to_bed.trim()
+    const to = toRaw ? Number.parseInt(toRaw, 10) : from
+
     if (!Number.isFinite(from) || from < 1) {
       return {
+        from: 1,
+        to: 1,
         count: 0,
         invalid: false,
         message: "Enter the first bed number.",
@@ -788,6 +811,8 @@ export default function BedManagementPage({
     }
     if (!Number.isFinite(to) || to < from) {
       return {
+        from,
+        to,
         count: 0,
         invalid: true,
         message: `"To" bed number must be ${from} or higher.`,
@@ -796,22 +821,27 @@ export default function BedManagementPage({
     const count = to - from + 1
     if (count > 100) {
       return {
+        from,
+        to,
         count,
         invalid: true,
         message: `That range is ${count} beds — check the numbers before continuing.`,
       }
     }
-    const existing = new Set(
-      beds
-        .filter((b) => b.ward === ward && b.room_no === room)
-        .map((b) => String(b.bed_no)),
-    )
     const clashes: string[] = []
-    for (let n = from; n <= to; n += 1)
-      if (existing.has(String(n))) clashes.push(String(n))
+    for (let n = from; n <= to; n += 1) {
+      if (
+        existing.has(String(n)) ||
+        existingBedsInRoom.some((b) => String(b.bed_no) === String(n) || String(b.bed_no) === `B${n}`)
+      ) {
+        clashes.push(String(n))
+      }
+    }
     if (clashes.length > 0) {
       return {
-        count,
+        from,
+        to,
+        count: 0,
         invalid: true,
         message: `${ward} Room ${room} already has bed ${clashes.slice(0, 6).join(", ")}${
           clashes.length > 6 ? "…" : ""
@@ -819,6 +849,8 @@ export default function BedManagementPage({
       }
     }
     return {
+      from,
+      to,
       count,
       invalid: false,
       message:
@@ -1305,38 +1337,69 @@ export default function BedManagementPage({
     }
   }
 
+  const handleOpenAddBedModal = () => {
+    const currentWard =
+      selectedWard !== "all"
+        ? selectedWard
+        : (newBedRange.ward || (wardOptions[0] || "2nd Floor"))
+    const roomNo = newBedRange.room_no || "201"
+    const existingInRoom = beds.filter(
+      (b) => b.ward === currentWard && b.room_no === roomNo,
+    )
+    const maxBed = existingInRoom.reduce((max, b) => {
+      const n = parseInt(String(b.bed_no).replace(/\D/g, ""), 10)
+      return !isNaN(n) && n > max ? n : max
+    }, 0)
+    const nextBed = String(maxBed + 1 || 1)
+
+    setNewBedRange((prev) => ({
+      ...prev,
+      ward: prev.ward || currentWard,
+      room_no: prev.room_no || roomNo,
+      from_bed: prev.from_bed || nextBed,
+      to_bed: "",
+    }))
+    setAddBedOpen(true)
+  }
+
   const handleAddBed = async () => {
     setAddingBed(true)
     try {
+      const fromBed = String(newBedPlan.from ?? (newBedRange.from_bed.trim() || "1"))
+      const toBed = newBedRange.to_bed.trim() ? String(newBedPlan.to) : fromBed
       const result = await apiFetch<{
         created_count: number
-        skipped_count: number
+        skipped_count?: number
+        beds?: Bed[]
       }>("/api/beds/bulk", {
         method: "POST",
         body: JSON.stringify({
           ward: newBedRange.ward.trim(),
           room_no: newBedRange.room_no.trim(),
-          from_bed: newBedRange.from_bed.trim(),
-          to_bed: newBedRange.to_bed.trim(),
+          from_bed: fromBed,
+          to_bed: toBed,
           bed_type: newBedRange.bed_type,
           daily_rate: Number(newBedRange.daily_rate) || 0,
         }),
       })
+      const createdCount = result.created_count ?? result.beds?.length ?? 1
+      const skippedCount = result.skipped_count ?? 0
       const parts = [
-        result.created_count > 0
-          ? `${result.created_count} bed${
-              result.created_count === 1 ? "" : "s"
+        createdCount > 0
+          ? `${createdCount} bed${
+              createdCount === 1 ? "" : "s"
             } added`
           : null,
-        result.skipped_count > 0
-          ? `${result.skipped_count} already existed`
+        skippedCount > 0
+          ? `${skippedCount} already existed`
           : null,
       ].filter(Boolean)
       setNotice({
-        type: result.created_count > 0 ? "success" : "error",
-        message: parts.join(", ") || "Nothing to add.",
+        type: createdCount > 0 ? "success" : "error",
+        message: parts.join(", ") || "Bed successfully added.",
       })
       setNewBedRange((prev) => ({ ...prev, from_bed: "", to_bed: "" }))
+      setAddBedOpen(false)
       await loadBeds()
     } catch (error) {
       reportError(
@@ -1430,7 +1493,7 @@ export default function BedManagementPage({
             setNotice={setNotice}
           />
           {activeView === "bed_board" && canManageBeds && (
-            <Button onClick={() => setAddBedOpen(true)} className="font-bold">
+            <Button onClick={handleOpenAddBedModal} className="font-bold">
               <FiPlus aria-hidden /> Add Bed
             </Button>
           )}

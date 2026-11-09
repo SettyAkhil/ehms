@@ -12,10 +12,15 @@ export const LLM_CHAT_URL = env.VITE_QWEN_API_URL || "/vllm-api/v1/chat/completi
 export const LLM_API_KEY = env.VITE_QWEN_API_KEY || "local"
 
 let modelPromise: Promise<string> | null = null
+let lastProbeFailedAt = 0
+const PROBE_BACKOFF_MS = 60000 // Back off for 60s when vLLM is unreachable
 
 /** The served model id (cached). VITE_QWEN_MODEL overrides discovery. */
 export function llmModel(): Promise<string> {
   if (env.VITE_QWEN_MODEL) return Promise.resolve(env.VITE_QWEN_MODEL)
+  if (Date.now() - lastProbeFailedAt < PROBE_BACKOFF_MS) {
+    return Promise.reject(new Error("vLLM service offline (backed off)"))
+  }
   if (!modelPromise) {
     const modelsUrl = LLM_CHAT_URL.replace(/\/chat\/completions$/, "/models")
     modelPromise = fetch(modelsUrl)
@@ -26,7 +31,8 @@ export function llmModel(): Promise<string> {
         return id
       })
       .catch((e) => {
-        modelPromise = null // retry next time instead of caching the failure
+        lastProbeFailedAt = Date.now()
+        modelPromise = null // retry after backoff expires
         throw e
       })
   }

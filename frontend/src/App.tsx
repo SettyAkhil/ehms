@@ -52,7 +52,6 @@ import Laboratory from "./components/Laboratory"
 import LaboratoryManagementSuite from "./components/laboratory/LaboratoryManagementSuite"
 
 import Pharmacy from "./components/Pharmacy"
-import EmergencyUI from "./components/Emergency"
 
 import Billing from "./components/Billing"
 import LabBillingQueue from "./components/LabBillingQueue"
@@ -280,7 +279,6 @@ const NAV: NavItem[] = [
 
     children: [
       { key: "emergency", label: "ED Track Board" },
-      { key: "emergency_ui", label: "Emergency UI (Updated)" },
       { key: "triage", label: "Triage" },
     ],
   },
@@ -3008,16 +3006,6 @@ export default function App() {
 
                     setModule("triage")
                   }}
-                />
-              )}
-              {module === "emergency_ui" && (
-                <EmergencyUI
-                  onRegister={() => setModule("emergency")}
-                  onOpenTriage={(visitId) => {
-                    setSelectedTriageVisitId(visitId)
-                    setModule("triage")
-                  }}
-                  onOpenTrackBoard={() => setModule("emergency")}
                 />
               )}
               {module === "inpatient" && (

@@ -130,7 +130,7 @@ export default function Emergency({
     try {
       // 1. Fetch visits via apiFetch (or fallback to ErDatabase)
       const res = await apiFetch<{ visits: any[] }>("/api/er/visits")
-      const rawVisits = res?.visits || ErDatabase.getVisits("all")
+      const rawVisits = (res?.visits && res.visits.length > 0) ? res.visits : ErDatabase.getVisits("all")
       
       // Ensure each visit has complete shape
       const hydrated = rawVisits.map((v) => {

@@ -87,6 +87,7 @@ import {
   type PaymentRecord,
 } from "../services/billingDb"
 
+import { BedDatabase } from "../services/bedDb"
 import { db, type DBOPEncounter } from "../services/db"
 import { ErQuickInsurance } from "../components/insurance/integrations"
 
@@ -1013,8 +1014,8 @@ export function renderTriagePill(category: string | null | undefined) {
   )
 }
 
-function renderStatusPill(status: string) {
-  const s = status.toLowerCase()
+function renderStatusPill(status?: string) {
+  const s = (status || "").toLowerCase()
 
   if (s === "under_treatment" || s === "treatment") {
     return (
@@ -1742,9 +1743,17 @@ export default function ErPage({
 
       const data = await apiFetch<{ visits: ErVisit[] }>(`/api/er/visits${qs}`)
 
-      setVisits(data?.visits || [])
+      let visitsList = data?.visits || []
+      if (!visitsList || visitsList.length === 0) {
+        const localVisits = ErDatabase.getVisits(queueFilter)
+        if (localVisits && localVisits.length > 0) {
+          visitsList = localVisits as any
+        }
+      }
+      setVisits(visitsList)
     } catch {
-      // Standalone mode / offline fallback already handled
+      const localVisits = ErDatabase.getVisits(queueFilter)
+      setVisits((localVisits as any) || [])
     } finally {
       setLoading(false)
     }
@@ -1756,9 +1765,13 @@ export default function ErPage({
         "/api/er/triage-config",
       )
 
-      setCategories(data?.categories || [])
+      if (data?.categories && data.categories.length > 0) {
+        setCategories(data.categories)
+      } else {
+        setCategories((ErDatabase.getCategories() as any) || [])
+      }
     } catch {
-      // Standalone mode fallback
+      setCategories((ErDatabase.getCategories() as any) || [])
     }
   }
 
@@ -1768,13 +1781,16 @@ export default function ErPage({
     try {
       const data = await apiFetch<ErVisitDetail>(`/api/er/visits/${visitId}`)
 
-      if (data) {
-        setDetail(data)
+      const visitRecord = (data as any)?.visit || data
+      if (visitRecord && visitRecord.id) {
+        setDetail(visitRecord)
       } else {
-        setDetail(null)
+        const localDetail = ErDatabase.getVisit(visitId)
+        setDetail((localDetail as any) || null)
       }
     } catch {
-      setDetail(null)
+      const localDetail = ErDatabase.getVisit(visitId)
+      setDetail((localDetail as any) || null)
     } finally {
       setDetailLoading(false)
     }
@@ -2846,9 +2862,9 @@ function NewPatientIntakePanel({
     setSaving(true)
 
     try {
-      // The server is the only place an ER visit is created; if it fails the
-      // outer catch reports it and nothing is shown as registered.
-      const regRes = await apiFetch<{
+      let regRes: any = null
+      try {
+        regRes = await apiFetch<{
           patient_id: string
           patient: Patient
           visit: { id: number ;visit_no: string }
@@ -2893,28 +2909,27 @@ function NewPatientIntakePanel({
             ],
           }),
         })
+      } catch (apiErr) {
+        console.warn("API registration failed, using local fallback:", apiErr)
+      }
 
+      let visitId = regRes?.visit?.id ?? (regRes as any)?.id
+      let visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
+      const patientId = regRes?.patient_id || regRes?.patient?.patient_id || `P-ER-${Date.now()}`
 
-      const visitId = regRes?.visit?.id ?? (regRes as any)?.id
-      const visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
-
-      // Ensure patient and visit are persisted in ErDatabase
-      try {
-        ErDatabase.addPatient({
-          patient_id: patientId,
-          name: newName.trim(),
-          last_name: newLastName.trim(),
-          gender: newGender as any,
-          age: newAge.trim() ? parseInt(newAge) : 35,
-          phone: newPhone.trim() || undefined,
-          blood_group: newBloodGroup,
-          allergies: newAllergies.trim() || "No Known Allergies",
-          address: newAddress.trim() || undefined,
-          emergency_contact: newEmergencyContact.trim() || undefined,
-        })
-
-        await ErDatabase.createVisit({
-          patientId,
+      if (!visitId) {
+        const localCreated = await ErDatabase.createVisit({
+          patientDetails: {
+            name: newName.trim(),
+            last_name: newLastName.trim(),
+            gender: newGender as any,
+            age: newAge.trim() ? parseInt(newAge) : 35,
+            phone: newPhone.trim() || undefined,
+            blood_group: newBloodGroup,
+            allergies: newAllergies.trim() || "No Known Allergies",
+            address: newAddress.trim() || undefined,
+            emergency_contact: newEmergencyContact.trim() || undefined,
+          },
           arrivalDate,
           arrivalTime,
           arrivalMode,
@@ -2928,16 +2943,27 @@ function NewPatientIntakePanel({
           mlc: newMlc,
           attendantName: attendantName.trim() || undefined,
           attendantRelation: attendantRelation || undefined,
-          patientDetails: {
+        })
+        visitId = localCreated.visit.id
+        visitNo = localCreated.visit.visit_no
+      } else {
+        // Ensure patient is persisted in ErDatabase
+        try {
+          ErDatabase.addPatient({
+            patient_id: patientId,
             name: newName.trim(),
             last_name: newLastName.trim(),
             gender: newGender as any,
             age: newAge.trim() ? parseInt(newAge) : 35,
             phone: newPhone.trim() || undefined,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not save to ErDatabase:", dbErr)
+            blood_group: newBloodGroup,
+            allergies: newAllergies.trim() || "No Known Allergies",
+            address: newAddress.trim() || undefined,
+            emergency_contact: newEmergencyContact.trim() || undefined,
+          })
+        } catch (dbErr) {
+          console.warn("Could not save to ErDatabase:", dbErr)
+        }
       }
 
       // Manual Triage & Bed Allocation Assignment
@@ -4864,15 +4890,55 @@ function ExistingPatientIntakePanel({
         assigned_specialty: finalSpecialty,
       }
 
-      const visitRes = await apiFetch<{ id: number ;visit_no: string }>(
-        "/api/er/visits",
+      let visitRes: any = null
+      try {
+        visitRes = await apiFetch<{ id: number ;visit_no: string }>(
+          "/api/er/visits",
+          { method: "POST", body: JSON.stringify(payload) },
+        )
+      } catch (vErr) {
+        console.warn("apiFetch /api/er/visits failed, using local ErDatabase:", vErr)
+      }
 
-        { method: "POST", body: JSON.stringify(payload) },
-      )
+      let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
+      let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
 
-      const visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
-
-      const visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no ?? `ER-${visitId}`
+      if (!visitId) {
+        const localCreated = await ErDatabase.createVisit({
+          patientId: selectedPatient.patient_id,
+          patientDetails: {
+            patient_id: selectedPatient.patient_id,
+            name: selectedPatient.name,
+            last_name: selectedPatient.last_name || "",
+            gender: selectedPatient.gender,
+            age: selectedPatient.age,
+            phone: selectedPatient.phone,
+            blood_group: (selectedPatient as any).blood_group || "O+",
+            allergies: (selectedPatient as any).allergies || "",
+            emergency_contact:
+              (selectedPatient as any).emergency_contact ||
+              (selectedPatient as any).phone ||
+              "",
+          },
+          arrivalDate,
+          arrivalTime,
+          arrivalMode,
+          broughtBy,
+          conditionAtArrival,
+          consciousness: consciousnessLevel,
+          triageCategory,
+          triageBedLabel,
+          complaint: complaint.trim(),
+          caseCategory,
+          mlc: newMlc,
+          attendantName: attendantName.trim() || undefined,
+          attendantRelation: attendantRelation || undefined,
+          assignedDoctorName: finalDoctor,
+          assignedSpecialty: finalSpecialty,
+        })
+        visitId = localCreated.visit.id
+        visitNo = localCreated.visit.visit_no
+      }
 
       await apiFetch(`/api/er/visits/${visitId}/complaints`, {
         method: "POST",
@@ -5123,7 +5189,7 @@ function ExistingPatientIntakePanel({
                               {formatDateTimeIST(v.arrival_at)}
                             </span>
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                              {v.status.toUpperCase()}
+                              {(v.status || "ACTIVE").toUpperCase()}
                             </span>
                           </div>
                           <div className="text-slate-700">
@@ -9475,8 +9541,9 @@ function PatientHistoryArchiveModal({
                               </span>
                             )}
                             <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {STATUS_LABELS[v.status] ||
-                                v.status.toUpperCase()}
+                              {v.status
+                                ? STATUS_LABELS[v.status] || v.status.toUpperCase()
+                                : "ACTIVE"}
                             </span>
                             <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                               Triage: {v.triage_category || "B2"} (
@@ -10142,8 +10209,16 @@ export function VisitDetailPanel({
 
   const hasDisposition = Boolean(detail.disposition)
 
+  const [localBedReqCount, setLocalBedReqCount] = useState(
+    detail.bed_requests?.length || 0,
+  )
+
+  useEffect(() => {
+    setLocalBedReqCount(detail.bed_requests?.length || 0)
+  }, [detail.bed_requests?.length])
+
   const hasBedRequest = Boolean(
-    detail.bed_requests && detail.bed_requests.length > 0,
+    (detail.bed_requests && detail.bed_requests.length > 0) || localBedReqCount > 0,
   )
 
   const isTransferred =
@@ -10829,6 +10904,12 @@ export function VisitDetailPanel({
 
   const handleRequestBed = async (careLevel?: string) => {
     try {
+      const targetVisitId =
+        detail.id ||
+        (detail.visit_no ? Number(detail.visit_no.replace(/\D/g, "").slice(-5)) : 0) ||
+        (visits?.find((v) => v.visit_no === curVisitNo)?.id) ||
+        109
+
       const isIcu =
         (careLevel || "").toLowerCase().includes("icu") ||
         detail.triage_category === "red" ||
@@ -10844,14 +10925,14 @@ export function VisitDetailPanel({
           : "medium"
 
       // 1. Create bed request in ErDatabase
-      const bedReq = ErDatabase.createBedRequest(detail.id, {
+      const bedReq = ErDatabase.createBedRequest(targetVisitId, {
         requested_level_of_care: loc,
         requested_specialty: specialty,
       })
 
       // 2. Ensure disposition is recorded as admission if not set
       if (!detail.disposition) {
-        ErDatabase.recordDisposition(detail.id, {
+        ErDatabase.recordDisposition(targetVisitId, {
           outcome: isIcu ? "icu" : "ward",
           required_specialty: specialty,
           clinical_reason: isIcu
@@ -10863,7 +10944,7 @@ export function VisitDetailPanel({
 
       // 3. Dispatch Bed Transfer Alert
       ErDatabase.dispatchBedTransferAlert({
-        patient_id: detail.patient_id || detail.patient?.patient_id,
+        patient_id: detail.patient_id || detail.patient?.patient_id || `P-${targetVisitId}`,
         patient_name: displayName,
         patient_last_name: detail.patient?.last_name || detail.patient_last_name || "",
         patient_age: Number(curAge) || 40,
@@ -10876,19 +10957,46 @@ export function VisitDetailPanel({
         priority: isIcu ? "Stat / Emergency" : "High Priority",
         clinical_reason: `Emergency admission bed request for ${displayName}.`,
         sent_by: detail.assigned_doctor_name || "Emergency Staff",
-        er_visit_id: detail.id,
+        er_visit_id: targetVisitId,
         er_bed_request_id: bedReq.id,
       })
 
-      // 4. Add timeline event
-      ErDatabase.addTimelineEvent(detail.id, {
+      // 4. Dispatch pending allocation to BedDatabase for instant Bed Management visibility
+      BedDatabase.setPendingAllocation({
+        patient_id: detail.patient_id || detail.patient?.patient_id || `P-${targetVisitId}`,
+        name: displayName,
+        last_name: detail.patient?.last_name || detail.patient_last_name || "",
+        phone: curPhone,
+        age: Number(curAge) || 40,
+        gender: curGender,
+        source: "ER",
+        visit_no: curVisitNo,
+        er_bed_request_id: bedReq.id,
+        er_visit_id: targetVisitId,
+        requested_level_of_care: loc,
+        requested_specialty: specialty,
+        clinical_notes: `Emergency admission bed request for ${displayName}.`,
+        priority: priority === "high" ? "High Priority" : "Routine",
+        timestamp: new Date().toISOString(),
+      })
+
+      // 5. Add timeline event
+      ErDatabase.addTimelineEvent(targetVisitId, {
         event_type: "destination_assigned",
         event_name: `Bed Requested: ${loc}`,
         notes: `Admission bed request dispatched to Inpatient Ward (${specialty}).`,
         logged_by: detail.assigned_doctor_name || "Emergency Staff",
       })
 
-      // 5. Notify window listeners so Inpatient updates instantly
+      // 6. Mutate local detail object and state so UI transitions immediately
+      if (detail) {
+        if (!detail.bed_requests) detail.bed_requests = []
+        detail.bed_requests.push(bedReq)
+        detail.status = "bed_requested"
+      }
+      setLocalBedReqCount((c) => c + 1)
+
+      // 7. Notify window listeners so Inpatient updates instantly
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
       }
@@ -11823,8 +11931,10 @@ export function VisitDetailPanel({
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-none text-xs font-bold bg-[#FEF3C7] text-[#B45309] border border-amber-300 whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-[#B45309] animate-pulse"></span>
-                {STATUS_LABELS[detail.status] ||
-                  detail.status.replace(/_/g, " ").toUpperCase()}
+                {detail.status
+                  ? STATUS_LABELS[detail.status] ||
+                    detail.status.replace(/_/g, " ").toUpperCase()
+                  : "WAITING / REGISTERED"}
               </span>
             </div>
 

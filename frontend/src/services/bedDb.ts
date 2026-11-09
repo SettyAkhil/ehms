@@ -841,19 +841,30 @@ export class BedDatabase {
 
     const created: BedRecord[] = []
 
-    const fromNum = parseInt(data.from_bed.replace(/\D/g, "")) || 1
+    const fromNum = parseInt(String(data.from_bed || "").replace(/\D/g, ""), 10) || 1
 
-    const toNum = parseInt(data.to_bed.replace(/\D/g, "")) || fromNum
+    const toNum = parseInt(String(data.to_bed || "").replace(/\D/g, ""), 10) || fromNum
+
+    const maxId = beds.length > 0 ? Math.max(...beds.map((b) => b.id)) : 0
 
     for (let i = fromNum; i <= toNum; i++) {
+      const bedNoStr = String(i)
+      const alreadyExists = beds.some(
+        (b) =>
+          b.ward === data.ward &&
+          b.room_no === data.room_no &&
+          (String(b.bed_no) === bedNoStr || String(b.bed_no) === `B${i}`)
+      )
+      if (alreadyExists) continue
+
       const newBed: BedRecord = {
-        id: beds.length + created.length + 1,
+        id: maxId + created.length + 1,
 
         ward: data.ward,
 
         room_no: data.room_no,
 
-        bed_no: `${data.room_no}-${i}`,
+        bed_no: bedNoStr,
 
         bed_type: data.bed_type,
 
