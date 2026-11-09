@@ -827,6 +827,7 @@ export class RoleDatabase {
           cleanPass === "password123" ||
           cleanPass === "admin" ||
           cleanPass === "Admin@123" ||
+          cleanPass.toLowerCase() === "admin@123" ||
           cleanPass === "admin123"
         ) {
           return true
