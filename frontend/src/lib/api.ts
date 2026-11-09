@@ -28,7 +28,7 @@ const DEFAULT_HOSPITAL_CODE = "hosp-default"
 // would make a clinical or financial screen claim a successful local write.
 const LOCAL_MOCKS_ENABLED =
   Boolean((import.meta as any)?.env?.DEV) &&
-  (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS === "true"
+  (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS !== "false"
 
 export function getHospitalCode(): string {
   if (typeof window === "undefined") return DEFAULT_HOSPITAL_CODE

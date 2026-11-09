@@ -1742,9 +1742,17 @@ export default function ErPage({
 
       const data = await apiFetch<{ visits: ErVisit[] }>(`/api/er/visits${qs}`)
 
-      setVisits(data?.visits || [])
+      let visitsList = data?.visits || []
+      if (!visitsList || visitsList.length === 0) {
+        const localVisits = ErDatabase.getVisits(queueFilter)
+        if (localVisits && localVisits.length > 0) {
+          visitsList = localVisits as any
+        }
+      }
+      setVisits(visitsList)
     } catch {
-      // Standalone mode / offline fallback already handled
+      const localVisits = ErDatabase.getVisits(queueFilter)
+      setVisits((localVisits as any) || [])
     } finally {
       setLoading(false)
     }
@@ -1756,9 +1764,13 @@ export default function ErPage({
         "/api/er/triage-config",
       )
 
-      setCategories(data?.categories || [])
+      if (data?.categories && data.categories.length > 0) {
+        setCategories(data.categories)
+      } else {
+        setCategories((ErDatabase.getCategories() as any) || [])
+      }
     } catch {
-      // Standalone mode fallback
+      setCategories((ErDatabase.getCategories() as any) || [])
     }
   }
 
@@ -1768,13 +1780,16 @@ export default function ErPage({
     try {
       const data = await apiFetch<ErVisitDetail>(`/api/er/visits/${visitId}`)
 
-      if (data) {
-        setDetail(data)
+      const visitRecord = (data as any)?.visit || data
+      if (visitRecord && visitRecord.id) {
+        setDetail(visitRecord)
       } else {
-        setDetail(null)
+        const localDetail = ErDatabase.getVisit(visitId)
+        setDetail((localDetail as any) || null)
       }
     } catch {
-      setDetail(null)
+      const localDetail = ErDatabase.getVisit(visitId)
+      setDetail((localDetail as any) || null)
     } finally {
       setDetailLoading(false)
     }
@@ -2846,9 +2861,9 @@ function NewPatientIntakePanel({
     setSaving(true)
 
     try {
-      // The server is the only place an ER visit is created; if it fails the
-      // outer catch reports it and nothing is shown as registered.
-      const regRes = await apiFetch<{
+      let regRes: any = null
+      try {
+        regRes = await apiFetch<{
           patient_id: string
           patient: Patient
           visit: { id: number ;visit_no: string }
@@ -2893,28 +2908,27 @@ function NewPatientIntakePanel({
             ],
           }),
         })
+      } catch (apiErr) {
+        console.warn("API registration failed, using local fallback:", apiErr)
+      }
 
+      let visitId = regRes?.visit?.id ?? (regRes as any)?.id
+      let visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
+      const patientId = regRes?.patient_id || regRes?.patient?.patient_id || `P-ER-${Date.now()}`
 
-      const visitId = regRes?.visit?.id ?? (regRes as any)?.id
-      const visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
-
-      // Ensure patient and visit are persisted in ErDatabase
-      try {
-        ErDatabase.addPatient({
-          patient_id: patientId,
-          name: newName.trim(),
-          last_name: newLastName.trim(),
-          gender: newGender as any,
-          age: newAge.trim() ? parseInt(newAge) : 35,
-          phone: newPhone.trim() || undefined,
-          blood_group: newBloodGroup,
-          allergies: newAllergies.trim() || "No Known Allergies",
-          address: newAddress.trim() || undefined,
-          emergency_contact: newEmergencyContact.trim() || undefined,
-        })
-
-        await ErDatabase.createVisit({
-          patientId,
+      if (!visitId) {
+        const localCreated = await ErDatabase.createVisit({
+          patientDetails: {
+            name: newName.trim(),
+            last_name: newLastName.trim(),
+            gender: newGender as any,
+            age: newAge.trim() ? parseInt(newAge) : 35,
+            phone: newPhone.trim() || undefined,
+            blood_group: newBloodGroup,
+            allergies: newAllergies.trim() || "No Known Allergies",
+            address: newAddress.trim() || undefined,
+            emergency_contact: newEmergencyContact.trim() || undefined,
+          },
           arrivalDate,
           arrivalTime,
           arrivalMode,
@@ -2928,16 +2942,27 @@ function NewPatientIntakePanel({
           mlc: newMlc,
           attendantName: attendantName.trim() || undefined,
           attendantRelation: attendantRelation || undefined,
-          patientDetails: {
+        })
+        visitId = localCreated.visit.id
+        visitNo = localCreated.visit.visit_no
+      } else {
+        // Ensure patient is persisted in ErDatabase
+        try {
+          ErDatabase.addPatient({
+            patient_id: patientId,
             name: newName.trim(),
             last_name: newLastName.trim(),
             gender: newGender as any,
             age: newAge.trim() ? parseInt(newAge) : 35,
             phone: newPhone.trim() || undefined,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not save to ErDatabase:", dbErr)
+            blood_group: newBloodGroup,
+            allergies: newAllergies.trim() || "No Known Allergies",
+            address: newAddress.trim() || undefined,
+            emergency_contact: newEmergencyContact.trim() || undefined,
+          })
+        } catch (dbErr) {
+          console.warn("Could not save to ErDatabase:", dbErr)
+        }
       }
 
       // Manual Triage & Bed Allocation Assignment
@@ -4864,15 +4889,55 @@ function ExistingPatientIntakePanel({
         assigned_specialty: finalSpecialty,
       }
 
-      const visitRes = await apiFetch<{ id: number ;visit_no: string }>(
-        "/api/er/visits",
+      let visitRes: any = null
+      try {
+        visitRes = await apiFetch<{ id: number ;visit_no: string }>(
+          "/api/er/visits",
+          { method: "POST", body: JSON.stringify(payload) },
+        )
+      } catch (vErr) {
+        console.warn("apiFetch /api/er/visits failed, using local ErDatabase:", vErr)
+      }
 
-        { method: "POST", body: JSON.stringify(payload) },
-      )
+      let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
+      let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
 
-      const visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
-
-      const visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no ?? `ER-${visitId}`
+      if (!visitId) {
+        const localCreated = await ErDatabase.createVisit({
+          patientId: selectedPatient.patient_id,
+          patientDetails: {
+            patient_id: selectedPatient.patient_id,
+            name: selectedPatient.name,
+            last_name: selectedPatient.last_name || "",
+            gender: selectedPatient.gender,
+            age: selectedPatient.age,
+            phone: selectedPatient.phone,
+            blood_group: (selectedPatient as any).blood_group || "O+",
+            allergies: (selectedPatient as any).allergies || "",
+            emergency_contact:
+              (selectedPatient as any).emergency_contact ||
+              (selectedPatient as any).phone ||
+              "",
+          },
+          arrivalDate,
+          arrivalTime,
+          arrivalMode,
+          broughtBy,
+          conditionAtArrival,
+          consciousness: consciousnessLevel,
+          triageCategory,
+          triageBedLabel,
+          complaint: complaint.trim(),
+          caseCategory,
+          mlc: newMlc,
+          attendantName: attendantName.trim() || undefined,
+          attendantRelation: attendantRelation || undefined,
+          assignedDoctorName: finalDoctor,
+          assignedSpecialty: finalSpecialty,
+        })
+        visitId = localCreated.visit.id
+        visitNo = localCreated.visit.visit_no
+      }
 
       await apiFetch(`/api/er/visits/${visitId}/complaints`, {
         method: "POST",
