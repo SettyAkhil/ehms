@@ -7,7 +7,14 @@ import { HospAILogo } from "./HospAILogo"
 import { useBranding } from "./branding/DocumentBranding"
 import { OpCardPreview, cardBarcodeValue, opCardDataFor, printOpCard } from "./opcard/OpCard"
 import { openJourneyForCode } from "./opcard/JourneyScan"
-import { notifyAppointmentBooked, sendPatientMessage } from "../services/patientMessaging"
+import {
+  notifyAppointmentBooked,
+  sendPatientMessage,
+  whatsAppHandoffUrl,
+  emailHandoffUrl,
+} from "../services/patientMessaging"
+import { SendToPatientButton } from "./messaging/SendToPatientDialog"
+import HospitalReceiptModal from "./HospitalReceiptModal"
 
 export interface OPPatient {
   id?: string
@@ -259,6 +266,7 @@ export default function OPWorkflow({
     )
   const [paymentProcessing, setPaymentProcessing] = useState(false)
   const [smsSentNotice, setSmsSentNotice] = useState<string | null>(null)
+  const [showOfficialReceiptModal, setShowOfficialReceiptModal] = useState(false)
   const [cashTendered, setCashTendered] = useState<string>("")
   const [cardNumber, setCardNumber] = useState<string>("")
   const [cardExpiry, setCardExpiry] = useState<string>("")
@@ -856,7 +864,7 @@ export default function OPWorkflow({
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#F0F2F5]">
       {/* Clinical Workflow Header */}
-      <div className="bg-white border-b border-[#DDE2EC] px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 flex-shrink-0">
+      <div className="bg-white border-b border-[#DDE2EC] px-6 py-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 flex-shrink-0 no-print print:hidden">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-base font-semibold text-gray-900">
@@ -931,7 +939,7 @@ export default function OPWorkflow({
       </div>
 
       {/* Stepper Progress Bar */}
-      <div className="bg-[#0C1524] px-6 py-3 border-b border-[#1E2D42] flex items-center justify-between flex-shrink-0">
+      <div className="bg-[#0C1524] px-6 py-3 border-b border-[#1E2D42] flex items-center justify-between flex-shrink-0 no-print print:hidden">
         <div className="flex items-center gap-1 sm:gap-2 w-full justify-between">
           {steps.map((s, idx) => {
             const isCurrent = s.nums.includes(currentStep)
@@ -1069,23 +1077,104 @@ export default function OPWorkflow({
                   every department. This visit is <strong>{patient.opNumber}</strong>.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  printOpCard(
-                    opCardDataFor(patient.umr, {
-                      patientName: patient.name,
-                      age: patient.age,
-                      sex: patient.sex,
-                      phone: patient.phone,
-                    }),
-                    branding,
-                  )
-                }
-                className="px-4 py-2 bg-white hover:bg-gray-50 border border-[#CBD5E1] text-gray-800 text-[12.5px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
-              >
-                <Icon.Download /> Print OP Card
-              </button>
+              <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() =>
+                    printOpCard(
+                      opCardDataFor(patient.umr, {
+                        patientName: patient.name,
+                        age: patient.age,
+                        sex: patient.sex,
+                        phone: patient.phone,
+                      }),
+                      branding,
+                    )
+                  }
+                  className="px-3.5 py-2 bg-white hover:bg-gray-50 border border-[#CBD5E1] text-gray-800 text-[12px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Icon.Download /> Print OP Card
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const cardMsg =
+                      `🏥 *${branding.hospitalName.toUpperCase()}*\n` +
+                      `*Digital OP Card & Registration Slip*\n\n` +
+                      `👤 *Patient:* ${patient.name}\n` +
+                      `🆔 *Permanent UMR:* ${patient.umr}\n` +
+                      `📋 *Active Visit:* ${patient.opNumber}\n` +
+                      `👨‍⚕️ *Consultant:* ${patient.assignedDoctor || "OPD Duty Doctor"}\n\n` +
+                      `Present this card or UMR at the reception or nurse station during your visit.\n` +
+                      `Helpline: ${branding.helpline || "+91-8816-279999"}`;
+                    try {
+                      await sendPatientMessage({
+                        patient: { name: patient.name, phone: patient.phone, id: patient.umr, encounterId: patient.id },
+                        kind: "op_registered",
+                        channels: ["whatsapp"],
+                        message: cardMsg,
+                      });
+                      setSmsSentNotice(`✓ OP Card sent via WhatsApp to ${patient.phone}`);
+                    } catch {
+                      window.open(whatsAppHandoffUrl(patient.phone, cardMsg), "_blank");
+                      setSmsSentNotice(`WhatsApp opened with OP Card for ${patient.phone}`);
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[12px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                  title="Send OP Card via WhatsApp"
+                >
+                  <span>💬</span> WhatsApp
+                </button>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    let email = patient.email || "";
+                    if (!email) {
+                      email = window.prompt("Enter patient email to send OP Card:", "") || "";
+                    }
+                    if (!email || !email.includes("@")) return;
+                    const cardMsg =
+                      `Dear ${patient.name},\n\n` +
+                      `Here are your OP registration details at ${branding.hospitalName}:\n\n` +
+                      `Permanent UMR: ${patient.umr}\n` +
+                      `Visit OP Number: ${patient.opNumber}\n` +
+                      `Doctor: ${patient.assignedDoctor || "OPD Doctor"}\n` +
+                      `Date: ${patient.date || new Date().toLocaleDateString()}\n\n` +
+                      `Keep your UMR safe for future visits.\n` +
+                      `Warm regards,\n${branding.hospitalName}`;
+                    try {
+                      await sendPatientMessage({
+                        patient: { name: patient.name, phone: patient.phone, email, id: patient.umr, encounterId: patient.id },
+                        kind: "op_registered",
+                        channels: ["email"],
+                        message: cardMsg,
+                      });
+                      setSmsSentNotice(`✓ OP Card sent via Email to ${email}`);
+                    } catch {
+                      window.open(emailHandoffUrl(email, `${branding.hospitalName} - OP Card (${patient.umr})`, cardMsg), "_blank");
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[12px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                  title="Send OP Card via Email"
+                >
+                  <span>✉️</span> Mail
+                </button>
+
+                <SendToPatientButton
+                  patient={{
+                    name: patient.name,
+                    phone: patient.phone,
+                    email: patient.email,
+                    id: patient.umr,
+                    encounterId: patient.id,
+                  }}
+                  kind="op_registered"
+                  label="Share Card"
+                  className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 border border-blue-300 text-[#1B4FD8] text-[12px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                />
+              </div>
             </div>
 
             <div className="flex flex-col items-center gap-3 py-2">
@@ -2419,6 +2508,280 @@ export default function OPWorkflow({
               }
             })()
 
+            const printOpInvoiceReceipt = () => {
+              const frame = document.createElement("iframe")
+              frame.setAttribute("aria-hidden", "true")
+              frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden"
+              document.body.appendChild(frame)
+              const doc = frame.contentDocument
+              if (!doc || !frame.contentWindow) {
+                frame.remove()
+                window.print()
+                return
+              }
+
+              const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Tax Invoice & OP Slip - ${patient.name} - ${receiptNo || patient.opNumber}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 12mm 15mm;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #0F172A;
+      background: #FFFFFF;
+      font-size: 12px;
+      line-height: 1.45;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .invoice-card {
+      border: 1.5px solid #1E293B;
+      border-radius: 6px;
+      padding: 24px;
+      position: relative;
+    }
+    .accent-bar {
+      height: 4px;
+      background: #1B4FD8;
+      margin: -24px -24px 20px -24px;
+      border-top-left-radius: 4px;
+      border-top-right-radius: 4px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #E2E8F0;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+    }
+    .hospital-name {
+      font-size: 20px;
+      font-weight: 800;
+      color: #0F172A;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .hospital-sub {
+      font-size: 11px;
+      font-weight: 600;
+      color: #475569;
+      margin-top: 2px;
+    }
+    .hospital-address {
+      font-size: 10px;
+      color: #64748B;
+      margin-top: 3px;
+    }
+    .badge-paid {
+      display: inline-block;
+      padding: 4px 10px;
+      background: #DCFCE7;
+      color: #166534;
+      border: 1px solid #86EFAC;
+      border-radius: 4px;
+      font-weight: 800;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .date-stamp {
+      font-size: 10.5px;
+      color: #64748B;
+      margin-top: 4px;
+      font-family: monospace;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      background: #F8FAFC;
+      border: 1px solid #CBD5E1;
+      padding: 12px 14px;
+      border-radius: 4px;
+      margin-bottom: 18px;
+    }
+    .meta-col .label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #64748B;
+      margin-bottom: 2px;
+    }
+    .meta-col .value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+    .meta-col .sub {
+      font-size: 11px;
+      color: #64748B;
+      margin-top: 1px;
+    }
+    .fee-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 18px;
+      border: 1px solid #CBD5E1;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .fee-table th {
+      background: #F1F5F9;
+      padding: 9px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #334155;
+      border-bottom: 1px solid #CBD5E1;
+      text-align: left;
+    }
+    .fee-table th.right { text-align: right; }
+    .fee-table td {
+      padding: 9px 14px;
+      font-size: 12px;
+      border-bottom: 1px solid #E2E8F0;
+      color: #1E293B;
+    }
+    .fee-table td.right { text-align: right; font-family: monospace; font-weight: 700; }
+    .total-box {
+      background: #F8FAFC;
+      border: 1px solid #CBD5E1;
+      padding: 12px 16px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .total-label {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0F172A;
+    }
+    .total-amount {
+      font-size: 18px;
+      font-weight: 900;
+      color: #16A34A;
+      font-family: monospace;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-top: 1px solid #E2E8F0;
+      padding-top: 16px;
+      font-size: 11px;
+      color: #64748B;
+    }
+    .sign-box {
+      text-align: center;
+      border-top: 1px solid #64748B;
+      padding-top: 6px;
+      width: 190px;
+      font-weight: 700;
+      color: #0F172A;
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice-card">
+    <div class="accent-bar"></div>
+    <div class="header">
+      <div>
+        <div class="hospital-name">${branding.hospitalName}</div>
+        <div class="hospital-sub">A UNIT OF MUKUNDA HEALTHCARE PRIVATE LIMITED</div>
+        <div class="hospital-address">Outpatient Consultation & Diagnostic Services · GSTIN: 37AALCM2238A1ZQ</div>
+      </div>
+      <div style="text-align: right;">
+        <span class="badge-paid">✓ PAID & SETTLED</span>
+        <div class="date-stamp">Date: ${patient.date || new Date().toLocaleDateString()} ${patient.timestamps?.billingCompleted || ""}</div>
+      </div>
+    </div>
+
+    <div class="meta-grid">
+      <div class="meta-col">
+        <div class="label">Patient Name</div>
+        <div class="value">${patient.name}</div>
+        <div class="sub">${patient.age} yrs · ${patient.sex}</div>
+      </div>
+      <div class="meta-col">
+        <div class="label">Permanent UMR</div>
+        <div class="value" style="color: #1B4FD8; font-family: monospace;">${patient.umr}</div>
+        <div class="sub">Token: ${patient.queueToken || "—"}</div>
+      </div>
+      <div class="meta-col">
+        <div class="label">Visit OP Number</div>
+        <div class="value" style="font-family: monospace;">${patient.opNumber}</div>
+        <div class="sub">${patient.aiSpecialty || "General OP"}</div>
+      </div>
+      <div class="meta-col">
+        <div class="label">Attending Doctor</div>
+        <div class="value">${patient.assignedDoctor || "Duty Doctor"}</div>
+        <div class="sub">${patient.room || "Room 101"}</div>
+      </div>
+    </div>
+
+    <table class="fee-table">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th class="right">Amount (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Patient Registration Fee ${regFee === 0 ? "(Revisit / Existing Patient)" : "(New Registration)"}</td>
+          <td class="right">₹${regFee}.00</td>
+        </tr>
+        <tr>
+          <td>Physician Consultation Fee (${patient.assignedDoctor || "Attending Consultant"})</td>
+          <td class="right">₹${consultFee}.00</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="total-box">
+      <span class="total-label">Total Amount Paid (${patient.billing?.mode || "Cash"}):</span>
+      <span class="total-amount">₹${netTotalPayable}.00</span>
+    </div>
+
+    <div class="footer">
+      <div>
+        ${patient.billing?.collectedBy || cashierName ? `<div>Collected By: <strong>${patient.billing?.collectedBy || cashierName}</strong></div>` : ""}
+        ${receiptNo ? `<div style="font-family: monospace; margin-top: 3px;">Receipt No: <strong>${receiptNo}</strong></div>` : ""}
+        <div style="margin-top: 3px;">Computer generated receipt · Valid without physical seal</div>
+      </div>
+      <div class="sign-box">
+        Authorized Signatory
+      </div>
+    </div>
+  </div>
+</body>
+</html>`
+
+              doc.open()
+              doc.write(html)
+              doc.close()
+
+              setTimeout(() => {
+                try {
+                  frame.contentWindow?.focus()
+                  frame.contentWindow?.print()
+                } catch {
+                  window.print()
+                } finally {
+                  setTimeout(() => frame.remove(), 60000)
+                }
+              }, 150)
+            }
+
             const handleProcessPayment = () => {
               setPaymentProcessing(true)
               const nowTime = new Date().toLocaleTimeString([], {
@@ -2498,81 +2861,6 @@ export default function OPWorkflow({
                     </span>
                   </div>
                 </div>
-
-                {/* SMS Notification Banner if triggered */}
-                {smsSentNotice && (
-                  <div className="bg-[#F0FDF4] border border-green-300 p-3 rounded text-[12px] text-[#166534] flex items-center justify-between animate-in fade-in">
-                    <div className="flex items-center gap-2">
-                      <span>📱</span>
-                      <span>{smsSentNotice}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="divide-y divide-[#E2E8F0] text-[12.5px]">
-                  {/* 1. Patient Registration Fee */}
-                  <div className="py-2.5 flex justify-between items-start">
-                    <div>
-                      <div className="font-semibold text-gray-900">1. Patient Registration Fee</div>
-                      <div className="text-[11px] text-[#64748B]">
-                        {regFee === 0 ? "Existing / revisit patient -- no registration fee" : "New patient registration"}
-                      </div>
-                    </div>
-                    <span className="font-mono font-bold text-gray-900">₹{regFee}.00</span>
-                  </div>
-
-                  {/* 2. Physician Consultation */}
-                  <div className="py-2.5 flex justify-between items-start">
-                    <div>
-                      <div className="font-semibold text-gray-900">2. Physician Consultation Fee</div>
-                      <div className="text-[11px] text-[#64748B]">Attending: {patient.assignedDoctor || "Assigned Doctor"} ({patient.aiSpecialty || "General"})</div>
-                    </div>
-                    <span className="font-mono font-bold text-gray-900">₹{consultFee}.00</span>
-                  </div>
-
-                  </div>
-
-                  {/* Subtotals & Net Amount */}
-                  <div className="bg-[#F8FAFC] border border-[#CBD5E1] p-4 rounded space-y-2 text-[13px]">
-                    <div className="flex justify-between text-gray-600">
-                      <span>Gross Subtotal:</span>
-                      <span className="font-mono font-bold">₹{grossSubtotal}.00</span>
-                    </div>
-                    <div className="border-t border-[#E2E8F0] pt-2 flex justify-between text-[16px] font-black text-gray-900">
-                      <span>Total Amount Due:</span>
-                      <span className="text-[#16A34A] font-mono">₹{grossSubtotal}.00</span>
-                    </div>
-                  </div>
-
-                  {/* Complete Payment Settlement Action Button */}
-                  <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setCurrentStep(5)}
-                      className="text-[12.5px] text-[#64748B] hover:text-gray-900 font-medium cursor-pointer"
-                    >
-                      ← Back to consultation summary
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={paymentProcessing}
-                      onClick={handleProcessPayment}
-                      className="px-8 py-3.5 bg-gradient-to-r from-[#16A34A] to-[#15803D] hover:from-[#15803D] hover:to-[#166534] text-white text-[14px] font-bold rounded shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      {paymentProcessing ? (
-                        <>
-                          <span className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin"></span>
-                          <span>Processing Settlement...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>💳</span>
-                          <span>Mark OP Visit Completed &amp; Settle Invoice (₹{grossSubtotal}.00)</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
 
                 {/* SMS Notification Banner if triggered */}
                 {smsSentNotice && (
@@ -2828,14 +3116,124 @@ export default function OPWorkflow({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex flex-wrap justify-center gap-3 pt-2">
+                    <div className="flex flex-wrap justify-center gap-2.5 pt-2">
                       <button
                         type="button"
-                        onClick={() => window.print()}
-                        className="px-5 py-2.5 bg-white hover:bg-gray-50 border border-[#CBD5E1] text-gray-800 text-[13px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        onClick={printOpInvoiceReceipt}
+                        className="px-4 py-2.5 bg-white hover:bg-gray-50 border border-[#CBD5E1] text-gray-800 text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Print clean A4 Tax Invoice"
                       >
                         <Icon.Download /> Print Tax Invoice &amp; OP Summary
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowOfficialReceiptModal(true)}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Open Official Hospital Receipt Slip (NABH / Mukunda Healthcare)"
+                      >
+                        <span>🏛️</span> Official Receipt Slip
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const message =
+                            `🏥 *${branding.hospitalName.toUpperCase()}*\n` +
+                            `*Outpatient Consultation & Tax Invoice*\n\n` +
+                            `👤 *Patient:* ${patient.name} (${patient.umr})\n` +
+                            `📋 *OP Visit:* ${patient.opNumber} | Token: ${patient.queueToken || "—"}\n` +
+                            `👨‍⚕️ *Consultant:* ${patient.assignedDoctor} (${patient.aiSpecialty || "OPD"})\n` +
+                            `📅 *Date:* ${patient.date || new Date().toLocaleDateString()}\n\n` +
+                            `*Billing Summary:*\n` +
+                            `• Registration Fee: ₹${regFee}.00\n` +
+                            `• Consultation Fee: ₹${consultFee}.00\n` +
+                            `--------------------------------\n` +
+                            `*Net Paid:* ₹${netTotalPayable}.00 via ${patient.billing.mode}\n` +
+                            `*Receipt No:* ${receiptNo || "RCP-" + patient.opNumber}\n\n` +
+                            `Thank you for trusting ${branding.hospitalName}. For queries, call ${branding.helpline || "+91-8816-279999"}.`
+                          try {
+                            const res = await sendPatientMessage({
+                              patient: { name: patient.name, phone: patient.phone, id: patient.umr, encounterId: patient.id },
+                              kind: "bill",
+                              channels: ["whatsapp"],
+                              message,
+                            })
+                            const r = res.results.find((item) => item.channel === "whatsapp") || res.results[0]
+                            if (r && (r.status === "sent" || r.status === "delivered")) {
+                              setSmsSentNotice(`✓ Receipt sent via WhatsApp to ${patient.phone}.`)
+                            } else {
+                              const url = whatsAppHandoffUrl(patient.phone, message)
+                              if (url) window.open(url, "_blank")
+                              setSmsSentNotice(`WhatsApp opened for ${patient.phone} (direct chat).`)
+                            }
+                          } catch {
+                            const url = whatsAppHandoffUrl(patient.phone, message)
+                            if (url) window.open(url, "_blank")
+                            setSmsSentNotice(`WhatsApp opened for ${patient.phone}.`)
+                          }
+                        }}
+                        className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Send invoice via WhatsApp to patient phone"
+                      >
+                        <span>💬</span> Send via WhatsApp
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          let targetEmail = patient.email || ""
+                          if (!targetEmail) {
+                            targetEmail = window.prompt("Enter recipient email address for receipt delivery:", "") || ""
+                          }
+                          if (!targetEmail || !targetEmail.includes("@")) {
+                            if (targetEmail) alert("Please enter a valid email address.")
+                            return
+                          }
+                          const subject = `${branding.hospitalName} - Consultation Tax Invoice & OP Slip (${patient.opNumber})`
+                          const message =
+                            `Dear ${patient.name},\n\n` +
+                            `Thank you for visiting ${branding.hospitalName}.\n\n` +
+                            `RECEIPT DETAILS:\n` +
+                            `Receipt No: ${receiptNo || "RCP-" + patient.opNumber}\n` +
+                            `Permanent UMR: ${patient.umr}\n` +
+                            `OP Number: ${patient.opNumber}\n` +
+                            `Attending Doctor: ${patient.assignedDoctor} (${patient.aiSpecialty || "General Medicine"})\n` +
+                            `Date of Service: ${patient.date || new Date().toLocaleDateString()}\n\n` +
+                            `CHARGES ITEMIZED:\n` +
+                            `1. Patient Registration Fee: ₹${regFee}.00\n` +
+                            `2. Doctor Consultation Fee: ₹${consultFee}.00\n` +
+                            `Total Paid: ₹${netTotalPayable}.00 (${patient.billing.mode})\n` +
+                            `Status: PAID & SETTLED\n\n` +
+                            `For any assistance, please reach out to ${branding.helpline || "+91-8816-279999"}.\n\n` +
+                            `Warm regards,\n${branding.hospitalName}`
+                          try {
+                            const res = await sendPatientMessage({
+                              patient: { name: patient.name, phone: patient.phone, email: targetEmail, id: patient.umr, encounterId: patient.id },
+                              kind: "bill",
+                              channels: ["email"],
+                              message,
+                            })
+                            const r = res.results.find((item) => item.channel === "email") || res.results[0]
+                            if (r && (r.status === "sent" || r.status === "delivered")) {
+                              setSmsSentNotice(`✓ Receipt sent via Email to ${targetEmail}.`)
+                            } else {
+                              const url = emailHandoffUrl(targetEmail, subject, message)
+                              if (url) window.open(url, "_blank")
+                              setSmsSentNotice(`Email client opened for ${targetEmail}.`)
+                            }
+                          } catch {
+                            const url = emailHandoffUrl(targetEmail, subject, message)
+                            if (url) window.open(url, "_blank")
+                            setSmsSentNotice(`Email client opened for ${targetEmail}.`)
+                          }
+                        }}
+                        className="px-4 py-2.5 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Send invoice via Email to patient"
+                      >
+                        <span>✉️</span> Send via Mail
+                      </button>
+
                       <button
                         type="button"
                         onClick={async () => {
@@ -2860,19 +3258,40 @@ export default function OPWorkflow({
                             setSmsSentNotice(`Receipt SMS not sent: ${err?.message || "messaging unavailable"}.`)
                           }
                         }}
-                        className="px-5 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1B4FD8] text-[13px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#1B4FD8] text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <span>📱</span> Send SMS Receipt to Patient
+                        <span>📱</span> Send SMS
                       </button>
+
+                      <SendToPatientButton
+                        patient={{
+                          name: patient.name,
+                          phone: patient.phone,
+                          email: patient.email,
+                          id: patient.umr,
+                          encounterId: patient.id,
+                        }}
+                        kind="bill"
+                        vars={{
+                          patientName: patient.name,
+                          umr: patient.umr,
+                          receiptNo: receiptNo || "RCP-" + patient.opNumber,
+                          billNo: receiptNo || "RCP-" + patient.opNumber,
+                          total: netTotalPayable,
+                          doctor: patient.assignedDoctor,
+                        }}
+                        label="Share & PDF"
+                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                      />
+
                       <button
                         type="button"
                         onClick={() => {
                           setCurrentStep(1)
                         }}
-                        className="px-6 py-2.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[13px] font-bold rounded shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
+                        className="px-5 py-2.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12.5px] font-bold rounded shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
                       >
-                        <span>➕</span> Register / Start Next Outpatient Patient
-                        →
+                        <span>➕</span> Next Patient →
                       </button>
                     </div>
                   </div>
@@ -2881,6 +3300,59 @@ export default function OPWorkflow({
             )
           })()}
       </div>
+
+      {showOfficialReceiptModal && (
+        <HospitalReceiptModal
+          claim={{
+            id: 1,
+            invoiceNo: (patient.billing as any)?.receiptNo || `RCP-${patient.opNumber || "OP"}`,
+            claimNumber: `CLM-${patient.opNumber || "OP"}`,
+            encounterId: patient.opNumber,
+            patientId: patient.umr,
+            patientName: patient.name,
+            gender: patient.sex,
+            age: patient.age,
+            department: "Outpatient",
+            attendingDoctor: patient.assignedDoctor,
+            totalAmount: patient.billing?.total || 500,
+            claimedAmount: patient.billing?.total || 500,
+            settledAmount: patient.billing?.total || 500,
+            paymentStatus: "Paid",
+            claimStatus: "Settled",
+            billingCategory: "Self-Pay",
+            claimItems: [
+              {
+                id: "1",
+                description: "Patient Registration Fee",
+                category: "Registration",
+                quantity: 1,
+                unitPrice: (patient.billing as any)?.registrationFee ?? (patient.isNew === false ? 0 : 20),
+                total: (patient.billing as any)?.registrationFee ?? (patient.isNew === false ? 0 : 20),
+              },
+              {
+                id: "2",
+                description: `Physician Consultation - ${patient.assignedDoctor || "Duty Doctor"}`,
+                category: "Consultation",
+                quantity: 1,
+                unitPrice: patient.billing?.consultationFee || 480,
+                total: patient.billing?.consultationFee || 480,
+              },
+            ],
+            createdAt: patient.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as any}
+          payment={{
+            id: 1,
+            claimId: 1,
+            receiptNumber: (patient.billing as any)?.receiptNo || `RCP-${patient.opNumber || "OP"}`,
+            amountPaid: patient.billing?.total || 500,
+            paymentMethod: patient.billing?.mode || "Cash",
+            paymentDate: new Date().toISOString(),
+            status: "Completed",
+          } as any}
+          onClose={() => setShowOfficialReceiptModal(false)}
+        />
+      )}
     </div>
   )
 }

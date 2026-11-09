@@ -7,6 +7,7 @@ interface OrLiveBoardViewProps {
   cases: SurgicalCase[]
   searchQuery: string
   specialtyFilter: string
+  onOpenPatientRecord?: (patientId: string) => void
   onOpenBooklet: (c: SurgicalCase, page?: number) => void
   onOpenCharges: (c: SurgicalCase) => void
   onAdvanceStatus: (caseId: string, status: SurgicalCase["status"]) => void
@@ -28,6 +29,7 @@ export default function OrLiveBoardView({
   cases,
   searchQuery,
   specialtyFilter,
+  onOpenPatientRecord,
   onOpenBooklet,
   onOpenCharges,
   onAdvanceStatus,
@@ -123,6 +125,16 @@ export default function OrLiveBoardView({
                       <span>📈 Live OR Monitor</span>
                     </button>
                   )}
+                  {onOpenPatientRecord && (
+                    <Btn
+                      variant="outline"
+                      size="xs"
+                      onClick={() => onOpenPatientRecord(activeCase.patientId || activeCase.mrn)}
+                      className="text-[#1B4FD8] hover:text-blue-900 border-blue-200 hover:bg-blue-50 cursor-pointer"
+                    >
+                      📋 Patient Record
+                    </Btn>
+                  )}
                   <Btn variant="outline" size="xs" onClick={() => onOpenBooklet(activeCase, 1)}>
                     📘 OT Booklet
                   </Btn>
@@ -143,7 +155,18 @@ export default function OrLiveBoardView({
                   </div>
                   <div>
                     <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                      <span>{activeCase.patientName}</span>
+                      {onOpenPatientRecord ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenPatientRecord(activeCase.patientId || activeCase.mrn)}
+                          className="font-bold text-sm text-[#1B4FD8] hover:text-blue-900 hover:underline cursor-pointer text-left"
+                          title="Open Patient Record / Chart"
+                        >
+                          {activeCase.patientName}
+                        </button>
+                      ) : (
+                        <span>{activeCase.patientName}</span>
+                      )}
                       <span className="font-mono text-xs font-normal text-slate-500">
                         (UMR: {activeCase.mrn} · {activeCase.age}y/{activeCase.gender})
                       </span>

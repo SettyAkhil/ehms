@@ -6,6 +6,7 @@ import { toast } from "react-hot-toast"
 interface PacuRecoveryViewProps {
   cases: SurgicalCase[]
   initialCaseId?: string
+  onOpenPatientRecord?: (patientId: string) => void
   onOpenBooklet: (c: SurgicalCase, page?: number) => void
   onTransferToWard: (c: SurgicalCase) => void
   onTransferToIcu: (c: SurgicalCase) => void
@@ -14,6 +15,7 @@ interface PacuRecoveryViewProps {
 export default function PacuRecoveryView({
   cases,
   initialCaseId,
+  onOpenPatientRecord,
   onOpenBooklet,
   onTransferToWard,
   onTransferToIcu,
@@ -120,7 +122,17 @@ export default function PacuRecoveryView({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          {onOpenPatientRecord && selectedCase && (
+            <button
+              type="button"
+              onClick={() => onOpenPatientRecord(selectedCase.patientId || selectedCase.mrn)}
+              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+              title="Open full patient clinical record"
+            >
+              <span>📋</span> Patient Record
+            </button>
+          )}
           <span className="font-semibold text-slate-600">Recovery Bay:</span>
           <select
             value={selectedCase?.id}
@@ -146,7 +158,20 @@ export default function PacuRecoveryView({
                   <h3 className="font-bold text-sm text-[#1E3A6E] flex items-center gap-2">
                     <span>Modified Aldrete Score Matrix</span>
                     <span className="font-mono text-xs font-normal text-slate-500">
-                      (Patient: {selectedCase.patientName})
+                      (Patient:{" "}
+                      {onOpenPatientRecord ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenPatientRecord(selectedCase.patientId || selectedCase.mrn)}
+                          className="font-bold text-[#1B4FD8] hover:underline cursor-pointer"
+                          title="Open Patient Record / Chart"
+                        >
+                          {selectedCase.patientName}
+                        </button>
+                      ) : (
+                        <span>{selectedCase.patientName}</span>
+                      )}
+                      )
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-500">5 Essential criteria · Max score: 10 points</p>

@@ -3038,7 +3038,7 @@ export default function App() {
                 />
               )}
               {module === "surgery" && <OnDutyStrip hmsModule="ot" label="OT staff on duty" />}
-              {module === "surgery" && <Surgery />}
+              {module === "surgery" && <Surgery onOpenPatientRecord={openPatientClinical} />}
               {(module === "billing_op" ||
                 module === "billing_ip" ||
                 module === "billing_er" ||

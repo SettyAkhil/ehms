@@ -7,6 +7,7 @@ interface OtBookletModalProps {
   activeCase: SurgicalCase;
   initialPage?: number;
   onClose: () => void;
+  onOpenPatientRecord?: (patientId: string) => void;
   onStatusUpdate?: (caseId: string, newStatus: SurgicalCase["status"]) => void;
   onTransferToWard?: (c: SurgicalCase) => void;
   onTransferToIcu?: (c: SurgicalCase) => void;
@@ -16,6 +17,7 @@ export const OtBookletModal: React.FC<OtBookletModalProps> = ({
   activeCase,
   initialPage = 1,
   onClose,
+  onOpenPatientRecord,
   onStatusUpdate,
   onTransferToWard,
   onTransferToIcu,
@@ -154,6 +156,19 @@ export const OtBookletModal: React.FC<OtBookletModalProps> = ({
                     PACU
                   </button>
                 </div>
+                {onOpenPatientRecord && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenPatientRecord(activeBookletCase.patientId || activeBookletCase.mrn);
+                    }}
+                    className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors border border-white/30"
+                    title="Open full patient clinical record"
+                  >
+                    <span>📋</span> Patient Record
+                  </button>
+                )}
                 <button 
                   onClick={() => onClose()} 
                   className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors cursor-pointer text-sm font-bold border border-white/20"

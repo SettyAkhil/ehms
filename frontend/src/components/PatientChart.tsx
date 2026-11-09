@@ -10,6 +10,7 @@ import PatientJourneyModal from "./PatientJourneyModal";
 import { PatientInsuranceTab } from "./insurance/integrations";
 import { db, DBOPEncounter } from "../services/db";
 import { BillingDatabase } from "../services/billingDb";
+import { SurgeryDatabase } from "../services/surgeryDb";
 
 // ==================== Directory (search across OP / IP / ER / ICU) ====================
 
@@ -569,7 +570,155 @@ export default function PatientChart({
       p.name?.toLowerCase().includes(patientId.toLowerCase())
     );
 
-    if (!targetEnc && !targetPatient) return null;
+    const surgCases = SurgeryDatabase.getCases();
+    const targetSurg = surgCases.find(
+      (c) =>
+        c.id === patientId ||
+        c.patientId === patientId ||
+        c.mrn === patientId ||
+        (c.patientName && c.patientName.toLowerCase() === patientId.toLowerCase()) ||
+        (c.patientName && c.patientName.toLowerCase().includes(patientId.toLowerCase()))
+    );
+
+    if (!targetEnc && !targetPatient && !targetSurg) return null;
+
+    if (targetSurg && !targetEnc && !targetPatient) {
+      const surgUmr = targetSurg.patientId || targetSurg.mrn;
+      const surgRow: PatientRow = {
+        patient_id: surgUmr,
+        name: targetSurg.patientName,
+        age: targetSurg.age,
+        gender: targetSurg.gender,
+        phone: (targetSurg as any).phone || "",
+        care_stream: "IP",
+        active_bed: targetSurg.orRoom || targetSurg.wardTransfer?.bedNo || targetSurg.icuTransfer?.bedNo || "OR Suite",
+        appointment_doctor: `Dr. ${targetSurg.surgeon}`,
+        appointment_dept: targetSurg.specialty || "Surgery",
+        appointment_status: targetSurg.status,
+      };
+
+      const surgEmr: EmrResponse = {
+        patient: {
+          patient_id: surgUmr,
+          name: targetSurg.patientName,
+          dob: "1980-01-01",
+          age: targetSurg.age,
+          gender: targetSurg.gender,
+          phone: (targetSurg as any).phone || "",
+          address: "Inpatient Ward / Surgical Suite",
+        },
+        admissions: [
+          {
+            id: 1,
+            admission_date: targetSurg.createdAt || new Date().toISOString(),
+            department: targetSurg.specialty || "Surgery",
+            primary_diagnosis:
+              targetSurg.procedureName ||
+              targetSurg.operationRecord?.preOpDiagnosis ||
+              "Surgical Intervention",
+            admitting_doctor: `Dr. ${targetSurg.surgeon}`,
+            status: targetSurg.status,
+            bed:
+              targetSurg.orRoom ||
+              targetSurg.wardTransfer?.bedNo ||
+              targetSurg.icuTransfer?.bedNo ||
+              "OR 1",
+          },
+        ],
+        notes: [
+          ...(targetSurg.operationRecord?.surgeonProcedureNotes
+            ? [
+                {
+                  id: 1,
+                  chief_complaint: targetSurg.procedureName,
+                  notes: `Operative Findings & Notes: ${targetSurg.operationRecord.surgeonProcedureNotes}. Post-Op Care: ${targetSurg.operationRecord.postOpInstructions || "Standard Monitoring"}.`,
+                  created_at:
+                    targetSurg.operationRecord.surgeryStartTime ||
+                    targetSurg.updatedAt ||
+                    new Date().toISOString(),
+                },
+              ]
+            : []),
+          ...(targetSurg.pac?.opinionAsa
+            ? [
+                {
+                  id: 2,
+                  chief_complaint: "Pre-Anaesthetic Assessment (PAC)",
+                  notes: `PAC Grade: ${targetSurg.pac.opinionAsa.asaGrade}. Planned: ${targetSurg.pac.opinionAsa.anesthesiaPlanned}. Clearance: ${targetSurg.pac.opinionAsa.opinion}. Evaluator: Dr. ${targetSurg.anesthesiologist || targetSurg.pac.opinionAsa.evaluatorSignature}.`,
+                  created_at: targetSurg.pac.opinionAsa.date || targetSurg.createdAt || new Date().toISOString(),
+                },
+              ]
+            : []),
+          ...(targetSurg.wardTransfer?.handoverNotes
+            ? [
+                {
+                  id: 3,
+                  chief_complaint: "Ward Post-Op Handover",
+                  notes: `Ward: ${targetSurg.wardTransfer.wardName} (${targetSurg.wardTransfer.bedNo}). Transferred By: ${targetSurg.wardTransfer.transferredBy}. Notes: ${targetSurg.wardTransfer.handoverNotes}. Wound: ${targetSurg.wardTransfer.woundStatus}. Drain: ${targetSurg.wardTransfer.drainStatus}.`,
+                  created_at: targetSurg.wardTransfer.transferredAt || new Date().toISOString(),
+                },
+              ]
+            : []),
+        ],
+        vitals: targetSurg.currentTelemetry
+          ? [
+              {
+                id: 1,
+                recorded_at: targetSurg.currentTelemetry.timestamp || new Date().toISOString(),
+                bp_systolic: targetSurg.currentTelemetry.bpSys,
+                bp_diastolic: targetSurg.currentTelemetry.bpDia,
+                pulse: targetSurg.currentTelemetry.hr,
+                spo2: targetSurg.currentTelemetry.spo2,
+                temperature: targetSurg.currentTelemetry.temp,
+                respiratory_rate: targetSurg.currentTelemetry.respRate,
+              },
+            ]
+          : [],
+        prescriptions: [],
+        lab_orders: [],
+        radiology_orders: [],
+        diagnoses: [
+          {
+            id: 1,
+            code: targetSurg.icd10Code || "Z98.890",
+            description: targetSurg.procedureName || "Postprocedural surgical state",
+            type: "Primary",
+            status: "Active",
+            diagnosed_at: targetSurg.createdAt || new Date().toISOString(),
+          },
+        ],
+        observation_notes: [],
+        discharge_summaries: [],
+        documents: [],
+        invoices: [],
+        invoice_payments: [],
+        insurance_claims: [],
+        certificates: [],
+        timeline: [
+          {
+            stage: "Intake",
+            label: `Surgical Case Scheduled: ${targetSurg.procedureName} (${targetSurg.orRoom})`,
+            timestamp: targetSurg.scheduledTime || targetSurg.createdAt,
+          },
+          ...(targetSurg.pac?.clearanceStatus
+            ? [
+                {
+                  stage: "PAC",
+                  label: `Pre-Anesthesia Assessment: ${targetSurg.pac.clearanceStatus}`,
+                  timestamp: targetSurg.pac.opinionAsa?.date || targetSurg.createdAt,
+                },
+              ]
+            : []),
+          {
+            stage: "Operating Theatre",
+            label: `Procedure: ${targetSurg.procedureName} by Dr. ${targetSurg.surgeon} - Status: ${targetSurg.status}`,
+            timestamp: targetSurg.updatedAt || new Date().toISOString(),
+          },
+        ],
+      };
+
+      return { row: surgRow, emr: surgEmr };
+    }
 
     const name = targetEnc?.patientName || targetPatient?.name || patientId;
     const umr = targetEnc?.umr || targetPatient?.umr || patientId;
@@ -830,7 +979,14 @@ export default function PatientChart({
           `/api/patients?q=${encodeURIComponent(initialPatientId)}`,
         ).catch(() => null);
 
-        const row = (data?.patients || []).find((p) => p.patient_id === initialPatientId || p.name === initialPatientId);
+        const row = (data?.patients || []).find(
+          (p) =>
+            p.patient_id === initialPatientId ||
+            p.name === initialPatientId ||
+            p.patient_id?.toLowerCase() === initialPatientId.toLowerCase() ||
+            p.name?.toLowerCase() === initialPatientId.toLowerCase() ||
+            (p as any).mrn === initialPatientId
+        );
         if (row) {
           setSelectedRow(row);
           void loadPatient(row);

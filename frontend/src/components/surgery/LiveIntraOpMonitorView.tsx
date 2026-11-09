@@ -6,6 +6,7 @@ import { toast } from "react-hot-toast"
 interface LiveIntraOpMonitorViewProps {
   cases: SurgicalCase[]
   initialCaseId?: string
+  onOpenPatientRecord?: (patientId: string) => void
   onOpenBooklet: (c: SurgicalCase, page?: number) => void
   onAdvanceStatus: (caseId: string, status: SurgicalCase["status"]) => void
 }
@@ -13,6 +14,7 @@ interface LiveIntraOpMonitorViewProps {
 export default function LiveIntraOpMonitorView({
   cases,
   initialCaseId,
+  onOpenPatientRecord,
   onOpenBooklet,
   onAdvanceStatus,
 }: LiveIntraOpMonitorViewProps) {
@@ -325,16 +327,38 @@ export default function LiveIntraOpMonitorView({
             {/* Real-time Multiparameter Monitor Screen */}
             <div className="bg-[#0B132B] rounded-2xl border border-slate-700/80 p-5 text-white shadow-xl overflow-hidden relative font-mono">
               {/* Monitor top banner */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4 flex-wrap gap-2">
                 <div className="flex items-center gap-3">
                   <span className="text-xs font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded border border-emerald-800/60">
                     {currentCase.orRoom || "OR 1"} · LIVE MONITOR
                   </span>
-                  <span className="text-xs text-slate-300 font-sans font-bold">
-                    {currentCase.patientName} ({currentCase.age}y/{currentCase.gender}) · UMR: {currentCase.mrn}
+                  <span className="text-xs text-slate-300 font-sans font-bold flex items-center gap-1.5">
+                    {onOpenPatientRecord ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenPatientRecord(currentCase.patientId || currentCase.mrn)}
+                        className="text-white hover:text-blue-300 hover:underline cursor-pointer"
+                        title="Open Patient Record / Chart"
+                      >
+                        {currentCase.patientName}
+                      </button>
+                    ) : (
+                      <span>{currentCase.patientName}</span>
+                    )}
+                    <span>({currentCase.age}y/{currentCase.gender}) · UMR: {currentCase.mrn}</span>
                   </span>
                 </div>
                 <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                  {onOpenPatientRecord && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPatientRecord(currentCase.patientId || currentCase.mrn)}
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-sans font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                      title="Open full patient clinical record"
+                    >
+                      <span>📋</span> Patient Record
+                    </button>
+                  )}
                   <span>Lead II: 1.0mV</span>
                   <span>Filter: DIAG</span>
                   <span className="text-emerald-400 animate-pulse font-bold">● REC</span>

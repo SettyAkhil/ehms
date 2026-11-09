@@ -5,6 +5,7 @@ import { Btn, StatusBadge } from "../shared"
 
 interface PatientJourneyKanbanViewProps {
   cases: SurgicalCase[]
+  onOpenPatientRecord?: (patientId: string) => void
   onOpenBooklet: (c: SurgicalCase, page?: number) => void
   onAdvanceStatus: (caseId: string, status: SurgicalCase["status"]) => void
   onTransferToWard: (c: SurgicalCase) => void
@@ -15,6 +16,7 @@ interface PatientJourneyKanbanViewProps {
 
 export default function PatientJourneyKanbanView({
   cases,
+  onOpenPatientRecord,
   onOpenBooklet,
   onAdvanceStatus,
   onTransferToWard,
@@ -68,7 +70,18 @@ export default function PatientJourneyKanbanView({
                       <div className="flex justify-between items-start gap-1">
                         <div>
                           <div className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
-                            <span>{c.patientName}</span>
+                            {onOpenPatientRecord ? (
+                              <button
+                                type="button"
+                                onClick={() => onOpenPatientRecord(c.patientId || c.mrn)}
+                                className="font-bold text-slate-900 text-xs hover:text-[#1B4FD8] hover:underline cursor-pointer text-left"
+                                title="Open Patient Record / Chart"
+                              >
+                                {c.patientName}
+                              </button>
+                            ) : (
+                              <span>{c.patientName}</span>
+                            )}
                             <span className="text-[10px] font-mono text-slate-400 font-normal">
                               ({c.age}y/{c.gender[0]})
                             </span>
@@ -168,12 +181,24 @@ export default function PatientJourneyKanbanView({
 
                       {/* Card Action Buttons */}
                       <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 flex-wrap">
-                        <button
-                          onClick={() => onOpenBooklet(c, 1)}
-                          className="text-[10.5px] font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
-                        >
-                          📘 Booklet
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => onOpenBooklet(c, 1)}
+                            className="text-[10.5px] font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                          >
+                            📘 Booklet
+                          </button>
+                          {onOpenPatientRecord && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenPatientRecord(c.patientId || c.mrn)}
+                              className="text-[10.5px] font-semibold text-[#1B4FD8] hover:text-blue-900 hover:underline cursor-pointer flex items-center gap-0.5"
+                              title="Open Patient Record / Chart"
+                            >
+                              <span>📋</span> Record
+                            </button>
+                          )}
+                        </div>
 
                         {/* Context-aware stage progression action */}
                         {c.status === "PAC Pending" && (

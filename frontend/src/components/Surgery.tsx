@@ -19,7 +19,11 @@ import SurgicalDischargeModal from "./surgery/SurgicalDischargeModal";
 import SurgicalChargesModal from "./surgery/SurgicalChargesModal";
 import { OtBookletModal } from "./surgery/OtBookletModal";
 
-export default function Surgery() {
+export interface SurgeryProps {
+  onOpenPatientRecord?: (patientId: string) => void;
+}
+
+export default function Surgery({ onOpenPatientRecord }: SurgeryProps = {}) {
   const [cases, setCases] = useState<SurgicalCase[]>([]);
   const [activeTab, setActiveTab] = useState<string>("OR Live Board");
   const [searchQuery, setSearchQuery] = useState("");
@@ -350,6 +354,7 @@ export default function Surgery() {
             cases={filteredCases}
             searchQuery={searchQuery}
             specialtyFilter={specialtyFilter}
+            onOpenPatientRecord={onOpenPatientRecord}
             onOpenBooklet={handleOpenBooklet}
             onOpenCharges={(c: SurgicalCase) => setChargesCase(c)}
             onAdvanceStatus={handleStatusChange}
@@ -367,6 +372,7 @@ export default function Surgery() {
         {activeTab === "Patient Journey Flow" && (
           <PatientJourneyKanbanView
             cases={filteredCases}
+            onOpenPatientRecord={onOpenPatientRecord}
             onOpenBooklet={handleOpenBooklet}
             onAdvanceStatus={handleStatusChange}
             onTransferToWard={(c: SurgicalCase) => setWardTransferCase(c)}
@@ -384,6 +390,7 @@ export default function Surgery() {
           <LiveIntraOpMonitorView
             cases={cases}
             initialCaseId={selectedMonitorCase?.id}
+            onOpenPatientRecord={onOpenPatientRecord}
             onOpenBooklet={handleOpenBooklet}
             onAdvanceStatus={handleStatusChange}
           />
@@ -394,6 +401,7 @@ export default function Surgery() {
           <PacuRecoveryView
             cases={cases}
             initialCaseId={selectedPacuCase?.id}
+            onOpenPatientRecord={onOpenPatientRecord}
             onOpenBooklet={handleOpenBooklet}
             onTransferToWard={(c: SurgicalCase) => setWardTransferCase(c)}
             onTransferToIcu={(c: SurgicalCase) => setIcuTransferCase(c)}
@@ -405,6 +413,7 @@ export default function Surgery() {
           <WardPostOpCareView
             cases={cases}
             initialCaseId={selectedWardCase?.id}
+            onOpenPatientRecord={onOpenPatientRecord}
             onOpenBooklet={handleOpenBooklet}
             onInitiateDischarge={(c: SurgicalCase) => setDischargeCase(c)}
           />
@@ -439,7 +448,18 @@ export default function Surgery() {
                   >
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-slate-900">{c.patientName}</span>
+                        {onOpenPatientRecord ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenPatientRecord(c.patientId || c.mrn)}
+                            className="font-bold text-sm text-[#1B4FD8] hover:text-blue-900 hover:underline cursor-pointer text-left"
+                            title="Open Patient Record / Chart"
+                          >
+                            {c.patientName}
+                          </button>
+                        ) : (
+                          <span className="font-bold text-sm text-slate-900">{c.patientName}</span>
+                        )}
                         <span className="text-[11px] font-mono text-slate-500">({c.mrn})</span>
                         <StatusBadge status={c.status} />
                         {c.urgency === "Emergency STAT" && (
@@ -454,6 +474,16 @@ export default function Surgery() {
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {onOpenPatientRecord && (
+                        <button
+                          type="button"
+                          onClick={() => onOpenPatientRecord(c.patientId || c.mrn)}
+                          className="px-2.5 py-1 text-xs font-semibold bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-200 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1"
+                          title="Open Patient Record / Chart"
+                        >
+                          <span>📋</span> Record
+                        </button>
+                      )}
                       <button
                         onClick={() => handleOpenBooklet(c, 1)}
                         className="px-2.5 py-1 text-xs font-semibold bg-white hover:bg-slate-100 text-[#1E3A6E] border border-[#DDE2EC] rounded-lg shadow-2xs cursor-pointer transition-colors"
@@ -637,6 +667,7 @@ export default function Surgery() {
           activeCase={activeBookletCase}
           initialPage={bookletPage}
           onClose={() => setActiveBookletCase(null)}
+          onOpenPatientRecord={onOpenPatientRecord}
           onStatusUpdate={() => {
             setCases(SurgeryDatabase.getCases());
           }}

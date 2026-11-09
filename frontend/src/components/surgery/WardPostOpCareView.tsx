@@ -6,6 +6,7 @@ import { toast } from "react-hot-toast"
 interface WardPostOpCareViewProps {
   cases: SurgicalCase[]
   initialCaseId?: string
+  onOpenPatientRecord?: (patientId: string) => void
   onOpenBooklet: (c: SurgicalCase, page?: number) => void
   onInitiateDischarge: (c: SurgicalCase) => void
 }
@@ -13,6 +14,7 @@ interface WardPostOpCareViewProps {
 export default function WardPostOpCareView({
   cases,
   initialCaseId,
+  onOpenPatientRecord,
   onOpenBooklet,
   onInitiateDischarge,
 }: WardPostOpCareViewProps) {
@@ -145,7 +147,18 @@ export default function WardPostOpCareView({
                   </div>
                   <div>
                     <div className="text-base font-bold text-slate-900 flex items-center gap-2">
-                      <span>{selectedCase.patientName}</span>
+                      {onOpenPatientRecord ? (
+                        <button
+                          type="button"
+                          onClick={() => onOpenPatientRecord(selectedCase.patientId || selectedCase.mrn)}
+                          className="font-bold text-base text-[#1B4FD8] hover:underline cursor-pointer text-left"
+                          title="Open Patient Record / Chart"
+                        >
+                          {selectedCase.patientName}
+                        </button>
+                      ) : (
+                        <span>{selectedCase.patientName}</span>
+                      )}
                       <span className="text-xs font-mono text-slate-500 font-normal">
                         ({selectedCase.mrn} · {selectedCase.age}y/{selectedCase.gender})
                       </span>
@@ -157,17 +170,29 @@ export default function WardPostOpCareView({
                   </div>
                 </div>
 
-                <div className="text-right">
-                  <span className="text-xs font-bold font-mono px-3 py-1 rounded-lg bg-indigo-100 text-indigo-900 border border-indigo-200 block">
-                    {selectedCase.status === "Transferred to ICU"
-                      ? selectedCase.icuTransfer?.bedNo || "SICU Bed"
-                      : `${selectedCase.wardTransfer?.wardName || "Surgical Ward"} (${selectedCase.wardTransfer?.bedNo || "Bed 204-A"})`}
-                  </span>
-                  <span className="text-[10px] text-slate-500 mt-1 block">
-                    {selectedCase.status === "Transferred to ICU"
-                      ? "Critical Care Admission"
-                      : `Post-Operative Day ${selectedCase.wardTransfer?.postOpDay ?? 2} (POD)`}
-                  </span>
+                <div className="flex items-center gap-2">
+                  {onOpenPatientRecord && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenPatientRecord(selectedCase.patientId || selectedCase.mrn)}
+                      className="px-2.5 py-1 text-xs font-semibold bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-200 rounded-lg shadow-2xs cursor-pointer transition-colors flex items-center gap-1"
+                      title="Open Patient Record / Chart"
+                    >
+                      <span>📋</span> Patient Record
+                    </button>
+                  )}
+                  <div className="text-right">
+                    <span className="text-xs font-bold font-mono px-3 py-1 rounded-lg bg-indigo-100 text-indigo-900 border border-indigo-200 block">
+                      {selectedCase.status === "Transferred to ICU"
+                        ? selectedCase.icuTransfer?.bedNo || "SICU Bed"
+                        : `${selectedCase.wardTransfer?.wardName || "Surgical Ward"} (${selectedCase.wardTransfer?.bedNo || "Bed 204-A"})`}
+                    </span>
+                    <span className="text-[10px] text-slate-500 mt-1 block">
+                      {selectedCase.status === "Transferred to ICU"
+                        ? "Critical Care Admission"
+                        : `Post-Operative Day ${selectedCase.wardTransfer?.postOpDay ?? 2} (POD)`}
+                    </span>
+                  </div>
                 </div>
               </div>
 
