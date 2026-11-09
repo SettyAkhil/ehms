@@ -130,6 +130,7 @@ import DoctorScheduling from "./components/DoctorScheduling"
 import PatientExperience from "./components/PatientExperience"
 import PatientMessages from "./components/messaging/PatientMessages"
 
+import HrWorkspace, { type HrSection } from "./components/hr/HrWorkspace"
 import OnDutyStrip from "./components/hr/OnDutyStrip"
 import { HrmsDatabase } from "./services/hrmsDb"
 import HRMS from "./components/HRMS"
@@ -193,27 +194,29 @@ const insuranceModule = (m: string): string =>
 
 type Module = "dashboard" | "patients" | "appointments" | "emergency" | "emergency_ui" | "clinical" | "inpatient" | "nursing" | "laboratory" | "lab_dashboard" | "lab_orders_collection" | "lab_workbench" | "lab_review_reports" | "lab_admin_config" | "lab_orders" | "lab_sample_collection" | "lab_sample_reception" | "lab_worklists" | "lab_analyzers" | "lab_result_entry" | "lab_pathologist_review" | "lab_critical_alerts" | "lab_reports" | "lab_test_master" | "lab_quality_analytics" | "lab_settings" | "lab_processing" | "lab_critical" | "lab_catalog" | "lab_inventory" | "lab_analytics" | "lab_tat" | "radiology" | "radiology_overview" | "radiology_worklist" | "radiology_scheduling" | "radiology_operations" | "radiology_reporting" | "radiology_finalized" | "radiology_exceptions" | "radiology_analytics" | "radiology_admin" | "radiology_template_upload" | "radiology_templates" | "radiology_xray" | "radiology_ct" | "radiology_usg" | "radiology_mri" | "radiology_reports" | "pharmacy" | "pharmacy_dispensing" | "pharmacy_rx" | "pharmacy_ocr" | "pharmacy_returns" | "pharmacy_supplier_returns" | "pharmacy_medicine" | "pharmacy_category" | "pharmacy_suppliers" | "pharmacy_po" | "pharmacy_grn" | "pharmacy_ledger" | "pharmacy_transfers" | "pharmacy_expiry" | "pharmacy_write_off" | "pharmacy_analytics" | "pharmacy_notifications" | "pharmacy_users" | "pharmacy_audit" | "pharmacy_settings" | "surgery" | "billing" | "billing_op" | "billing_ip" | "billing_er" | "billing_unified" | "billing_revenue" | "icu" | "icu_micu" | "icu_sicu" | "icu_ccu" | "icu_nicu" | "icu_picu" | "icu_ward" | "discharge" | "triage" | "insurance" | "insurance_overview" | "insurance_desk" | "insurance_board" | "insurance_case" | "insurance_discharge" | "insurance_reports" | "insurance_preauth" | "insurance_eligibility" | "insurance_claims" | "insurance_queries" | "insurance_emails" | "insurance_settlement" | "insurance_reconciliation" | "insurance_masters" | "insurance_tpas" | "insurance_packages" | "insurance_pricing" | "insurance_docrules" | "insurance_patient_policies" | "analytics" | "reports" | "reports_overview" | "reports_patients" | "reports_op" | "reports_er" | "reports_inpatient" | "reports_appointments" | "reports_doctors" | "reports_pharmacy" | "reports_laboratory" | "reports_radiology" | "reports_beds" | "reports_admissions" | "reports_discharges" | "reports_staff" | "admin" | "admin_doctors" | "chart" | "register" | "outpatient" | "queue" | "op_management" | "op_registration" | "op_workflow" | "op_nurse" | "opd_procedures" | "doctor_workflow" | "doctor_portal" | "scheduling" | "lab_billing" | "admissions" | "readmission" | "payments" | "revenue_reports" | "reports_pharmacy_damaged" | "reports_supplier_returns" | "hrms" | "my_hr" | "employees" | "hr_dashboard" | "hr_attendance" | "hr_staffing" | "hr_leave" | "hr_approvals" | "hr_payroll" | "hr_recruitment" | "hr_organization" | "hr_training" | "hr_performance" | "hr_compliance" | "hr_grievances" | "hr_reports" | "hr_announcements" | "hr_muster" | "hr_biometric" | "hr_timetables" | "hr_audit" | "patient_exp" | "patient_messages" | "intelligence" | "ocr" | "dpi_ocr" | "symptom_ai" | "clinical_rag" | "clinical_summaries" | "bulk_ai" | "nl_filtering" | "beds" | "accounts" | "accounts_dashboard" | "accounts_coa" | "accounts_gl" | "accounts_receipts" | "accounts_payments" | "accounts_ar" | "accounts_ap" | "accounts_cash_bank" | "accounts_pharmacy" | "accounts_insurance" | "accounts_tax" | "accounts_budget" | "accounts_assets" | "accounts_reports" | "accounts_period_close" | "accounts_audit" | "accounts_manager"
 
-type HrmsTab = "directory" | "shifts" | "monthly_roster" | "muster_roll" | "leaves" | "payroll" | "compliance" | "biometric" | "timetables" | "audit"
-
-const HRMS_TAB_MAP: Record<string, HrmsTab> = {
-  hrms: "directory",
-  employees: "directory",
-  hr_attendance: "shifts",
-  scheduling: "monthly_roster",
-  hr_shifts: "shifts",
-  hr_staffing: "monthly_roster",
-  hr_muster: "muster_roll",
-  hr_leave: "leaves",
-  hr_approvals: "leaves",
+const HR_MODULE_SECTION_MAP: Record<string, HrSection> = {
+  hrms: "dashboard",
+  hr_dashboard: "dashboard",
+  employees: "employees",
+  hr_attendance: "attendance",
+  scheduling: "shifts",
+  hr_staffing: "staffing",
+  hr_leave: "leave",
+  hr_approvals: "approvals",
   hr_payroll: "payroll",
+  hr_recruitment: "recruitment",
+  hr_organization: "organization",
+  hr_training: "training",
+  hr_performance: "performance",
   hr_compliance: "compliance",
-  hr_biometric: "biometric",
-  hr_timetables: "timetables",
-  hr_audit: "audit",
-  hr_reports: "audit",
-  hr_announcements: "audit",
-  hr_dashboard: "directory",
-  my_hr: "leaves",
+  hr_grievances: "grievances",
+  hr_reports: "reports",
+  hr_announcements: "announcements",
+  hr_muster: "attendance",
+  hr_biometric: "attendance",
+  hr_timetables: "shifts",
+  hr_audit: "reports",
+  my_hr: "leave",
 }
 
 
@@ -449,16 +452,22 @@ const NAV: NavItem[] = [
     label: "HR & Staff",
     Icon: UsersRound,
     children: [
-      { key: "hrms", label: "Staff Directory" },
-      { key: "hr_attendance", label: "Daily Attendance" },
+      { key: "hrms", label: "Executive Dashboard" },
+      { key: "employees", label: "Employees Master" },
+      { key: "hr_attendance", label: "Attendance & Bio" },
       { key: "scheduling", label: "Duty Shifts & Roster" },
-      { key: "hr_muster", label: "Muster Roll" },
+      { key: "hr_staffing", label: "Department Staffing" },
       { key: "hr_leave", label: "Leave Requests" },
-      { key: "hr_payroll", label: "Payroll & Salaries" },
-      { key: "hr_compliance", label: "Credentials & Compliance" },
-      { key: "hr_biometric", label: "Biometric Device Hub" },
-      { key: "hr_timetables", label: "Doctor Scheduling" },
-      { key: "hr_audit", label: "HR Audit Logs" },
+      { key: "hr_approvals", label: "Pending Approvals" },
+      { key: "hr_payroll", label: "Payroll Processing" },
+      { key: "hr_recruitment", label: "Recruitment & Onboarding" },
+      { key: "hr_organization", label: "Organization Structure" },
+      { key: "hr_training", label: "Training & Compliance" },
+      { key: "hr_performance", label: "Staff Appraisals" },
+      { key: "hr_compliance", label: "Regulatory Audits" },
+      { key: "hr_grievances", label: "Disciplinary & Grievances" },
+      { key: "hr_reports", label: "Statutory HR Reports" },
+      { key: "hr_announcements", label: "Staff Circulars" },
     ],
   },
 
@@ -3513,14 +3522,16 @@ export default function App() {
               {module === "readmission" && (
                 <Readmission setNotice={setNotice} />
               )}
-              {(module === "hrms" ||
-                module === "employees" ||
-                module === "scheduling" ||
-                module.startsWith("hr_") ||
-                module === "my_hr") && (
-                <HRMS
-                  initialTab={HRMS_TAB_MAP[module] || "directory"}
-                  onNavigate={(m) => setModule(m as any)}
+              {Boolean(HR_MODULE_SECTION_MAP[module]) && (
+                <HrWorkspace
+                  section={HR_MODULE_SECTION_MAP[module]}
+                  onNavigateSection={(sec) => {
+                    const targetModule = Object.entries(HR_MODULE_SECTION_MAP).find(
+                      ([k, v]) => v === sec && k !== "hr_dashboard" && k !== "hr_shifts"
+                    )?.[0]
+                    if (targetModule) setModule(targetModule as Module)
+                  }}
+                  legacy={<HRMS onNavigate={(m) => setModule(m as any)} />}
                 />
               )}
               {module === "ocr" && <SmartOCR setNotice={setNotice} />}
