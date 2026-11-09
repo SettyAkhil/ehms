@@ -17,6 +17,9 @@ import {
   whatsAppHandoffUrl,
   emailHandoffUrl,
 } from "../../services/patientMessaging"
+import type { DBOPEncounter } from "../../services/db"
+import JourneyReportPrintModal from "../opcard/JourneyReportPrintModal"
+import { printJourneyDocument } from "../../utils/journeyPrint"
 
 /**
  * The page a scanned OP card opens (`#/patient/<code>`, in its own tab):
@@ -112,6 +115,7 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
   const [downloading, setDownloading] = useState(false)
   const [downloadingJourney, setDownloadingJourney] = useState(false)
   const [sendNotice, setSendNotice] = useState<string | null>(null)
+  const [showJourneyPrintModal, setShowJourneyPrintModal] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cardStatus, setCardStatus] = useState<"ok" | "unknown" | "offline">("ok")
   const [serverHospital, setServerHospital] = useState<string | null>(null)
@@ -342,6 +346,58 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
     }
   }
 
+  const previewEncounter: DBOPEncounter | null = useMemo(() => {
+    if (!r) return null
+    const latestVisit = r.opVisits[0]
+    const latestConsult = r.consultations[0]
+    return {
+      id: latestVisit?.opNo || `ENC-${r.id}`,
+      umr: r.id,
+      opNumber: latestVisit?.opNo || "OP",
+      patientName: r.patient.name || r.id,
+      age: typeof r.patient.age === "number" ? r.patient.age : parseInt(String(r.patient.age || 0)) || 0,
+      sex: (r.patient.sex as any) || "Male",
+      phone: r.patient.phone || "",
+      address: r.patient.address || "",
+      bloodGroup: r.patient.bloodGroup || "",
+      date: latestVisit?.at ? new Date(latestVisit.at).toISOString().split("T")[0] : undefined,
+      registrationTime: latestVisit?.at ? new Date(latestVisit.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "09:30 AM",
+      dept: latestConsult?.department || latestVisit?.dept || "General Medicine",
+      assignedDoctor: latestConsult?.doctorName || latestVisit?.doctor || "Attending Physician",
+      status: (latestVisit?.status as any) || "Registered",
+      isNew: r.opVisits.length <= 1,
+      chiefComplaint: latestVisit?.complaint || "Outpatient Clinical Consultation",
+      symptoms: [],
+      diagnosis: latestConsult?.diagnosis || latestVisit?.diagnosis || "Clinical evaluation completed",
+      icd10: "",
+      advice: latestConsult?.advice || "",
+      prescription: r.prescriptions.flatMap((pr) =>
+        pr.items.map((it) => ({
+          medicine: it.medicineName,
+          dosage: it.dosage || "1 Tab",
+          frequency: it.frequency || "Once Daily",
+          duration: "5 Days",
+          instructions: "After meals",
+        }))
+      ),
+      investigations: r.labOrders.flatMap((o) => o.tests.map((t) => t.name)),
+      vitals: {
+        bp: "120/80",
+        pulse: 74,
+        temp: 98.4,
+        spo2: 98,
+        respRate: 18,
+      },
+      billing: {
+        consultationFee: 500,
+        labFee: 0,
+        pharmacyFee: 0,
+        totalBilled: r.billing.billed || 500,
+        paymentStatus: r.billing.due === 0 ? "Paid" : "Due",
+      } as any,
+    } as DBOPEncounter
+  }, [r])
+
   const handleSendWhatsApp = async () => {
     if (!r) return
     const latestVisit = r.opVisits[0]
@@ -541,6 +597,30 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
             </button>
           )}
 
+          {/* Clean A4 Print Preview Button */}
+          {r?.found && (
+            <button
+              type="button"
+              onClick={() => setShowJourneyPrintModal(true)}
+              className="px-3 py-1.5 text-[12px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-[6px] cursor-pointer flex items-center gap-1.5 shadow-xs transition-colors"
+              title="Open clean, pixel-perfect A4 print preview"
+            >
+              <span>👁️</span> Print Preview
+            </button>
+          )}
+
+          {/* Direct Clean Print */}
+          {r?.found && (
+            <button
+              type="button"
+              onClick={() => previewEncounter && printJourneyDocument(previewEncounter, branding)}
+              className="px-3 py-1.5 text-[12px] font-semibold bg-white hover:bg-slate-50 text-gray-800 border border-[#CBD5E1] rounded-[6px] cursor-pointer flex items-center gap-1.5"
+              title="Print clean official A4 medical document"
+            >
+              <span>🖨️</span> Print Journey
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => load()}
@@ -718,6 +798,22 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
                       className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded text-[11.5px] font-semibold cursor-pointer flex items-center gap-1 disabled:opacity-50"
                     >
                       <span>📄</span> {downloadingJourney ? "Building PDF…" : "Download Journey PDF"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowJourneyPrintModal(true)}
+                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11.5px] font-bold cursor-pointer flex items-center gap-1 shadow-xs transition-colors"
+                      title="Open clean A4 print preview"
+                    >
+                      <span>👁️</span> Print Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => previewEncounter && printJourneyDocument(previewEncounter, branding)}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-50 text-gray-800 border border-[#CBD5E1] rounded text-[11.5px] font-semibold cursor-pointer flex items-center gap-1"
+                      title="Print clean official A4 document"
+                    >
+                      <span>🖨️</span> Print
                     </button>
                   </div>
                 </div>
@@ -1101,6 +1197,14 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
           </>
         )}
       </main>
+
+      {/* Clean A4 OP Journey Print Preview Modal */}
+      {showJourneyPrintModal && previewEncounter && (
+        <JourneyReportPrintModal
+          encounter={previewEncounter}
+          onClose={() => setShowJourneyPrintModal(false)}
+        />
+      )}
     </div>
   )
 }

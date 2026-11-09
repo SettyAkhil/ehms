@@ -23,6 +23,8 @@ import {
   emailHandoffUrl,
 } from "../services/patientMessaging"
 import { patientPageUrl } from "./patientRecord/patientRecord"
+import JourneyReportPrintModal from "./opcard/JourneyReportPrintModal"
+import { printJourneyDocument } from "../utils/journeyPrint"
 
 interface PatientJourneyModalProps {
   encounter: DBOPEncounter | null
@@ -110,6 +112,7 @@ export default function PatientJourneyModal({
   const [showOpCard, setShowOpCard] = useState(false)
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
   const [sendNotice, setSendNotice] = useState<string | null>(null)
+  const [showPrintPreview, setShowPrintPreview] = useState(false)
 
   const journeyInput: BuildJourneyDocumentInput = {
     name: liveEncounter.patientName || "Patient",
@@ -1568,13 +1571,24 @@ export default function PatientJourneyModal({
               <span>📄</span> {isDownloadingPdf ? "Building PDF…" : "Download PDF"}
             </button>
 
-            {/* Print In-Modal Journey Report */}
+            {/* Official Clean A4 Print Preview Modal Button */}
             <button
               type="button"
-              onClick={() => window.print()}
-              className="px-3 py-1.5 bg-white hover:bg-gray-100 border border-[#CBD5E1] text-gray-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+              onClick={() => setShowPrintPreview(true)}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white border border-blue-700 text-[12px] font-bold rounded-none shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              title="Open clean, pixel-perfect A4 print preview"
             >
-              <Icon.Download /> Print Report
+              <Icon.Eye /> Print Preview (A4)
+            </button>
+
+            {/* Direct Clean A4 Print */}
+            <button
+              type="button"
+              onClick={() => printJourneyDocument(liveEncounter, branding)}
+              className="px-3 py-1.5 bg-white hover:bg-gray-100 border border-[#CBD5E1] text-gray-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+              title="Print clean official A4 medical document without browser crust"
+            >
+              <Icon.Download /> Print Document
             </button>
 
             {onNavigateToDoctorPortal && (
@@ -1613,6 +1627,14 @@ export default function PatientJourneyModal({
         <RadiologyReportPdfModal
           study={selectedReportStudy}
           onClose={() => setSelectedReportStudy(null)}
+        />
+      )}
+
+      {/* Official Clean A4 OP Journey Print Preview Modal */}
+      {showPrintPreview && (
+        <JourneyReportPrintModal
+          encounter={liveEncounter}
+          onClose={() => setShowPrintPreview(false)}
         />
       )}
     </div>
