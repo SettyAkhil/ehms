@@ -8,6 +8,8 @@ interface OtBookletModalProps {
   initialPage?: number;
   onClose: () => void;
   onStatusUpdate?: (caseId: string, newStatus: SurgicalCase["status"]) => void;
+  onTransferToWard?: (c: SurgicalCase) => void;
+  onTransferToIcu?: (c: SurgicalCase) => void;
 }
 
 export const OtBookletModal: React.FC<OtBookletModalProps> = ({
@@ -15,6 +17,8 @@ export const OtBookletModal: React.FC<OtBookletModalProps> = ({
   initialPage = 1,
   onClose,
   onStatusUpdate,
+  onTransferToWard,
+  onTransferToIcu,
 }) => {
   const activeBookletCase = activeCase;
   const [bookletActivePage, setBookletActivePage] = useState<number>(initialPage);
@@ -912,18 +916,49 @@ export const OtBookletModal: React.FC<OtBookletModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="p-3 bg-white rounded-lg border border-[#DDE2EC] flex justify-between items-center">
-                          <span className={`font-bold ${calculateTotalAldrete() >= 9 ? "text-slate-800" : "text-slate-600"}`}>
-                            {calculateTotalAldrete() >= 9 ? "✓ Aldrete Target Met (≥9). Patient cleared for Ward Transfer." : "⚠️ Patient score < 9. Must remain in PACU."}
-                          </span>
-                          {calculateTotalAldrete() >= 9 && (
-                            <Btn size="sm" variant="primary" onClick={() => {
-                              handleUpdateStatus(activeBookletCase.id, "Completed");
-                              onClose();
-                            }}>
-                              Authorize Ward Transfer ➔
-                            </Btn>
-                          )}
+                        <div className="p-3.5 bg-white rounded-xl border border-[#DDE2EC] flex flex-col sm:flex-row justify-between items-center gap-3">
+                          <div>
+                            <span className={`font-bold block text-xs ${calculateTotalAldrete() >= 9 ? "text-emerald-800" : "text-amber-800"}`}>
+                              {calculateTotalAldrete() >= 9
+                                ? "✓ Aldrete Target Met (≥9/10). Patient hemodynamically stable & cleared for Inpatient Ward transfer."
+                                : "⚠️ Aldrete Score < 9/10. Patient requires continued PACU monitoring OR Transfer to Critical Care (SICU)."}
+                            </span>
+                            <span className="text-[10.5px] text-slate-500">
+                              Choose destination based on post-operative recovery status.
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {calculateTotalAldrete() >= 9 && (
+                              <Btn
+                                size="sm"
+                                variant="primary"
+                                onClick={() => {
+                                  if (onTransferToWard) {
+                                    onTransferToWard(activeBookletCase);
+                                  } else {
+                                    handleUpdateStatus(activeBookletCase.id, "Transferred to Ward");
+                                    onClose();
+                                  }
+                                }}
+                              >
+                                🛏️ Allocate Inpatient Ward Bed ➔
+                              </Btn>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onTransferToIcu) {
+                                  onTransferToIcu(activeBookletCase);
+                                } else {
+                                  handleUpdateStatus(activeBookletCase.id, "Transferred to ICU");
+                                  onClose();
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+                            >
+                              <span>🫀 Transfer to ICU / SICU</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>

@@ -1,26 +1,56 @@
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { SurgeryDatabase, UrgencyLevel } from "../../services/surgeryDb"
+import { BedDatabase, BedRecord } from "../../services/bedDb"
+import { apiFetch } from "../../lib/api"
 import { Btn } from "../shared"
 import { toast } from "react-hot-toast"
 
+export interface InitialSurgeryPatient {
+  patientId?: string
+  patientName?: string
+  mrn?: string
+  ipNo?: string
+  age?: number | string
+  gender?: "Male" | "Female" | "Other"
+  source?: "OPD Consultation" | "Inpatient Ward" | "Emergency Department"
+  ward?: string
+  bedNo?: string
+  diagnosis?: string
+  procedure?: string
+  urgency?: UrgencyLevel
+}
+
 interface ScheduleSurgeryModalProps {
   initialOrRoom?: string | null
+  initialPatient?: InitialSurgeryPatient | null
   onClose: () => void
   onSuccess: () => void
 }
 
 export default function ScheduleSurgeryModal({
   initialOrRoom,
+  initialPatient,
   onClose,
   onSuccess,
 }: ScheduleSurgeryModalProps) {
-  const [patientName, setPatientName] = useState("")
-  const [mrn, setMrn] = useState(`UMR${Math.floor(100100 + Math.random() * 899000)}`)
-  const [ipNo, setIpNo] = useState(`IP-${Math.floor(884900 + Math.random() * 900)}`)
-  const [age, setAge] = useState("45")
-  const [gender, setGender] = useState<"Male" | "Female" | "Other">("Male")
-  const [source, setSource] = useState<"OPD Consultation" | "Inpatient Ward" | "Emergency Department">("OPD Consultation")
-  const [procedure, setProcedure] = useState("")
+  const [patientName, setPatientName] = useState(initialPatient?.patientName || "")
+  const [mrn, setMrn] = useState(
+    initialPatient?.mrn || initialPatient?.patientId || `UMR${Math.floor(100100 + Math.random() * 899000)}`,
+  )
+  const [ipNo, setIpNo] = useState(
+    initialPatient?.ipNo || `IP-${Math.floor(884900 + Math.random() * 900)}`,
+  )
+  const [age, setAge] = useState(initialPatient?.age ? String(initialPatient.age) : "45")
+  const [gender, setGender] = useState<"Male" | "Female" | "Other">(initialPatient?.gender || "Male")
+  const [source, setSource] = useState<"OPD Consultation" | "Inpatient Ward" | "Emergency Department">(
+    initialPatient?.source || (initialPatient?.ward ? "Inpatient Ward" : "OPD Consultation"),
+  )
+  const [currentWard, setCurrentWard] = useState(initialPatient?.ward || "")
+  const [currentBedNo, setCurrentBedNo] = useState(initialPatient?.bedNo || "")
+
+  const [procedure, setProcedure] = useState(
+    initialPatient?.procedure || (initialPatient?.diagnosis ? `Surgical intervention for ${initialPatient.diagnosis}` : ""),
+  )
   const [specialty, setSpecialty] = useState("General Surgery")
   const [cptCode, setCptCode] = useState("47562")
   const [icd10Code, setIcd10Code] = useState("K80.20")
@@ -30,10 +60,90 @@ export default function ScheduleSurgeryModal({
   const [orRoom, setOrRoom] = useState(initialOrRoom || "OR 1")
   const [scheduledTime, setScheduledTime] = useState("09:00 AM")
   const [durationEst, setDurationEst] = useState("120 mins")
-  const [urgency, setUrgency] = useState<UrgencyLevel>("Elective")
+  const [urgency, setUrgency] = useState<UrgencyLevel>(initialPatient?.urgency || "Elective")
   const [insuranceProvider, setInsuranceProvider] = useState("Star Health")
   const [totalAmount, setTotalAmount] = useState(48000)
   const [submitting, setSubmitting] = useState(false)
+
+  // Active admitted patients from Ward & ICU beds
+  const [admittedPatients, setAdmittedPatients] = useState<Array<{
+    patientId: string
+    patientName: string
+    mrn: string
+    ipNo: string
+    age: string
+    gender: "Male" | "Female" | "Other"
+    ward: string
+    bedNo: string
+    notes?: string
+    isIcu: boolean
+  }>>([])
+
+  useEffect(() => {
+    let active = true
+    apiFetch<{ beds: BedRecord[] }>("/api/beds")
+      .then((data) => {
+        if (!active) return
+        const occupied = (data.beds || []).filter(
+          (b) => b.status === "Occupied" && (b.patient_id || b.patient_name),
+        )
+        const mapped = occupied.map((b) => ({
+          patientId: b.patient_id || `UMR-${b.id}`,
+          patientName: `${b.patient_name || ""} ${b.patient_last_name || ""}`.trim() || "Admitted Patient",
+          mrn: b.patient_id || `UMR-${b.id}`,
+          ipNo: `IP-${b.admission_id || b.allocation_id || b.id}`,
+          age: b.patient_age ? String(b.patient_age) : "45",
+          gender: (b.patient_gender === "Female" ? "Female" : "Male") as "Male" | "Female" | "Other",
+          ward: b.ward || "Inpatient Ward",
+          bedNo: b.bed_no || String(b.id),
+          notes: b.admission_notes || undefined,
+          isIcu: b.bed_type === "ICU" || (b.ward || "").toLowerCase().includes("icu"),
+        }))
+        setAdmittedPatients(mapped)
+      })
+      .catch(() => {
+        if (!active) return
+        const localBeds = BedDatabase.getBeds().filter(
+          (b) => b.status === "Occupied" && (b.patient_id || b.patient_name),
+        )
+        const mapped = localBeds.map((b) => ({
+          patientId: b.patient_id || `UMR-${b.id}`,
+          patientName: `${b.patient_name || ""} ${b.patient_last_name || ""}`.trim() || "Admitted Patient",
+          mrn: b.patient_id || `UMR-${b.id}`,
+          ipNo: `IP-${b.admission_id || b.allocation_id || b.id}`,
+          age: b.patient_age ? String(b.patient_age) : "45",
+          gender: (b.patient_gender === "Female" ? "Female" : "Male") as "Male" | "Female" | "Other",
+          ward: b.ward || "Inpatient Ward",
+          bedNo: b.bed_no || String(b.id),
+          notes: b.admission_notes || undefined,
+          isIcu: b.bed_type === "ICU" || (b.ward || "").toLowerCase().includes("icu"),
+        }))
+        setAdmittedPatients(mapped)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const handlePickAdmitted = (val: string) => {
+    const picked = admittedPatients.find((p) => p.mrn === val || p.patientId === val)
+    if (!picked) return
+    setPatientName(picked.patientName)
+    setMrn(picked.mrn)
+    setIpNo(picked.ipNo)
+    setAge(picked.age)
+    setGender(picked.gender)
+    setSource("Inpatient Ward")
+    setCurrentWard(picked.ward)
+    setCurrentBedNo(picked.bedNo)
+    if (picked.isIcu) {
+      setUrgency("Urgent")
+    }
+    if (picked.notes && !procedure) {
+      setProcedure(`Surgical intervention for ${picked.notes}`)
+    }
+    toast.success(`Selected admitted patient: ${picked.patientName} (${picked.ward}, Bed ${picked.bedNo})`)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -69,7 +179,8 @@ export default function ScheduleSurgeryModal({
         status: urgency === "Emergency STAT" ? "Pre-Op Holding" : "PAC Pending",
       })
 
-      toast.success(`Surgery case scheduled successfully for ${patientName} in ${orRoom}!`)
+      const locationText = currentWard ? ` (Origin: ${currentWard} - Bed ${currentBedNo})` : ""
+      toast.success(`Surgery case scheduled successfully for ${patientName} in ${orRoom}${locationText}!`)
       onSuccess()
       onClose()
     } catch (err: any) {
@@ -88,10 +199,10 @@ export default function ScheduleSurgeryModal({
             <span className="text-xl">📅</span>
             <div>
               <h3 className="font-bold text-sm tracking-wide">
-                Schedule New Surgical Case
+                Schedule Surgical Case &amp; OT Booking
               </h3>
               <p className="text-[11px] text-slate-300">
-                Operating Theatre Booking &amp; Pre-Anesthetic Workup Intake
+                Operating Theatre Reservation · Pre-Anesthetic Workup &amp; 14-Page OT Booklet Intake
               </p>
             </div>
           </div>
@@ -105,6 +216,51 @@ export default function ScheduleSurgeryModal({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4">
+          {/* Quick Pick Banner for Admitted Patients */}
+          {admittedPatients.length > 0 && (
+            <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-white border border-blue-200/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base shrink-0">🏥</span>
+                <div>
+                  <span className="text-[11.5px] font-bold text-blue-950 block">
+                    Book Admitted Inpatient / Critical Care Patient
+                  </span>
+                  <span className="text-[10.5px] text-blue-800">
+                    Select an active Ward or ICU patient to auto-populate all demographics &amp; bed location
+                  </span>
+                </div>
+              </div>
+              <select
+                aria-label="Pick admitted patient"
+                onChange={(e) => handlePickAdmitted(e.target.value)}
+                value={admittedPatients.some((p) => p.mrn === mrn) ? mrn : ""}
+                className="border border-blue-300 rounded-lg px-2.5 py-1.5 text-xs bg-white text-blue-950 font-medium shrink-0 max-w-[280px] shadow-2xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">Quick Pick: Select Ward/ICU Patient...</option>
+                {admittedPatients.map((p) => (
+                  <option key={`${p.patientId}-${p.bedNo}`} value={p.mrn}>
+                    {p.patientName} ({p.ward} · Bed {p.bedNo})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Current Location Badge if from Ward/ICU */}
+          {currentWard && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5 flex items-center justify-between text-[11px] text-emerald-800 font-medium">
+              <div className="flex items-center gap-1.5">
+                <span>🛏️</span>
+                <span>
+                  Current Inpatient Bed: <strong>{currentWard}</strong> (Room/Bed: <strong>{currentBedNo}</strong>)
+                </span>
+              </div>
+              <span className="text-[10px] bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded font-bold">
+                Linked Inpatient Admission
+              </span>
+            </div>
+          )}
+
           {/* Patient Demographics */}
           <div className="bg-[#F8FAFC] border border-[#DDE2EC] rounded-xl p-3.5 space-y-3">
             <div className="font-bold text-slate-900 border-b border-slate-200 pb-1.5 flex items-center justify-between">
@@ -137,9 +293,9 @@ export default function ScheduleSurgeryModal({
                   onChange={(e) => setSource(e.target.value as any)}
                   className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white"
                 >
-                  <option value="OPD Consultation">OPD Consultation</option>
                   <option value="Inpatient Ward">Inpatient Ward</option>
-                  <option value="Emergency Department">Emergency (ER)</option>
+                  <option value="OPD Consultation">OPD Consultation</option>
+                  <option value="Emergency Department">Emergency (ER / Trauma)</option>
                 </select>
               </div>
             </div>
@@ -171,7 +327,7 @@ export default function ScheduleSurgeryModal({
                   type="number"
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white"
                   required
                 />
               </div>
@@ -190,16 +346,21 @@ export default function ScheduleSurgeryModal({
             </div>
           </div>
 
-          {/* Procedure & Surgical Team */}
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
+          {/* Procedure & Clinical Specialty */}
+          <div className="bg-[#F8FAFC] border border-[#DDE2EC] rounded-xl p-3.5 space-y-3">
+            <div className="font-bold text-slate-900 border-b border-slate-200 pb-1.5 flex items-center justify-between">
+              <span>Surgical Procedure &amp; Clinical Codes</span>
+              <span className="text-[10.5px] font-mono text-slate-500">CPT / ICD-10 Compliant</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
                 <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Surgical Procedure Name <span className="text-rose-500">*</span>
+                  Procedure Name <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Laparoscopic Cholecystectomy"
+                  placeholder="e.g. Laparoscopic Cholecystectomy / Emergency Craniotomy"
                   value={procedure}
                   onChange={(e) => setProcedure(e.target.value)}
                   className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white focus:outline-none focus:border-slate-800"
@@ -207,131 +368,156 @@ export default function ScheduleSurgeryModal({
                 />
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Surgical Specialty
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Specialty</label>
                 <select
                   value={specialty}
                   onChange={(e) => setSpecialty(e.target.value)}
                   className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white"
                 >
                   <option value="General Surgery">General Surgery</option>
-                  <option value="Orthopedics">Orthopedics</option>
+                  <option value="Orthopedic Surgery">Orthopedic Surgery</option>
                   <option value="Neurosurgery">Neurosurgery</option>
-                  <option value="Cardiothoracic">Cardiothoracic</option>
+                  <option value="Cardiothoracic Surgery">Cardiothoracic Surgery</option>
+                  <option value="Surgical Oncology">Surgical Oncology</option>
                   <option value="Urology">Urology</option>
-                  <option value="ENT">ENT</option>
-                  <option value="Ophthalmology">Ophthalmology</option>
+                  <option value="Gynecology & Obstetrics">Gynecology &amp; Obstetrics</option>
+                  <option value="ENT Surgery">ENT Surgery</option>
+                  <option value="Plastic & Reconstructive">Plastic &amp; Reconstructive</option>
                 </select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">CPT Code</label>
+                <input
+                  type="text"
+                  value={cptCode}
+                  onChange={(e) => setCptCode(e.target.value)}
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">ICD-10 Code</label>
+                <input
+                  type="text"
+                  value={icd10Code}
+                  onChange={(e) => setIcd10Code(e.target.value)}
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Surgical Team Assignment */}
+          <div className="bg-[#F8FAFC] border border-[#DDE2EC] rounded-xl p-3.5 space-y-3">
+            <div className="font-bold text-slate-900 border-b border-slate-200 pb-1.5 flex items-center justify-between">
+              <span>Surgical &amp; Anesthesia Team</span>
+              <span className="text-[10.5px] text-slate-500">Credited Consultants</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Primary Chief Surgeon
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Primary Surgeon</label>
                 <select
                   value={surgeon}
                   onChange={(e) => setSurgeon(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-semibold"
                 >
-                  <option value="Dr. Adams">Dr. Adams (Orthopedics)</option>
-                  <option value="Dr. Williams">Dr. Williams (General &amp; Lap)</option>
-                  <option value="Dr. Vikram Seth">Dr. Vikram Seth (Laparoscopy)</option>
-                  <option value="Dr. Patel">Dr. Patel (Cardiothoracic)</option>
-                  <option value="Dr. Vance">Dr. Vance (Trauma Surgery)</option>
-                  <option value="Dr. Park">Dr. Park (Ophthalmology)</option>
-                  <option value="Dr. Gupta">Dr. Gupta (Neurosurgery)</option>
+                  <option value="Dr. Adams">Dr. Adams (General &amp; Laparoscopic)</option>
+                  <option value="Dr. Sterling">Dr. Sterling (Orthopedic Joint &amp; Trauma)</option>
+                  <option value="Dr. Chen">Dr. Chen (Neuro &amp; Spine Surgery)</option>
+                  <option value="Dr. Thorne">Dr. Thorne (Cardiothoracic Surgery)</option>
+                  <option value="Dr. Gupta">Dr. Gupta (Surgical Oncology)</option>
                 </select>
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Assistant Surgeon
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Assistant Surgeon</label>
                 <input
                   type="text"
                   value={assistantSurgeon}
                   onChange={(e) => setAssistantSurgeon(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Lead Anesthesiologist
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Chief Anesthesiologist</label>
                 <select
                   value={anesthesiologist}
                   onChange={(e) => setAnesthesiologist(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-2 text-xs bg-white"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-semibold"
                 >
-                  <option value="Dr. Rodriguez">Dr. Rodriguez, MD</option>
-                  <option value="Dr. Kim">Dr. Kim, MD</option>
-                  <option value="Dr. Brody">Dr. Brody, MD</option>
+                  <option value="Dr. Rodriguez">Dr. Rodriguez (Consultant Anesthesiology)</option>
+                  <option value="Dr. Vance">Dr. Vance (Cardiac &amp; Neuro Anesthesia)</option>
+                  <option value="Dr. Mehta">Dr. Mehta (Pediatric &amp; Regional Anesthesia)</option>
                 </select>
               </div>
+            </div>
+          </div>
+
+          {/* Theatre Logistics & Scheduling */}
+          <div className="bg-[#F8FAFC] border border-[#DDE2EC] rounded-xl p-3.5 space-y-3">
+            <div className="font-bold text-slate-900 border-b border-slate-200 pb-1.5 flex items-center justify-between">
+              <span>Theatre Booking Logistics</span>
+              <span className="text-[10.5px] text-slate-500">OR Allocation</span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Operating Room
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Assigned OR Suite</label>
                 <select
                   value={orRoom}
                   onChange={(e) => setOrRoom(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-bold"
                 >
-                  <option value="OR 1">OR 1 (General)</option>
-                  <option value="OR 2">OR 2 (Cardio/Laminar)</option>
-                  <option value="OR 3">OR 3 (Ortho/Joint)</option>
-                  <option value="OR 4">OR 4 (Urology)</option>
-                  <option value="Emergency OR 1">Emergency OR 1</option>
+                  <option value="OR 1">OR 1 - General Laparoscopy</option>
+                  <option value="OR 2">OR 2 - Ortho &amp; Laminar Airflow</option>
+                  <option value="OR 3">OR 3 - Neuro &amp; Spine Suite</option>
+                  <option value="OR 4">OR 4 - Cardiac &amp; Vascular</option>
+                  <option value="OR 5">OR 5 - Emergency STAT Suite</option>
                 </select>
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Scheduled Time
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Scheduled Time</label>
                 <input
                   type="text"
                   value={scheduledTime}
                   onChange={(e) => setScheduledTime(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Estimated Duration
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Estimated Duration</label>
                 <input
                   type="text"
                   value={durationEst}
                   onChange={(e) => setDurationEst(e.target.value)}
-                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-mono"
+                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Urgency Level
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Clinical Urgency</label>
                 <select
                   value={urgency}
                   onChange={(e) => setUrgency(e.target.value as any)}
-                  className="w-full border border-[#DDE2EC] rounded p-1.5 text-xs bg-white font-semibold"
+                  className={`w-full border rounded p-1.5 text-xs font-bold ${
+                    urgency === "Emergency STAT"
+                      ? "bg-rose-50 border-rose-300 text-rose-700"
+                      : urgency === "Urgent"
+                        ? "bg-amber-50 border-amber-300 text-amber-800"
+                        : "bg-white border-[#DDE2EC] text-slate-800"
+                  }`}
                 >
-                  <option value="Elective">Elective</option>
-                  <option value="Urgent">Urgent</option>
-                  <option value="Emergency STAT">Emergency STAT</option>
+                  <option value="Elective">Elective (Planned Routine)</option>
+                  <option value="Urgent">Urgent (&lt; 6 Hours)</option>
+                  <option value="Emergency STAT">🚨 Emergency STAT (&lt; 30 Mins)</option>
                 </select>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
               <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Insurance Provider / TPA
-                </label>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">Insurance / Payer</label>
                 <input
                   type="text"
                   value={insuranceProvider}
@@ -356,7 +542,7 @@ export default function ScheduleSurgeryModal({
           {/* Footer */}
           <div className="pt-3 border-t border-[#DDE2EC] flex items-center justify-between">
             <span className="text-[11px] text-slate-500 font-mono">
-              Auto-initiates Stage 1: Pre-Op PAC Assessment &amp; Consents
+              Auto-initiates Stage 1: Pre-Op PAC Assessment &amp; 14-Page OT Booklet
             </span>
             <div className="flex gap-2">
               <Btn type="button" variant="outline" size="sm" onClick={onClose} disabled={submitting}>
@@ -372,4 +558,3 @@ export default function ScheduleSurgeryModal({
     </div>
   )
 }
-

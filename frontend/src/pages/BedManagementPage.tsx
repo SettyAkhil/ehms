@@ -38,6 +38,8 @@ import { formatDateTimeIST } from "../lib/format"
 import type { Notice, Patient } from "../types"
 import DischargedDirectoryView from "../components/bed/DischargedDirectoryView"
 import { WardBedBoard } from "../components/bed/WardBedBoard"
+import ScheduleSurgeryModal from "../components/surgery/ScheduleSurgeryModal"
+import { FiScissors } from "react-icons/fi"
 import { BedTransferNotificationPanel } from "../components/bed/BedTransferNotificationPanel"
 import { WardAlertsNotificationPanel } from "../components/bed/WardAlertsNotificationPanel"
 import {
@@ -281,6 +283,7 @@ export default function BedManagementPage({
 
   // Transfer (ward change / shift to ICU) -- moves the patient to a different
   // bed while keeping the same admission, unlike release-then-reassign.
+  const [scheduleSurgeryBed, setScheduleSurgeryBed] = useState<Bed | null>(null)
   const [transferOpen, setTransferOpen] = useState(false)
   const [transferFilter, setTransferFilter] = useState("")
   const [transferTargetId, setTransferTargetId] = useState<number | null>(null)
@@ -2098,6 +2101,13 @@ export default function BedManagementPage({
                       )}
                       {canManageBeds && (
                         <>
+                          <Button
+                            variant="ghost"
+                            onClick={() => setScheduleSurgeryBed(selectedBed)}
+                            style={{ color: "#1E3A6E", fontWeight: 600 }}
+                          >
+                            <FiScissors aria-hidden /> Book OT / Surgery
+                          </Button>
                           <Button variant="ghost" onClick={openTransfer}>
                             <FiRepeat aria-hidden /> Transfer
                           </Button>
@@ -3281,6 +3291,32 @@ export default function BedManagementPage({
                   await Promise.all([loadBeds(), loadErRequests()])
                 }}
                 setNotice={setNotice}
+              />
+            )}
+
+            {scheduleSurgeryBed && (
+              <ScheduleSurgeryModal
+                initialPatient={{
+                  patientId: scheduleSurgeryBed.patient_id || undefined,
+                  patientName: bedOccupantName(scheduleSurgeryBed),
+                  mrn: scheduleSurgeryBed.patient_id || undefined,
+                  ipNo: `IP-${scheduleSurgeryBed.admission_id || scheduleSurgeryBed.allocation_id || scheduleSurgeryBed.id}`,
+                  age: scheduleSurgeryBed.patient_age || undefined,
+                  gender: (scheduleSurgeryBed.patient_gender === "Female" ? "Female" : "Male"),
+                  source: "Inpatient Ward",
+                  ward: scheduleSurgeryBed.ward,
+                  bedNo: scheduleSurgeryBed.bed_no,
+                  diagnosis: scheduleSurgeryBed.admission_notes || undefined,
+                }}
+                onClose={() => setScheduleSurgeryBed(null)}
+                onSuccess={() => {
+                  const name = bedOccupantName(scheduleSurgeryBed)
+                  setScheduleSurgeryBed(null)
+                  setNotice({
+                    type: "info",
+                    message: `Surgery case and OT booking scheduled successfully for ${name}. Track progress in Surgery module.`,
+                  })
+                }}
               />
             )}
           </>

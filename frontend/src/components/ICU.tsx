@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react"
 import { Btn } from "./shared"
+import ScheduleSurgeryModal from "./surgery/ScheduleSurgeryModal"
 import { formatDateTimeIST } from "../lib/format"
 
 import IcuFlowsheet, {
@@ -1361,6 +1362,7 @@ export default function ICU({
   const [selectedFlowsheetDate, setSelectedFlowsheetDate] = useState<string>("")
   const [view, setView] = useState<"overview" | "flowsheet" | "discharges">("overview")
   const [showPharmacyModal, setShowPharmacyModal] = useState(false)
+  const [scheduleSurgeryPatient, setScheduleSurgeryPatient] = useState<IcuPatient | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
   const [showDripModal, setShowDripModal] = useState(false)
   const [showLabModal, setShowLabModal] = useState(false)
@@ -1593,6 +1595,32 @@ export default function ICU({
           patient={pt}
           onClose={() => setShowLabModal(false)}
           onOrdered={handleLabOrdered}
+        />
+      )}
+
+      {scheduleSurgeryPatient && (
+        <ScheduleSurgeryModal
+          initialPatient={{
+            patientId: scheduleSurgeryPatient.mrn,
+            patientName: scheduleSurgeryPatient.name || "ICU Patient",
+            mrn: scheduleSurgeryPatient.mrn,
+            ipNo: scheduleSurgeryPatient.admissionId ? `IP-${scheduleSurgeryPatient.admissionId}` : `IP-${scheduleSurgeryPatient.mrn}`,
+            age: scheduleSurgeryPatient.age ?? undefined,
+            gender: scheduleSurgeryPatient.sex === "F" ? "Female" : "Male",
+            source: "Inpatient Ward",
+            ward: scheduleSurgeryPatient.unit || scheduleSurgeryPatient.ward || "Critical Care / ICU",
+            bedNo: scheduleSurgeryPatient.bed,
+            diagnosis: scheduleSurgeryPatient.dx || undefined,
+            urgency: "Urgent",
+          }}
+          onClose={() => setScheduleSurgeryPatient(null)}
+          onSuccess={() => {
+            const name = scheduleSurgeryPatient.name
+            setScheduleSurgeryPatient(null)
+            setNotification(
+              `✓ Surgery case & OT booking scheduled successfully for ${name}. Track patient progress in Surgery module.`,
+            )
+          }}
         />
       )}
 
@@ -2056,6 +2084,13 @@ export default function ICU({
                     className="ml-2 px-2.5 py-1 bg-red-700 hover:bg-red-800 text-white text-[11px] font-bold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
                   >
                     <span>📋 Discharge / Step-down</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleSurgeryPatient(pt)}
+                    className="px-2.5 py-1 bg-[#1E3A6E] hover:bg-[#15284F] text-white text-[11px] font-bold rounded shadow-2xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>✂️ Book OT / Surgery</span>
                   </button>
                   <button
                     type="button"

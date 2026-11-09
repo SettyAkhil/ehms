@@ -485,6 +485,12 @@ export default function Surgery() {
                         P12 Operation Record
                       </button>
                       <button
+                        onClick={() => handleOpenBooklet(c, 14)}
+                        className="px-2.5 py-1 text-xs font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg shadow-2xs cursor-pointer transition-colors"
+                      >
+                        P14 PACU &amp; Transfer
+                      </button>
+                      <button
                         onClick={() => handleOpenBooklet(c, 1)}
                         className="px-3 py-1 text-xs font-bold bg-[#1B4FD8] hover:bg-blue-700 text-white rounded-lg shadow-xs cursor-pointer transition-colors"
                       >
@@ -633,6 +639,14 @@ export default function Surgery() {
           onClose={() => setActiveBookletCase(null)}
           onStatusUpdate={() => {
             setCases(SurgeryDatabase.getCases());
+          }}
+          onTransferToWard={(c) => {
+            setActiveBookletCase(null);
+            setWardTransferCase(c);
+          }}
+          onTransferToIcu={(c) => {
+            setActiveBookletCase(null);
+            setIcuTransferCase(c);
           }}
         />
       )}
