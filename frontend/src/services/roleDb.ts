@@ -866,7 +866,6 @@ export class RoleDatabase {
 
     return { user, role }
   }
-  }
 
   static deleteRole(roleId: string): { success: boolean; error?: string } {
     if (roleId === "ROLE_ADMIN" || roleId === "ROLE_SUPERADMIN") {
