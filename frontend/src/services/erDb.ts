@@ -1741,11 +1741,10 @@ export class ErDatabase {
     }
 
     // Run smart clinical triage logic using Qwen / fallback to rules
-
     const triageCalc = await this.evaluateClinicalTriage(
       visitData.complaintText || "",
       visitData.vitals || {},
-      { ruleBasedOnly: visitData.skipAiTriage },
+      { ruleBasedOnly: visitData.skipAiTriage || Boolean(visitData.triageCategory) },
     )
 
     const finalDoctorName =
@@ -1808,6 +1807,10 @@ export class ErDatabase {
       this.save(ER_STORAGE_KEY_VISITS, visits)
       return { visit: existingActive, patient: patient || existingActive.patient || null }
     }
+
+    const priorVisits = patient?.patient_id
+      ? this.getVisitsByPatient(patient.patient_id, patient.name, patient.phone)
+      : []
 
     const newRecord: ErVisitRecord = {
       id: nextId,

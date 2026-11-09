@@ -59,6 +59,7 @@ export function useBarcodeScanner(onScan: (code: string) => void) {
       return true
     }
     const onKey = (e: KeyboardEvent) => {
+      if (!e || !e.key) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
       window.clearTimeout(idle.current)
       const now = performance.now()
