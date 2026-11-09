@@ -56,7 +56,7 @@ export default function HrDashboard({ onNavigate }: { onNavigate: (to: Dashboard
         </div>
       </div>
 
-      {d.loading && !d.data ? <Loading /> : d.error ? <ErrorState error={d.error} onRetry={d.reload} /> : d.data && d.data.employees.total === 0 ? (
+      {d.loading && !d.data ? <Loading /> : d.error ? <ErrorState error={d.error} onRetry={d.reload} /> : d.data && (d.data.employees?.total ?? 0) === 0 ? (
         <Panel><Empty title="No employees recorded yet" hint="Set up departments under Organization, then add or import employees. Every figure here is computed from those records." /></Panel>
       ) : d.data ? <Body d={d.data} onNavigate={onNavigate} /> : null}
     </div>
@@ -64,26 +64,69 @@ export default function HrDashboard({ onNavigate }: { onNavigate: (to: Dashboard
 }
 
 function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: DashboardNav) => void }) {
-  const a = d.attendance_today
-  const w = d.workforce
-  const punched = a.in + a.out + a.not_arrived
-  const presentPct = punched ? Math.round(((a.in + a.out) / punched) * 100) : 0
+  const employees = d?.employees || { total: 0, active: 0, inactive: 0, by_category: {}, by_status: {}, by_branch: [], by_department: [] }
+  const a = d?.attendance_today || { in: 0, out: 0, not_arrived: 0, total: 0, unmapped_punches: 0, devices: { online: 0 }, last_sync_at: null }
+  const w = d?.workforce || { on_leave_today: 0, pending_leave: 0, pending_approvals: 0, open_exceptions: 0, open_vacancies: 0, candidates_in_pipeline: 0, training_gaps: 0, certificates_expiring_60d: 0, last_payroll: null }
+  const attention = Array.isArray(d?.attention) ? d.attention : []
+  const attendanceTrend = Array.isArray(d?.attendance_trend) ? d.attendance_trend : []
+  const departmentPresence = Array.isArray(d?.department_presence) ? d.department_presence : []
+  const credentialsExpiring = Array.isArray(d?.credentials?.expiring) ? d.credentials.expiring : []
+  const recentActivity = Array.isArray(d?.recent_activity) ? d.recent_activity : []
+
+  const inCount = Number(a.in || 0)
+  const outCount = Number(a.out || 0)
+  const notArrivedCount = Number(a.not_arrived || 0)
+  const punched = inCount + outCount + notArrivedCount
+  const presentPct = punched ? Math.round(((inCount + outCount) / punched) * 100) : 0
+
+  const devicesObj = a.devices || {}
+  const onlineCount = Number(devicesObj.online ?? 0)
+  const totalDevices = Object.values(devicesObj).reduce((s, n) => s + (Number(n) || 0), 0) || onlineCount
+
   return (
     <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Hero icon={Users} label="Active staff" value={d.employees.active} sub={`${d.employees.total} on record · ${d.employees.inactive} inactive`} onClick={() => onNavigate({ section: "employees", filters: { status: "active" } })} />
-        <Hero icon={Clock} label="Checked in now" value={a.in} sub={`${presentPct}% have punched today · ${a.not_arrived} not yet`} tone="teal" onClick={() => onNavigate({ section: "attendance" })} />
-        <Hero icon={CalendarCheck2} label="On leave today" value={w.on_leave_today} sub={`${w.pending_leave} request${w.pending_leave === 1 ? "" : "s"} waiting`} tone="purple" onClick={() => onNavigate({ section: "leave" })} />
-        <Hero icon={Wallet} label="Last payroll" value={w.last_payroll?.period ?? "—"} sub={w.last_payroll ? `${humanize(w.last_payroll.status)}${w.last_payroll.net ? ` · net ₹${Number(w.last_payroll.net).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : ""}` : "No run yet"} onClick={() => onNavigate({ section: "payroll" })} />
+        <Hero
+          icon={Users}
+          label="Active staff"
+          value={employees.active ?? 0}
+          sub={`${employees.total ?? 0} on record · ${employees.inactive ?? 0} inactive`}
+          onClick={() => onNavigate({ section: "employees", filters: { status: "active" } })}
+        />
+        <Hero
+          icon={Clock}
+          label="Checked in now"
+          value={inCount}
+          sub={`${presentPct}% have punched today · ${notArrivedCount} not yet`}
+          tone="teal"
+          onClick={() => onNavigate({ section: "attendance" })}
+        />
+        <Hero
+          icon={CalendarCheck2}
+          label="On leave today"
+          value={w.on_leave_today ?? 0}
+          sub={`${w.pending_leave ?? 0} request${w.pending_leave === 1 ? "" : "s"} waiting`}
+          tone="purple"
+          onClick={() => onNavigate({ section: "leave" })}
+        />
+        <Hero
+          icon={Wallet}
+          label="Last payroll"
+          value={w.last_payroll?.period ?? "—"}
+          sub={w.last_payroll ? `${humanize(w.last_payroll.status)}${w.last_payroll.net ? ` · net ₹${Number(w.last_payroll.net).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : ""}` : "No run yet"}
+          onClick={() => onNavigate({ section: "payroll" })}
+        />
       </div>
 
       <div className="grid xl:grid-cols-3 gap-4">
         <Panel title="Needs attention">
-          {!d.attention.length ? (
-            <div className="flex items-center gap-2 text-sm text-[#16A34A] py-6 justify-center"><CheckCircle2 className="w-4 h-4" /> Nothing needs attention right now</div>
+          {!attention.length ? (
+            <div className="flex items-center gap-2 text-sm text-[#16A34A] py-6 justify-center">
+              <CheckCircle2 className="w-4 h-4" /> Nothing needs attention right now
+            </div>
           ) : (
             <ul className="space-y-2">
-              {d.attention.map((x) => {
+              {attention.map((x) => {
                 const Icon = x.severity === "critical" ? ShieldAlert : x.severity === "warning" ? AlertTriangle : Info
                 const tone = x.severity === "critical" ? "border-rose-200 bg-rose-50 text-rose-900" : x.severity === "warning" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-[#DDE2EC] bg-[#F8FAFC] text-gray-800"
                 return (
@@ -104,12 +147,12 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
         </Panel>
 
         <Panel title="Attendance — last 14 days" className="xl:col-span-2">
-          {d.attendance_trend.every((x) => !x.present && !x.absent && !x.leave) ? (
+          {attendanceTrend.every((x) => !x.present && !x.absent && !x.leave) ? (
             <Empty title="No calculated attendance yet" hint="Publish rosters and connect devices; daily attendance appears here." />
           ) : (
             <div className="h-72">
               <ResponsiveContainer width="100%" height="88%">
-                <BarChart data={d.attendance_trend.map((x) => ({ ...x, day: new Date(`${x.date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) }))} margin={{ top: 4, right: 8, bottom: 0, left: -16 }} barCategoryGap="22%">
+                <BarChart data={attendanceTrend.map((x) => ({ ...x, day: x.date ? new Date(`${x.date}T00:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "" }))} margin={{ top: 4, right: 8, bottom: 0, left: -16 }} barCategoryGap="22%">
                   <CartesianGrid vertical={false} stroke="#EEF1F6" />
                   <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#64748B" }} axisLine={false} tickLine={false} interval={1} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#64748B" }} axisLine={false} tickLine={false} />
@@ -133,19 +176,24 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
 
       <div className="grid xl:grid-cols-3 gap-4">
         <Panel title="Today by department" className="xl:col-span-2">
-          {!d.department_presence.length ? <Empty title="No one rostered today" /> : (
+          {!departmentPresence.length ? <Empty title="No one rostered today" /> : (
             <div className="space-y-2.5">
-              {d.department_presence.map((x) => {
-                const pct = x.scheduled ? Math.round((x.present / x.scheduled) * 100) : 0
+              {departmentPresence.map((x) => {
+                const scheduled = Number(x.scheduled || 0)
+                const present = Number(x.present || 0)
+                const absent = Number(x.absent || 0)
+                const notArrived = Number(x.not_arrived || 0)
+                const onLeave = Number(x.leave || 0)
+                const pct = scheduled ? Math.round((present / scheduled) * 100) : 0
                 return (
                   <button key={x.department_id} onClick={() => onNavigate({ section: "attendance" })} className="w-full grid grid-cols-12 items-center gap-3 text-left group cursor-pointer hover:bg-gray-50/60 p-1 rounded transition-colors">
                     <span className="col-span-4 text-sm font-medium text-gray-700 truncate group-hover:text-gray-900">{x.department}</span>
                     <span className="col-span-5 h-2 rounded-full bg-gray-100 overflow-hidden flex" aria-label={`${pct}% present`}>
-                      <span className="h-full" style={{ width: `${x.scheduled ? (x.present / x.scheduled) * 100 : 0}%`, background: "#0D9488" }} />
-                      <span className="h-full border-l-2 border-white" style={{ width: `${x.scheduled ? (x.absent / x.scheduled) * 100 : 0}%`, background: "#E11D48" }} />
+                      <span className="h-full" style={{ width: `${scheduled ? (present / scheduled) * 100 : 0}%`, background: "#0D9488" }} />
+                      <span className="h-full border-l-2 border-white" style={{ width: `${scheduled ? (absent / scheduled) * 100 : 0}%`, background: "#E11D48" }} />
                     </span>
                     <span className="col-span-3 text-xs text-[#64748B] tabular-nums text-right">
-                      <span className="text-gray-900 font-semibold">{x.present}</span>/{x.scheduled} present{x.not_arrived ? ` · ${x.not_arrived} pending` : ""}{x.absent ? ` · ${x.absent} absent` : ""}{x.leave ? ` · ${x.leave} leave` : ""}
+                      <span className="text-gray-900 font-semibold">{present}</span>/{scheduled} present{notArrived ? ` · ${notArrived} pending` : ""}{absent ? ` · ${absent} absent` : ""}{onLeave ? ` · ${onLeave} leave` : ""}
                     </span>
                   </button>
                 )
@@ -156,15 +204,16 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
 
         <Panel title="Workforce mix">
           {(() => {
-            const rows = Object.entries(d.employees.by_category).sort((x, y) => y[1] - x[1])
-            const max = Math.max(1, ...rows.map((r) => r[1]))
+            const catMap = employees.by_category || {}
+            const rows = Object.entries(catMap).sort((x, y) => Number(y[1] || 0) - Number(x[1] || 0))
+            const max = Math.max(1, ...rows.map((r) => Number(r[1] || 0)))
             return !rows.length ? <Empty title="No active staff" /> : (
               <ul className="space-y-1.5">
                 {rows.map(([k, v]) => (
                   <li key={k}>
                     <button onClick={() => onNavigate({ section: "employees", filters: { employee_category: k, status: "active" } })} className="w-full flex items-center gap-2 text-sm group cursor-pointer hover:bg-gray-50/60 p-1 rounded transition-colors">
                       <span className="w-32 text-left text-gray-600 truncate group-hover:text-gray-900 font-medium">{categoryLabel(k)}</span>
-                      <span className="flex-1 h-2 rounded-full bg-gray-100"><span className="block h-2 rounded-full" style={{ width: `${(v / max) * 100}%`, background: TEAL }} /></span>
+                      <span className="flex-1 h-2 rounded-full bg-gray-100"><span className="block h-2 rounded-full" style={{ width: `${(Number(v || 0) / max) * 100}%`, background: TEAL }} /></span>
                       <span className="w-8 text-right font-mono tabular-nums text-gray-900 font-semibold">{v}</span>
                     </button>
                   </li>
@@ -178,18 +227,18 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
       <div className="grid lg:grid-cols-3 gap-4">
         <Panel title="Pipeline & development">
           <dl className="grid grid-cols-2 gap-2">
-            <Stat label="Open vacancies" value={w.open_vacancies} onClick={() => onNavigate({ section: "recruitment" })} />
-            <Stat label="Candidates in pipeline" value={w.candidates_in_pipeline} onClick={() => onNavigate({ section: "recruitment" })} />
-            <Stat label="Training gaps" value={w.training_gaps} warn={w.training_gaps > 0} onClick={() => onNavigate({ section: "training" })} />
-            <Stat label="Certificates expiring (60 d)" value={w.certificates_expiring_60d} warn={w.certificates_expiring_60d > 0} onClick={() => onNavigate({ section: "compliance" })} />
-            <Stat label="Approvals pending" value={w.pending_approvals} onClick={() => onNavigate({ section: "approvals" })} />
-            <Stat label="Devices online" value={`${a.devices.online ?? 0}/${Object.values(a.devices).reduce((s, n) => s + n, 0)}`} sub={`last sync ${ago(a.last_sync_at)}`} />
+            <Stat label="Open vacancies" value={w.open_vacancies ?? 0} onClick={() => onNavigate({ section: "recruitment" })} />
+            <Stat label="Candidates in pipeline" value={w.candidates_in_pipeline ?? 0} onClick={() => onNavigate({ section: "recruitment" })} />
+            <Stat label="Training gaps" value={w.training_gaps ?? 0} warn={(w.training_gaps ?? 0) > 0} onClick={() => onNavigate({ section: "training" })} />
+            <Stat label="Certificates expiring (60 d)" value={w.certificates_expiring_60d ?? 0} warn={(w.certificates_expiring_60d ?? 0) > 0} onClick={() => onNavigate({ section: "compliance" })} />
+            <Stat label="Approvals pending" value={w.pending_approvals ?? 0} onClick={() => onNavigate({ section: "approvals" })} />
+            <Stat label="Devices online" value={`${onlineCount}/${totalDevices}`} sub={a.last_sync_at ? `last sync ${ago(a.last_sync_at)}` : undefined} />
           </dl>
         </Panel>
         <Panel title="Registrations expiring">
-          {!d.credentials.expiring.length ? <p className="text-sm text-[#64748B] py-4 text-center">None in the next 60 days</p> : (
+          {!credentialsExpiring.length ? <p className="text-sm text-[#64748B] py-4 text-center">None in the next 60 days</p> : (
             <ul className="divide-y divide-[#EEF1F6]">
-              {d.credentials.expiring.slice(0, 6).map((c) => (
+              {credentialsExpiring.slice(0, 6).map((c) => (
                 <li key={`${c.employee_id}-${c.number}`}>
                   <button className="w-full flex items-center gap-2.5 py-2 text-left hover:bg-gray-50 rounded transition-colors cursor-pointer" onClick={() => onNavigate({ section: "employees", employeeId: c.employee_id })}>
                     <Avatar name={c.employee_name} size="sm" />
@@ -197,7 +246,7 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
                       <span className="block text-sm font-semibold text-gray-900 truncate">{c.employee_name}</span>
                       <span className="block text-[11px] text-[#64748B]">{humanize(c.credential_type)} · {fmtDate(c.expires_on)}</span>
                     </span>
-                    <span className={`text-xs font-mono tabular-nums ${c.days_left < 0 ? "text-rose-700 font-semibold" : c.days_left < 15 ? "text-amber-700 font-semibold" : "text-[#64748B]"}`}>{c.days_left < 0 ? "expired" : `${c.days_left} d`}</span>
+                    <span className={`text-xs font-mono tabular-nums ${(c.days_left ?? 0) < 0 ? "text-rose-700 font-semibold" : (c.days_left ?? 0) < 15 ? "text-amber-700 font-semibold" : "text-[#64748B]"}`}>{(c.days_left ?? 0) < 0 ? "expired" : `${c.days_left} d`}</span>
                   </button>
                 </li>
               ))}
@@ -205,9 +254,9 @@ function Body({ d, onNavigate }: { d: Dashboard & Extra; onNavigate: (to: Dashbo
           )}
         </Panel>
         <Panel title="Recent activity">
-          {!d.recent_activity.length ? <p className="text-sm text-[#64748B]">Nothing yet.</p> : (
+          {!recentActivity.length ? <p className="text-sm text-[#64748B]">Nothing yet.</p> : (
             <ul className="space-y-2.5">
-              {d.recent_activity.slice(0, 7).map((r, i) => (
+              {recentActivity.slice(0, 7).map((r, i) => (
                 <li key={i}>
                   <button className="w-full flex gap-2.5 text-left hover:bg-gray-50 p-1.5 rounded transition-colors cursor-pointer" onClick={() => onNavigate({ section: "employees", employeeId: r.employee_id })}>
                     <Avatar name={r.employee_name} size="sm" />

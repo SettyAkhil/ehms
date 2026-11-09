@@ -8,7 +8,14 @@ import type {
   EmployeeListItem,
   Hospital,
   TreeNode,
+  Dashboard,
 } from "./types"
+
+export type Extra = {
+  attendance_trend: { date: string; present: number; absent: number; leave: number; exceptions: number; late: number }[]
+  department_presence: { department_id: string; department: string; scheduled: number; present: number; absent: number; not_arrived: number; leave: number }[]
+  attention: { kind: string; severity: "critical" | "warning" | "info"; count: number; title: string; detail: string; section: string }[]
+}
 
 export const MOCK_HOSPITALS: Hospital[] = [
   { id: "HOSP-01", code: "APOLLO-MAIN", name: "Apollo Super Speciality Hospital" },
@@ -319,34 +326,146 @@ export const MOCK_EMPLOYEES: EmployeeListItem[] = [
   },
 ]
 
-export const MOCK_DASHBOARD = {
+export const MOCK_DASHBOARD: Dashboard & Extra = {
+  as_of: new Date().toISOString(),
   employees: {
     total: 166,
     active: 158,
     inactive: 8,
+    by_status: { active: 158, probation: 5, notice_period: 3 },
+    by_category: {
+      doctor: 32,
+      consultant: 12,
+      nurse: 53,
+      radiologist: 14,
+      lab_technician: 16,
+      pharmacist: 18,
+      ot_technician: 8,
+      icu_technician: 10,
+      emergency_staff: 12,
+      front_office: 8,
+      billing: 10,
+      administration: 15,
+      support: 18,
+    },
+    by_branch: [
+      { branch: "Main Campus - Hyderabad", count: 124 },
+      { branch: "Secunderabad Clinic Center", count: 42 },
+    ],
+    by_department: [
+      { department_id: "DEP-01", department: "Cardiology & Cath Lab", count: 24 },
+      { department_id: "DEP-02", department: "Emergency & Trauma Center", count: 32 },
+      { department_id: "DEP-03", department: "Critical Care & ICU", count: 28 },
+      { department_id: "DEP-04", department: "Operation Theatres & Surgery", count: 26 },
+      { department_id: "DEP-05", department: "Radiology & Imaging", count: 14 },
+      { department_id: "DEP-06", department: "Pathology & Laboratory", count: 16 },
+      { department_id: "DEP-07", department: "Central Pharmacy & Dispensary", count: 18 },
+      { department_id: "DEP-08", department: "Human Resources & Workforce", count: 8 },
+    ],
   },
   attendance_today: {
+    total: 166,
     in: 142,
     out: 12,
     not_arrived: 4,
+    unmapped_punches: 0,
+    devices: {
+      online: 8,
+      offline: 0,
+      total: 8,
+    },
+    last_sync_at: new Date().toISOString(),
   },
+  credentials: {
+    expiring: [
+      {
+        employee_id: "EMP-101",
+        employee_code: "DOC-101",
+        employee_name: "Dr. Rajesh Sharma",
+        credential_type: "State Medical Council Registration",
+        number: "MCI-44012",
+        expires_on: "2026-11-25",
+        days_left: 16,
+      },
+      {
+        employee_id: "EMP-105",
+        employee_code: "DOC-105",
+        employee_name: "Dr. Anita Desai",
+        credential_type: "Atomic Energy Regulatory Board (AERB) License",
+        number: "AERB-RAD-9921",
+        expires_on: "2026-11-30",
+        days_left: 21,
+      },
+      {
+        employee_id: "EMP-103",
+        employee_code: "DOC-103",
+        employee_name: "Dr. Arvind Swaminathan",
+        credential_type: "NABH Clinical Assessor Certification",
+        number: "NABH-MED-108",
+        expires_on: "2026-12-15",
+        days_left: 36,
+      },
+    ],
+    pending_verification: 1,
+  },
+  recent_activity: [
+    {
+      employee_id: "EMP-102",
+      employee_name: "Dr. Priya Nair",
+      event_type: "leave_approved",
+      summary: "Casual Leave approved for 12-13 Nov",
+      occurred_at: new Date(Date.now() - 3600000).toISOString(),
+      actor: "Medical Superintendent",
+    },
+    {
+      employee_id: "EMP-106",
+      employee_name: "Mary Fernandez",
+      event_type: "shift_rostered",
+      summary: "Assigned to ICU Night Shift",
+      occurred_at: new Date(Date.now() - 7200000).toISOString(),
+      actor: "Nursing Supervisor",
+    },
+    {
+      employee_id: "EMP-107",
+      employee_name: "K. Venkatesh",
+      event_type: "check_in",
+      summary: "Morning Shift Biometric Punch recorded",
+      occurred_at: new Date(Date.now() - 10800000).toISOString(),
+      actor: null,
+    },
+    {
+      employee_id: "EMP-101",
+      employee_name: "Dr. Rajesh Sharma",
+      event_type: "ot_scheduled",
+      summary: "Cardiac Catheterization slot booked for OT-2",
+      occurred_at: new Date(Date.now() - 14400000).toISOString(),
+      actor: "Dr. Rajesh Sharma",
+    },
+  ],
   workforce: {
     on_leave_today: 6,
     pending_leave: 3,
+    pending_approvals: 4,
+    open_exceptions: 1,
+    open_vacancies: 7,
+    candidates_in_pipeline: 42,
+    training_gaps: 2,
+    certificates_expiring_60d: 2,
     last_payroll: {
       period: "October 2026",
       status: "completed",
-      net: 7420000,
+      employees: 158,
+      net: "7420000",
     },
   },
   attendance_trend: [
-    { date: "03 Nov", present: 148, absent: 4, leave: 6, exceptions: 2, late: 6 },
-    { date: "04 Nov", present: 150, absent: 3, leave: 5, exceptions: 1, late: 4 },
-    { date: "05 Nov", present: 149, absent: 5, leave: 4, exceptions: 3, late: 7 },
-    { date: "06 Nov", present: 152, absent: 2, leave: 4, exceptions: 0, late: 3 },
-    { date: "07 Nov", present: 146, absent: 6, leave: 6, exceptions: 2, late: 8 },
-    { date: "08 Nov", present: 144, absent: 4, leave: 10, exceptions: 1, late: 5 },
-    { date: "09 Nov", present: 154, absent: 2, leave: 2, exceptions: 1, late: 3 },
+    { date: "2026-11-03", present: 148, absent: 4, leave: 6, exceptions: 2, late: 6 },
+    { date: "2026-11-04", present: 150, absent: 3, leave: 5, exceptions: 1, late: 4 },
+    { date: "2026-11-05", present: 149, absent: 5, leave: 4, exceptions: 3, late: 7 },
+    { date: "2026-11-06", present: 152, absent: 2, leave: 4, exceptions: 0, late: 3 },
+    { date: "2026-11-07", present: 146, absent: 6, leave: 6, exceptions: 2, late: 8 },
+    { date: "2026-11-08", present: 144, absent: 4, leave: 10, exceptions: 1, late: 5 },
+    { date: "2026-11-09", present: 154, absent: 2, leave: 2, exceptions: 1, late: 3 },
   ],
   department_presence: [
     { department_id: "DEP-01", department: "Cardiology", scheduled: 24, present: 23, absent: 0, not_arrived: 0, leave: 1 },
@@ -572,6 +691,63 @@ export function handleHrMockDispatch(method: string, path: string, body?: any, q
 
   if (p.includes("/hr/dashboard") || p.includes("/dashboard")) {
     return MOCK_DASHBOARD
+  }
+
+  if (p.includes("/facets")) {
+    return {
+      employee_category: MOCK_DASHBOARD.employees.by_category,
+      status: MOCK_DASHBOARD.employees.by_status,
+    }
+  }
+
+  if (p.includes("/employment") || p.includes("/history") || p.includes("/audit") || p.includes("/notes")) {
+    return []
+  }
+
+  if (p.includes("/attendance/devices") || p.includes("/devices")) {
+    return [
+      { id: "DEV-01", name: "Main Entrance Biometric Scanner", model: "eSSL SilkBio-101", ip_address: "192.168.1.201", status: "online", last_heartbeat: new Date().toISOString() },
+      { id: "DEV-02", name: "ER & Trauma Biometric Scanner", model: "eSSL SilkBio-101", ip_address: "192.168.1.202", status: "online", last_heartbeat: new Date().toISOString() },
+      { id: "DEV-03", name: "OT & Sterile Zone Access Terminal", model: "ZKTeco ProCapture-X", ip_address: "192.168.1.203", status: "online", last_heartbeat: new Date().toISOString() },
+      { id: "DEV-04", name: "ICU Biometric Terminal", model: "ZKTeco ProCapture-X", ip_address: "192.168.1.204", status: "online", last_heartbeat: new Date().toISOString() },
+    ]
+  }
+
+  if (p.includes("/attendance/punches") || p.includes("/punches")) {
+    return { items: [], total: 0, page: 1, page_size: 50 }
+  }
+
+  if (p.match(/\/employees\/[^\/]+$/)) {
+    const parts = p.split("/")
+    const empId = parts[parts.length - 1]
+    const found = MOCK_EMPLOYEES.find((e) => e.id === empId || e.employee_code.toLowerCase() === empId.toLowerCase())
+    if (found) {
+      return {
+        ...found,
+        gender: "male",
+        email: `${found.employee_code.toLowerCase()}@apollohospital.org`,
+        date_of_birth: "1985-06-15",
+        blood_group: "O+",
+        pan_number: "ABCDE1234F",
+        aadhaar_last4: "9876",
+        emergency_contact_name: "Family Member",
+        emergency_contact_phone: "+91 98765 00000",
+        address: "Jubilee Hills, Hyderabad",
+        base_salary: 120000,
+        statutory: { pf_opt_out: false, esi_eligible: false, pt_applicable: true },
+        credentials: [
+          {
+            id: `cred-${found.id}`,
+            credential_type: "State Medical Council Registration",
+            number: "MCI-44012",
+            issued_by: "Medical Council of India",
+            valid_from: "2020-01-01",
+            valid_to: "2027-12-31",
+            verified: true,
+          },
+        ],
+      }
+    }
   }
 
   if (p.includes("/hr/employees") || p.includes("/employees")) {
