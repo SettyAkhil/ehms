@@ -333,6 +333,7 @@ function readOrders(): LabOrder[] {
         (t) =>
           !t.id?.startsWith("RAD-TEST-") &&
           t.category !== "RADIOLOGY" &&
+          !isRadiologyTest(t.name, t.category) &&
           !t.name?.toLowerCase().includes("diagnostic imaging study"),
       )
       if (tests.length !== initialTestsCount) {
@@ -520,7 +521,8 @@ export class LabOrderDatabase {
     const orders = readOrders()
     const now = new Date().toISOString()
 
-    const tests: LabOrderTest[] = input.tests.map((test, index) => {
+    const pureLabTests = input.tests.filter((t) => !isRadiologyTest(t.name, t.category))
+    const tests: LabOrderTest[] = pureLabTests.map((test, index) => {
       const def = findTestDefinition(test.name)
       return {
         id: `LT-${index + 1}`,

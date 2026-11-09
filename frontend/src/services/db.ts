@@ -197,7 +197,8 @@ export function hasRecordedVitals(
 ): boolean {
   if (timestamps?.vitalsRecorded) return true
   if (!vitals) return false
-  return Boolean(vitals.bp || vitals.pulse || vitals.temp || vitals.spo2 || vitals.weight)
+  const hasVal = (v: any) => v !== undefined && v !== null && String(v).trim() !== "" && String(v).trim() !== "--"
+  return Boolean(hasVal(vitals.bp) || hasVal(vitals.pulse) || hasVal(vitals.temp) || hasVal(vitals.spo2) || hasVal(vitals.weight))
 }
 
 /** A queue row's patient details, from the fields /api/queue actually sends. */
@@ -992,34 +993,46 @@ class HospitalDatabase {
     dept?: string
     chiefComplaint?: string
   }): Promise<{ patient: DBPatient ;encounter: DBOPEncounter }> {
-    const serverVisit = await apiFetch<{
-      patient_id: string
-      encounter_id: string | number
-      appointment_id: string | number
-      op_number: string | number
-    }>("/api/op/visits", {
-      method: "POST",
-      body: JSON.stringify({
-        patient: {
-          first_name: data.firstName,
-          middle_name: data.middleName,
-          last_name: data.lastName,
-          dob: data.dob,
-          age: data.age,
-          gender: data.sex,
-          phone: data.phone,
-          address: data.address,
-          blood_group: data.bloodGroup,
-        },
-        appointment: {
-          department: data.dept || "Awaiting Triage",
-          visit_type: "OP",
-          appointment_date: new Date().toISOString(),
-          status: "checked_in",
-          chief_complaint: data.chiefComplaint || "OP Visit",
-        },
-      }),
-    })
+    let serverVisit: {
+      patient_id?: string
+      encounter_id?: string | number
+      appointment_id?: string | number
+      op_number?: string | number
+    } | undefined
+
+    try {
+      serverVisit = await apiFetch<{
+        patient_id: string
+        encounter_id: string | number
+        appointment_id: string | number
+        op_number: string | number
+      }>("/api/op/visits", {
+        method: "POST",
+        body: JSON.stringify({
+          patient: {
+            first_name: data.firstName,
+            middle_name: data.middleName,
+            last_name: data.lastName,
+            dob: data.dob,
+            age: data.age,
+            gender: data.sex,
+            phone: data.phone,
+            address: data.address,
+            blood_group: data.bloodGroup,
+          },
+          appointment: {
+            department: data.dept || "Awaiting Triage",
+            visit_type: "OP",
+            appointment_date: new Date().toISOString(),
+            status: "checked_in",
+            chief_complaint: data.chiefComplaint || "OP Visit",
+          },
+        }),
+      })
+    } catch (err: any) {
+      console.warn("Backend OP visit sync deferred (offline/session):", err?.message || err)
+    }
+
     return this.registerNewPatient(data, serverVisit)
   }
 
@@ -1191,29 +1204,39 @@ class HospitalDatabase {
     data?: { dept?: string ;chiefComplaint?: string },
   ): Promise<DBOPEncounter> {
     const nameParts = patient.name.trim().split(/\s+/)
-    const serverVisit = await apiFetch<{
-      encounter_id: string | number
-      op_number: string | number
-    }>("/api/op/visits", {
-      method: "POST",
-      body: JSON.stringify({
-        patient_id: patient.umr,
-        patient: {
-          first_name: nameParts[0] || patient.name,
-          last_name: nameParts.slice(1).join(" ") || "Unknown",
-          phone: patient.phone,
-          age: patient.age,
-          gender: patient.sex,
-        },
-        appointment: {
-          department: data?.dept || "Awaiting Triage",
-          visit_type: "OP",
-          appointment_date: new Date().toISOString(),
-          status: "checked_in",
-          chief_complaint: data?.chiefComplaint || "Revisit Consultation",
-        },
-      }),
-    })
+    let serverVisit: {
+      encounter_id?: string | number
+      op_number?: string | number
+    } | undefined
+
+    try {
+      serverVisit = await apiFetch<{
+        encounter_id: string | number
+        op_number: string | number
+      }>("/api/op/visits", {
+        method: "POST",
+        body: JSON.stringify({
+          patient_id: patient.umr,
+          patient: {
+            first_name: nameParts[0] || patient.name,
+            last_name: nameParts.slice(1).join(" ") || "Unknown",
+            phone: patient.phone,
+            age: patient.age,
+            gender: patient.sex,
+          },
+          appointment: {
+            department: data?.dept || "Awaiting Triage",
+            visit_type: "OP",
+            appointment_date: new Date().toISOString(),
+            status: "checked_in",
+            chief_complaint: data?.chiefComplaint || "Revisit Consultation",
+          },
+        }),
+      })
+    } catch (err: any) {
+      console.warn("Backend revisit sync deferred (offline/session):", err?.message || err)
+    }
+
     return this.createRevisitEncounter(patient.umr, data, serverVisit)
   }
 
@@ -1681,11 +1704,13 @@ class HospitalDatabase {
                 arrival: itemDateIso,
                 registration: itemDateIso,
               },
-              vitals: item.vitals ? {
-                bp: item.vitals.bp || "120/80",
-                pulse: item.vitals.pulse ? String(item.vitals.pulse) : "72",
-                temp: item.vitals.temperature ? String(item.vitals.temperature) : "98.6",
-                spo2: item.vitals.spo2 ? String(item.vitals.spo2) : "98",
+              vitals: item.vitals && (item.vitals.bp || item.vitals.pulse || item.vitals.temperature || item.vitals.spo2 || item.vitals.weight) ? {
+                bp: item.vitals.bp || "",
+                pulse: item.vitals.pulse ? String(item.vitals.pulse) : "",
+                temp: item.vitals.temperature ? String(item.vitals.temperature) : "",
+                spo2: item.vitals.spo2 ? String(item.vitals.spo2) : "",
+                weight: item.vitals.weight ? String(item.vitals.weight) : "",
+                notes: item.vitals.notes || "",
               } : undefined,
             } as any
             encounters.unshift(newEnc)

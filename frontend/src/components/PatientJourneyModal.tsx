@@ -5,6 +5,7 @@ import { encounterArrivalMs } from "../services/encounterTime"
 import { BillingDatabase, RadiologyStudyRecord } from "../services/billingDb"
 import { PharmacyDatabase } from "../services/pharmacyDb"
 import { printRadiologyDocument } from "../utils/radiologyPrint"
+import { isRadiologyTest } from "../utils/testClassifier"
 import RadiologyReportPdfModal from "./radiology/RadiologyReportPdfModal"
 import { Icon } from "./icons"
 
@@ -516,11 +517,10 @@ export default function PatientJourneyModal({
                 </div>
                 {(() => {
                   const isDoctorConsulted = Boolean(
-                    liveEncounter.diagnosis?.trim() ||
-                    (liveEncounter.prescription && liveEncounter.prescription.length > 0) ||
-                    liveEncounter.status === "Consultation Completed" ||
-                    liveEncounter.status === "OP Completed" ||
-                    liveEncounter.status === "Awaiting Billing"
+                    (liveEncounter.status === "Consultation Completed" ||
+                     liveEncounter.status === "OP Completed") &&
+                    ((liveEncounter.prescription && liveEncounter.prescription.length > 0) ||
+                     liveEncounter.diagnosis?.trim())
                   )
 
                   return (
@@ -580,15 +580,34 @@ export default function PatientJourneyModal({
                               )}
                             </div>
 
-                            <div className="bg-[#F8FAFC] p-2.5 rounded-none border border-[#E2E8F0]">
+                            <div className="bg-[#F8FAFC] p-2.5 rounded-none border border-[#E2E8F0] space-y-1.5">
                               <span className="text-[10.5px] uppercase font-bold text-[#64748B] block">
-                                Diagnostic Investigations
+                                Diagnostic Investigations (Department Routing)
                               </span>
-                              <span className="font-medium text-gray-800 block mt-0.5">
-                                {liveEncounter.investigations && liveEncounter.investigations.length > 0
-                                  ? liveEncounter.investigations.join(", ")
-                                  : "No diagnostic tests ordered."}
-                              </span>
+                              {(() => {
+                                const invs = liveEncounter.investigations || []
+                                if (invs.length === 0) {
+                                  return <span className="text-gray-500 italic block">No diagnostic tests ordered.</span>
+                                }
+                                const labInvs = invs.filter((t) => !isRadiologyTest(t))
+                                const radInvs = invs.filter((t) => isRadiologyTest(t))
+                                return (
+                                  <div className="space-y-1.5 text-[11.5px]">
+                                    {labInvs.length > 0 && (
+                                      <div className="flex items-start gap-1.5">
+                                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold uppercase rounded-none shrink-0">Laboratory</span>
+                                        <span className="font-semibold text-gray-900">{labInvs.join(", ")}</span>
+                                      </div>
+                                    )}
+                                    {radInvs.length > 0 && (
+                                      <div className="flex items-start gap-1.5">
+                                        <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold uppercase rounded-none shrink-0">Radiology</span>
+                                        <span className="font-semibold text-gray-900">{radInvs.join(", ")}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })()}
                             </div>
                           </div>
 
@@ -652,45 +671,80 @@ export default function PatientJourneyModal({
                   7
                 </div>
                 <div className="bg-white border border-[#CBD5E1] rounded-none p-4 shadow-2xs space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="font-bold text-[13.5px] text-gray-900 flex items-center gap-1.5">
-                      <span>💳</span> Billing Settlement & Official Receipt
-                    </div>
-                    <span className="font-mono text-[11.5px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-none border border-emerald-200">
-                      {liveEncounter.timestamps?.billingCompleted || (liveEncounter.billing?.status === 'Paid' ? 'Settled' : 'Pending')}
-                    </span>
-                  </div>
+                  {(() => {
+                    const claims = BillingDatabase.getClaims()
+                    const claim = claims.find(
+                      (c) =>
+                        c.id === `CLM-${liveEncounter.id}` ||
+                        (c.encounterId && c.encounterId.toLowerCase() === liveEncounter.id.toLowerCase()) ||
+                        (c.patientId && c.patientId.toUpperCase() === liveEncounter.umr.toUpperCase())
+                    )
+                    const isPaid = (claim && (claim.status === "Paid" || claim.balanceDue <= 0)) || liveEncounter.billing?.status === "Paid"
+                    const receiptNo = claim?.payments?.[0]?.receiptNo || (isPaid ? "RCPT-2026-SETTLED" : undefined)
+                    const items = claim?.items || []
+                    const regFee = liveEncounter.billing?.registrationFee ?? (liveEncounter.isNew === false ? 0 : 20)
+                    const consultFee = liveEncounter.billing?.consultationFee ?? 500
+                    const grandTotal = claim?.totalAmount || liveEncounter.billing?.total || (regFee + consultFee)
 
-                  <div className="bg-[#F8FAFC] p-3 rounded-none border border-[#E2E8F0] space-y-1.5 text-[12px]">
-                    {(() => {
-                      const regFee = liveEncounter.billing?.registrationFee ?? (liveEncounter.isNew === false ? 0 : 20)
-                      const consultFee = liveEncounter.billing?.consultationFee ?? 500
-                      const labFee = liveEncounter.billing?.labFee || 0
-                      const grandTotal = liveEncounter.billing?.total || (regFee + consultFee + labFee)
-                      return (
-                        <>
-                          <div className="flex justify-between text-gray-700">
-                            <span>1. Patient Registration Fee {liveEncounter.isNew === false || regFee === 0 ? "(Existing Patient)" : ""}</span>
-                            <span className="font-mono font-bold text-gray-900">₹{regFee}.00</span>
+                    return (
+                      <>
+                        <div className="flex justify-between items-center">
+                          <div className="font-bold text-[13.5px] text-gray-900 flex items-center gap-1.5">
+                            <span>💳</span> Centralized Billing Settlement & Official Receipt
                           </div>
-                          <div className="flex justify-between text-gray-700">
-                            <span>2. Physician Outpatient Consultation Fee {liveEncounter.assignedDoctor ? `(${liveEncounter.assignedDoctor})` : ""}</span>
-                            <span className="font-mono font-bold text-gray-900">₹{consultFee}.00</span>
+                          <span className={`font-mono text-[11px] font-bold px-2 py-0.5 rounded-none border ${
+                            isPaid
+                              ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                              : "text-amber-700 bg-amber-50 border-amber-200"
+                          }`}>
+                            {isPaid ? `PAID ${receiptNo ? `(${receiptNo})` : ""}` : "PENDING_PAYMENT"}
+                          </span>
+                        </div>
+
+                        <div className="bg-[#F8FAFC] p-3 rounded-none border border-[#E2E8F0] space-y-1.5 text-[12px]">
+                          {items.length > 0 ? (
+                            items.map((it, idx) => (
+                              <div key={it.id || idx} className="flex justify-between text-gray-700">
+                                <span className="flex items-center gap-1.5">
+                                  <span className="font-mono text-gray-400">{idx + 1}.</span>
+                                  <span>{it.description}</span>
+                                  {it.category === "Laboratory" && (
+                                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-1 py-0.2 border border-blue-200">LAB</span>
+                                  )}
+                                  {((it.category as string) === "Radiology / Imaging" || (it.category as string) === "Radiology") && (
+                                    <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-1 py-0.2 border border-purple-200">RAD</span>
+                                  )}
+                                </span>
+                                <span className="font-mono font-bold text-gray-900">₹{(it.total || it.unitPrice || 0).toLocaleString("en-IN")}.00</span>
+                              </div>
+                            ))
+                          ) : (
+                            <>
+                              <div className="flex justify-between text-gray-700">
+                                <span>1. Patient Registration Fee {liveEncounter.isNew === false || regFee === 0 ? "(Existing Patient)" : ""}</span>
+                                <span className="font-mono font-bold text-gray-900">₹{regFee}.00</span>
+                              </div>
+                              <div className="flex justify-between text-gray-700">
+                                <span>2. Physician Outpatient Consultation Fee {liveEncounter.assignedDoctor ? `(${liveEncounter.assignedDoctor})` : ""}</span>
+                                <span className="font-mono font-bold text-gray-900">₹{consultFee}.00</span>
+                              </div>
+                            </>
+                          )}
+                          <div className="pt-2 border-t border-[#E2E8F0] flex justify-between font-bold text-[13px] text-gray-900">
+                            <span>Total Consolidated Bill:</span>
+                            <span className={`font-mono ${isPaid ? "text-emerald-700" : "text-amber-700"}`}>
+                              ₹{grandTotal.toLocaleString("en-IN")}.00 ({isPaid ? `PAID · ${receiptNo || "Receipt Generated"}` : "PENDING_PAYMENT"})
+                            </span>
                           </div>
-                          {labFee > 0 && (
-                            <div className="flex justify-between text-gray-700">
-                              <span>3. Diagnostic Investigations / Triage</span>
-                              <span className="font-mono font-bold text-gray-900">₹{labFee}.00</span>
+                          {!isPaid && (
+                            <div className="text-[11px] text-amber-700 bg-amber-50 p-2 border border-amber-200 rounded-none mt-1">
+                              ⚠️ Payment is collected exclusively through the Central Billing counter. Respective Laboratory sample collection and Radiology scanning workflows are unlocked automatically upon payment.
                             </div>
                           )}
-                          <div className="pt-1.5 border-t border-[#E2E8F0] flex justify-between font-bold text-[13px] text-gray-900">
-                            <span>Total Official Settlement:</span>
-                            <span className="font-mono text-emerald-700">₹{grandTotal}.00 (Status: {liveEncounter.billing?.status || 'Paid'})</span>
-                          </div>
-                        </>
-                      )
-                    })()}
-                  </div>
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
 

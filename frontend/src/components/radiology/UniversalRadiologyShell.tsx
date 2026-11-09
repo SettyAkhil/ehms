@@ -38,7 +38,6 @@ function RadiologyModuleLoader({ moduleName }: { moduleName: string }) {
   )
 }
 
-import NewInvestigationOrderModal from "./NewInvestigationOrderModal"
 import TemplateImporterModal from "./TemplateImporterModal"
 import { RadiologyWorkflowDb } from "../../services/radiologyWorkflowDb"
 import { UniversalRadiologyDb } from "../../services/universalRadiologyDb"
@@ -77,7 +76,6 @@ export default function UniversalRadiologyShell({
   const [viewSubParam, setViewSubParam] = useState<string | null>(initialStudyId || null)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false)
-  const [showNewOrderModal, setShowNewOrderModal] = useState(false)
   const [showTemplateImporterModal, setShowTemplateImporterModal] = useState(false)
   const [globalSearch, setGlobalSearch] = useState("")
   const [tick, setTick] = useState(0)
@@ -473,7 +471,6 @@ export default function UniversalRadiologyShell({
               <div className={activeView === "overview" ? "block" : "hidden"}>
                 <RadiologyOverviewView
                   onNavigateToView={handleNavigate}
-                  onOpenOrderModal={() => setShowNewOrderModal(true)}
                 />
               </div>
             )}
@@ -487,7 +484,6 @@ export default function UniversalRadiologyShell({
                   onNavigateToReporting={(studyId) => {
                     handleNavigate("reporting", studyId)
                   }}
-                  onOpenOrderModal={() => setShowNewOrderModal(true)}
                   initialModalityFilter={
                     viewSubParam && (RADIOLOGY_MODALITIES as readonly string[]).includes(viewSubParam)
                       ? viewSubParam
@@ -512,7 +508,6 @@ export default function UniversalRadiologyShell({
                     handleNavigate("reporting", studyId)
                   }}
                   onNavigateToWorklist={() => handleNavigate("worklist")}
-                  onOpenOrderModal={() => setShowNewOrderModal(true)}
                 />
               </div>
             )}
@@ -556,16 +551,7 @@ export default function UniversalRadiologyShell({
         </main>
       </div>
 
-      {/* ── New Investigation Order Modal ── */}
-      {showNewOrderModal && (
-        <NewInvestigationOrderModal
-          onClose={() => setShowNewOrderModal(false)}
-          onOrderCreated={() => {
-            setShowNewOrderModal(false)
-            setTick((t) => t + 1)
-          }}
-        />
-      )}
+
 
       {/* ── Template Importer Modal ── */}
       {showTemplateImporterModal && (

@@ -4,10 +4,11 @@
   "private": true,
   "description": "HospAI Enterprise Hospital Management System - Centralized RBAC, Multi-Department & Clinical Operations Platform",
   "scripts": {
-    "dev": "npm --prefix frontend run dev",
+    "start": "node run_ehms.mjs",
+    "dev": "node run_ehms.mjs",
+    "frontend": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "preview": "npm --prefix frontend run preview",
-    "start": "npm --prefix frontend run dev",
     "test": "npm --prefix frontend test"
   },
   "keywords": [

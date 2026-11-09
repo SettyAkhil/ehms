@@ -228,7 +228,14 @@ export function useCardLink(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailsKey, knownToken])
-  const fallbackLink = card.umr ? publicPatientPageUrl(card.umr) : null
+  const fallbackLink = card.umr
+    ? publicPatientPageUrl(card.umr, {
+        name: card.patientName,
+        phone: card.phone,
+        age: card.age,
+        gender: card.sex,
+      })
+    : null
   return {
     link: state.token ? publicCardUrl(state.token) : fallbackLink,
     problem: state.token || fallbackLink ? null : state.problem,

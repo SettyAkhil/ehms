@@ -1,10 +1,25 @@
 /**
  * Utility to classify clinical tests as Radiology vs Laboratory,
  * determine imaging modalities, default rooms, and prices.
+ * Dynamically resolves against the existing Diagnostic Tariff & Investigation Master.
  */
 import { priceForTest } from "../services/labOrdersDb"
+import { DiagnosticTariffDatabase } from "../services/diagnosticTariffDb"
+import { findTestDefinition } from "../components/laboratory/labCatalogueSchema"
+import { RADIOLOGY_MODALITIES, RadiologyModality, INITIAL_RADIOLOGY_TARIFFS } from "../services/radiologyTariffsData"
 
-export function isRadiologyTest(testName: string, category?: string): boolean {
+export type InvestigationDepartment = "Laboratory" | "Radiology"
+
+/**
+ * Dynamically identifies the responsible department for an investigation
+ * using the configured category in the existing investigation & tariff master.
+ * Does not rely on hardcoded investigation names.
+ */
+export function resolveInvestigationDepartment(
+  testName: string,
+  category?: string,
+): InvestigationDepartment {
+  // 1. Explicit Category Evaluation
   if (category) {
     const c = category.trim().toUpperCase()
     if (
@@ -14,15 +29,88 @@ export function isRadiologyTest(testName: string, category?: string): boolean {
       c === "CT" ||
       c === "MR" ||
       c === "US" ||
-      c === "NM"
+      c === "NM" ||
+      c.includes("X-RAY") ||
+      c.includes("MAMMOGRAPHY") ||
+      c.includes("DEXA") ||
+      c.includes("ULTRASOUND") ||
+      c.includes("MRI") ||
+      c.includes("DOPPLER") ||
+      c.includes("NUCLEAR MEDICINE") ||
+      c.includes("FLUOROSCOPY") ||
+      c.includes("DENTAL")
     ) {
-      return true
+      return "Radiology"
+    }
+    if (
+      c.includes("LAB") ||
+      c.includes("PATHOLOGY") ||
+      c.includes("HEMATOLOGY") ||
+      c.includes("BIOCHEMISTRY") ||
+      c.includes("MICROBIOLOGY") ||
+      c.includes("SEROLOGY") ||
+      c.includes("IMMUNOLOGY") ||
+      c.includes("THYROID")
+    ) {
+      return "Laboratory"
     }
   }
 
-  const name = (testName || "").toLowerCase().trim()
-  if (!name) return false
+  const rawName = (testName || "").trim()
+  if (!rawName) return "Laboratory"
 
+  // 2. Query Diagnostic Tariff Master Database
+  try {
+    const tariffs = DiagnosticTariffDatabase.getAllTariffs()
+    const q = rawName.toLowerCase()
+    const cleanQ = q.replace(/\s*\([^\)]*\)/g, "").trim()
+    const tariff = tariffs.find((t) => {
+      const tName = (t.name || "").toLowerCase()
+      const tCode = (t.code || "").toLowerCase()
+      const tClean = tName.replace(/\s*\([^\)]*\)/g, "").trim()
+      return (
+        tName === q ||
+        tCode === q ||
+        tClean === cleanQ ||
+        (t.aliases && t.aliases.some((a) => a.toLowerCase() === q || a.toLowerCase() === cleanQ))
+      )
+    })
+
+    if (tariff) {
+      if (tariff.category === "Radiology" || (tariff.department && tariff.department !== "Laboratory")) {
+        return "Radiology"
+      }
+      if (tariff.category === "Laboratory" || tariff.department === "Laboratory") {
+        return "Laboratory"
+      }
+    }
+  } catch {}
+
+  // 3. Query Laboratory Catalogue Schema
+  try {
+    const labDef = findTestDefinition(rawName)
+    if (labDef) {
+      return "Laboratory"
+    }
+  } catch {}
+
+  // 4. Query Radiology Tariffs Catalogue
+  try {
+    const q = rawName.toLowerCase()
+    const radMatch = INITIAL_RADIOLOGY_TARIFFS.find(
+      (r) =>
+        r.name.toLowerCase() === q ||
+        r.code.toLowerCase() === q ||
+        r.name.toLowerCase().includes(q) ||
+        q.includes(r.name.toLowerCase())
+    )
+    if (radMatch) {
+      return "Radiology"
+    }
+  } catch {}
+
+  // 5. Fallback keyword identification for clinical abbreviations
+  const name = rawName.toLowerCase()
   const keywords = [
     "x-ray", "xray", "x ray", "radiograph", "radiography",
     "ct scan", "ct head", "ct chest", "ct abdomen", "ct spine", "ct pelvis", "ct angiogram", "ct-", "hrct",
@@ -39,14 +127,39 @@ export function isRadiologyTest(testName: string, category?: string): boolean {
   ]
 
   if (name.startsWith("ct ") || name.startsWith("ct-") || name.endsWith(" ct") || name.includes(" ct ") || name.includes("ct scan")) {
-    return true
+    return "Radiology"
   }
 
-  return keywords.some((kw) => name.includes(kw))
+  if (keywords.some((kw) => name.includes(kw))) {
+    return "Radiology"
+  }
+
+  return "Laboratory"
+}
+
+export function isRadiologyTest(testName: string, category?: string): boolean {
+  return resolveInvestigationDepartment(testName, category) === "Radiology"
+}
+
+export function isLaboratoryTest(testName: string, category?: string): boolean {
+  return resolveInvestigationDepartment(testName, category) === "Laboratory"
 }
 
 export function getModalityForTest(testName: string): "XR" | "CT" | "MR" | "US" | "NM" {
   const name = (testName || "").toLowerCase().trim()
+  try {
+    const rad = INITIAL_RADIOLOGY_TARIFFS.find(
+      (r) => r.name.toLowerCase() === name || r.code.toLowerCase() === name
+    )
+    if (rad && rad.modality) {
+      const m = rad.modality.toUpperCase()
+      if (m === "CT") return "CT"
+      if (m === "MR" || m === "MRI") return "MR"
+      if (m === "US" || m === "USG" || m === "ECHO" || m === "DOPPLER") return "US"
+      if (m === "NM" || m === "PET") return "NM"
+      if (m === "XR") return "XR"
+    }
+  } catch {}
   if (name.includes("mri") || name.includes("magnetic")) return "MR"
   if (
     name.includes("ct") ||
@@ -84,8 +197,6 @@ export function getRoomForModality(modality: "XR" | "CT" | "MR" | "US" | "NM"): 
     case "XR": default: return "XR-1"
   }
 }
-
-import { RADIOLOGY_MODALITIES, RadiologyModality } from "../services/radiologyTariffsData"
 
 /**
  * Accurately maps any clinical study record, investigation name, or modality code

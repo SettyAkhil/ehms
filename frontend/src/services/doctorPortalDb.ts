@@ -391,6 +391,8 @@ export interface ConsultationRecord {
   dispatchedAt?: string
   prescriptionId?: string
   labOrderId?: string
+  radiologyOrderRef?: string
+  radiologyStudyIds?: string[]
 }
 
 // ── Storage ──────────────────────────────────────────────────────────────────

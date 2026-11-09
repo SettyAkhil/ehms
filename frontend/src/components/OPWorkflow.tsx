@@ -344,10 +344,9 @@ export default function OPWorkflow({
   // Check if Doctor has already finished consultation
   const hasDoctorConsulted =
     (patient.status === "Consultation Completed" ||
-      patient.status === "OP Completed" ||
-      patient.status === "Awaiting Billing") &&
+      patient.status === "OP Completed") &&
     ((patient.prescription && patient.prescription.length > 0) ||
-      Boolean(patient.diagnosis))
+      Boolean(patient.diagnosis?.trim()))
 
   // Sync step if initialStep prop changes
   useEffect(() => {
@@ -2250,8 +2249,7 @@ export default function OPWorkflow({
                           Confirmed Clinical Diagnosis
                         </div>
                         <div className="text-[15px] font-bold text-[#1B4FD8]">
-                          {patient.diagnosis ||
-                            "Acute Coronary Syndrome Rule-Out / Stable Angina"}
+                          {patient.diagnosis || "No formal diagnosis entered"}
                         </div>
                       </div>
                       <div className="bg-white border border-[#CBD5E1] rounded p-4 space-y-1 shadow-2xs">
@@ -2259,8 +2257,7 @@ export default function OPWorkflow({
                           ICD-10 Diagnostic Code
                         </div>
                         <div className="text-[15px] font-mono font-bold text-gray-900">
-                          {patient.icd10 ||
-                            "I20.9 (Angina Pectoris, Unspecified)"}
+                          {patient.icd10 || "—"}
                         </div>
                       </div>
                     </div>

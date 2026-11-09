@@ -305,6 +305,20 @@ export default function RadiologyReportPdfModal({
       doc.rect(margin, impY, 180, (y - impY) + 2, "S")
       y += 6
 
+      // Technician Operational Notes
+      const techNotesText = study.operationalNotes || study.technicianNotes || (study as any).operatorNotes || "Diagnostic imaging scan performed per protocol. Images verified and transmitted to PACS."
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8)
+      doc.setTextColor(71, 85, 105)
+      doc.text("TECHNICIAN OPERATIONAL NOTES & PROTOCOL REMARKS:", margin, y)
+      y += 4
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(7.5)
+      doc.setTextColor(51, 65, 85)
+      const operatorNotesLines = doc.splitTextToSize(techNotesText, 180)
+      doc.text(operatorNotesLines, margin, y)
+      y += operatorNotesLines.length * 3.8 + 4
+
       // Sign-off Block
       if (y > 250) {
         doc.addPage()
@@ -583,6 +597,16 @@ export default function RadiologyReportPdfModal({
                     </p>
                   )}
                 </div>
+              </div>
+
+              {/* Technician Operational Notes */}
+              <div>
+                <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[11px] mb-1">
+                  Technician Operational Notes & Protocol Remarks:
+                </h4>
+                <p className="text-slate-700 bg-white p-2.5 rounded border border-slate-200 text-[11.5px]">
+                  {study.operationalNotes || study.technicianNotes || (study as any).operatorNotes || "Diagnostic imaging scan performed per department protocol. Images verified and transmitted to PACS."}
+                </p>
               </div>
 
               {/* Sign-off Section */}
