@@ -83,6 +83,9 @@ const CLINICAL_SYNONYMS: Record<string, string[]> = {
   telmisartan: ["telmi", "telma", "micardis", "telsartan", "telpres"],
   atorvastatin: [
     "atorva",
+    "atorvas",
+    "atrovas",
+    "atrova",
     "atorv",
     "atorlip",
     "lipitor",
@@ -416,23 +419,30 @@ export function findMatchingMedicine(
           score += 200
           matchType = "exact"
         } else {
-          // D. Fuzzy Typo Match (e.g. "Paraceramol" vs "Paracetamol")
+          // D. Fuzzy Typo Match & Prefix Stem Match (e.g. "atrovas" vs "atorvastatin", "Paraceramol" vs "Paracetamol")
           let bestSim = 0
           for (const c of cores) {
             if (c.length >= 4 && corePrescribed.length >= 4) {
-              const sim = stringSimilarity(c, corePrescribed)
+              const fullSim = stringSimilarity(c, corePrescribed)
+              // Compare against prefix stem if doctor wrote a shorthand or stem with typo
+              const stem = c.substring(0, Math.min(c.length, corePrescribed.length))
+              const stemSim = stringSimilarity(stem, corePrescribed)
+              const sim = Math.max(fullSim, stemSim)
               if (sim > bestSim) bestSim = sim
             }
           }
           for (const t of targets) {
             if (t.length >= 4 && cleanPrescribed.length >= 4) {
-              const sim = stringSimilarity(t, cleanPrescribed)
+              const fullSim = stringSimilarity(t, cleanPrescribed)
+              const stem = t.substring(0, Math.min(t.length, cleanPrescribed.length))
+              const stemSim = stringSimilarity(stem, cleanPrescribed)
+              const sim = Math.max(fullSim, stemSim)
               if (sim > bestSim) bestSim = sim
             }
           }
 
-          if (bestSim >= 0.72) {
-            score += Math.round(bestSim * 180)
+          if (bestSim >= 0.70) {
+            score += Math.round(bestSim * 220)
             matchType = "fuzzy"
           }
         }
