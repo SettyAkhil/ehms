@@ -15,6 +15,7 @@ import {
 } from "../services/patientMessaging"
 import { SendToPatientButton } from "./messaging/SendToPatientDialog"
 import HospitalReceiptModal from "./HospitalReceiptModal"
+import PatientJourneyModal from "./PatientJourneyModal"
 
 export interface OPPatient {
   id?: string
@@ -249,6 +250,7 @@ export default function OPWorkflow({
 
   // Patient workflow state
   const [patient, setPatient] = useState<OPPatient>(EMPTY_OP_PATIENT)
+  const [selectedJourneyEncounter, setSelectedJourneyEncounter] = useState<DBOPEncounter | null>(null)
 
   const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [aiAnalysisResult, setAiAnalysisResult] = useState<{
@@ -902,6 +904,7 @@ export default function OPWorkflow({
                     )
                     if (match) {
                       loadEncounterIntoWorkflow(match)
+                      setSelectedJourneyEncounter(match)
                       e.currentTarget.value = ""
                     } else {
                       alert(`No outpatient record found for barcode: ${val}`)
@@ -935,6 +938,25 @@ export default function OPWorkflow({
               ))}
             </select>
           </div>
+
+          {/* Direct Button to View OP Journey & Card */}
+          <button
+            type="button"
+            onClick={() => {
+              const match = dbEncounters.find(
+                (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+              )
+              if (match) {
+                setSelectedJourneyEncounter(match)
+              } else if (patient.umr) {
+                openJourneyForCode(cardBarcodeValue(patient.umr))
+              }
+            }}
+            className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-200 text-[12px] font-bold rounded cursor-pointer flex items-center gap-1.5 whitespace-nowrap shadow-2xs transition-colors"
+            title="View complete OP Journey & Card with WhatsApp, Mail and PDF send"
+          >
+            <span>🧭</span> OP Journey &amp; Card
+          </button>
         </div>
       </div>
 
@@ -3351,6 +3373,24 @@ export default function OPWorkflow({
             status: "Completed",
           } as any}
           onClose={() => setShowOfficialReceiptModal(false)}
+        />
+      )}
+
+      {/* Patient Journey & OP Card Modal */}
+      {selectedJourneyEncounter && (
+        <PatientJourneyModal
+          encounter={selectedJourneyEncounter}
+          onClose={() => setSelectedJourneyEncounter(null)}
+          onNavigateToDoctorPortal={(encId) => {
+            if (onOpenDoctorPortal) onOpenDoctorPortal(encId)
+          }}
+          onNavigateToOPWorkflow={(encId, step) => {
+            const found = dbEncounters.find((e) => e.id === encId)
+            if (found) {
+              loadEncounterIntoWorkflow(found)
+              setCurrentStep(step ?? 1)
+            }
+          }}
         />
       )}
     </div>

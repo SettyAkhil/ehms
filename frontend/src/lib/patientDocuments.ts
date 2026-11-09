@@ -4,7 +4,8 @@
 
 import type { ClaimRecord, PaymentRecord } from "../services/billingDb"
 import type { PatientDocument } from "../services/patientMessaging"
-import { buildPatientPdf, documentFilename, type DocSection } from "./patientDocumentPdf"
+import { buildPatientPdf, documentFilename, downloadPatientDocument, type DocSection } from "./patientDocumentPdf"
+export { downloadPatientDocument }
 import { formatDateTimeIST } from "./format"
 import {
   formatDate as formatSummaryDate,

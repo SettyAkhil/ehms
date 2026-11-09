@@ -8,6 +8,21 @@ import { printRadiologyDocument } from "../utils/radiologyPrint"
 import { isRadiologyTest } from "../utils/testClassifier"
 import RadiologyReportPdfModal from "./radiology/RadiologyReportPdfModal"
 import { Icon } from "./icons"
+import { useBranding } from "./branding/DocumentBranding"
+import { OpCardPreview, opCardDataFor, printOpCard } from "./opcard/OpCard"
+import {
+  buildJourneyDocument,
+  downloadPatientDocument,
+  journeyMessageVars,
+  BuildJourneyDocumentInput,
+} from "../lib/patientDocuments"
+import { SendToPatientButton } from "./messaging/SendToPatientDialog"
+import {
+  sendPatientMessage,
+  whatsAppHandoffUrl,
+  emailHandoffUrl,
+} from "../services/patientMessaging"
+import { patientPageUrl } from "./patientRecord/patientRecord"
 
 interface PatientJourneyModalProps {
   encounter: DBOPEncounter | null
@@ -90,6 +105,180 @@ export default function PatientJourneyModal({
 
     return false
   })
+
+  const branding = useBranding()
+  const [showOpCard, setShowOpCard] = useState(false)
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
+  const [sendNotice, setSendNotice] = useState<string | null>(null)
+
+  const journeyInput: BuildJourneyDocumentInput = {
+    name: liveEncounter.patientName || "Patient",
+    id: liveEncounter.umr,
+    phone: liveEncounter.phone,
+    email: (liveEncounter as any).email || "",
+    opNumber: liveEncounter.opNumber,
+    token: liveEncounter.queueToken,
+    department: liveEncounter.dept,
+    doctor: liveEncounter.assignedDoctor,
+    room: liveEncounter.room,
+    status: liveEncounter.status,
+    dateOfVisit: liveEncounter.date || liveEncounter.registrationTime || liveEncounter.createdAt,
+    chiefComplaint: liveEncounter.chiefComplaint,
+    symptoms: liveEncounter.symptoms,
+    vitals: liveEncounter.vitals,
+    diagnosis: liveEncounter.diagnosis,
+    icd10: liveEncounter.icd10,
+    advice: liveEncounter.advice,
+    prescriptions: (liveEncounter.prescription || []).map((rx) => ({
+      medicine: typeof rx === "string" ? rx : (rx as any).name || (rx as any).medicine || "",
+      dosage: typeof rx === "string" ? "" : (rx as any).dosage || (rx as any).dose || "",
+      frequency: typeof rx === "string" ? "" : (rx as any).frequency || "",
+      duration: typeof rx === "string" ? "" : (rx as any).duration || "",
+    })),
+    investigations: liveEncounter.investigations,
+    billing: {
+      total: liveEncounter.billing?.totalBilled,
+      status: liveEncounter.billing?.paymentStatus,
+    },
+    steps: [
+      {
+        label: "Arrival & OPD Check-In",
+        at: liveEncounter.date || liveEncounter.timestamps?.arrival || liveEncounter.registrationTime,
+        detail: `Token #${liveEncounter.queueToken || liveEncounter.opNumber} · ${liveEncounter.isNew ? "New Outpatient" : "Returning Patient"}`,
+      },
+      {
+        label: "OP Registration & UMR Verification",
+        at: liveEncounter.timestamps?.registration || liveEncounter.registrationTime,
+        detail: `Permanent UMR ${liveEncounter.umr} confirmed. Official OP Pass active.`,
+      },
+      {
+        label: "Triage & Specialty Doctor Allocation",
+        at: liveEncounter.timestamps?.doctorAssigned,
+        detail: liveEncounter.assignedDoctor
+          ? `Allocated to ${liveEncounter.assignedDoctor} (${liveEncounter.dept || "General"})`
+          : "Specialist allocation in progress",
+      },
+      {
+        label: "Nursing Assessment & Vitals",
+        at: liveEncounter.timestamps?.vitalsRecorded,
+        detail: hasRecordedVitals(liveEncounter.vitals)
+          ? `BP: ${liveEncounter.vitals?.bp || "--"}, Pulse: ${liveEncounter.vitals?.pulse || "--"} bpm, SpO2: ${liveEncounter.vitals?.spo2 || "--"}%`
+          : "Vital signs recorded at triage station",
+      },
+      {
+        label: "Consultation & Clinical Assessment",
+        at: liveEncounter.timestamps?.consultationDone,
+        detail: liveEncounter.diagnosis
+          ? `Diagnosis: ${liveEncounter.diagnosis}${liveEncounter.icd10 ? ` (${liveEncounter.icd10})` : ""}`
+          : "Clinical consultation completed",
+      },
+      {
+        label: "Discharge, Pharmacy & Handoff",
+        at: liveEncounter.timestamps?.pharmacyDispensed || liveEncounter.timestamps?.billingCompleted,
+        detail: liveEncounter.billing?.paymentStatus
+          ? `Payment Status: ${liveEncounter.billing.paymentStatus} · Total: ₹${liveEncounter.billing.totalBilled || 0}`
+          : "Outpatient visit completed",
+      },
+    ],
+  }
+
+  const handleSendWhatsApp = async () => {
+    const cardMsg =
+      `*${branding.hospitalName} - OP Clinical Journey*\n\n` +
+      `Dear ${liveEncounter.patientName},\n` +
+      `Here is your OP Visit & Care Journey summary:\n\n` +
+      `• *Permanent UMR:* ${liveEncounter.umr}\n` +
+      `• *OP Number:* ${liveEncounter.opNumber || "OP"}\n` +
+      `• *Token:* #${liveEncounter.queueToken || liveEncounter.opNumber || "-"}\n` +
+      `• *Attending Doctor:* ${liveEncounter.assignedDoctor || "OPD Doctor"} (${liveEncounter.dept || "General"})\n` +
+      (liveEncounter.vitals && hasRecordedVitals(liveEncounter.vitals)
+        ? `• *Vitals:* BP ${liveEncounter.vitals.bp || "--"}, Pulse ${liveEncounter.vitals.pulse || "--"} bpm, Temp ${liveEncounter.vitals.temp || "--"}°F, SpO2 ${liveEncounter.vitals.spo2 || "--"}%\n`
+        : "") +
+      (liveEncounter.diagnosis ? `• *Diagnosis:* ${liveEncounter.diagnosis}\n` : "") +
+      (liveEncounter.advice ? `• *Advice:* ${liveEncounter.advice}\n` : "") +
+      `\n*View Live Digital OP Card & Care Record:* ${window.location.origin}/#/patient/${encodeURIComponent(liveEncounter.umr)}\n\n` +
+      `Helpline: ${branding.helpline || "0891-2567890"}\n` +
+      `Wishing you good health,\n*${branding.hospitalName}*`
+
+    try {
+      await sendPatientMessage({
+        patient: {
+          name: liveEncounter.patientName,
+          phone: liveEncounter.phone,
+          email: (liveEncounter as any).email,
+          id: liveEncounter.umr,
+          encounterId: liveEncounter.id,
+        },
+        kind: "patient_journey",
+        channels: ["whatsapp"],
+        message: cardMsg,
+      })
+      setSendNotice(`✓ OP Journey sent via WhatsApp to ${liveEncounter.phone}`)
+    } catch {
+      const url = whatsAppHandoffUrl(liveEncounter.phone, cardMsg)
+      if (url) window.open(url, "_blank")
+      setSendNotice(`WhatsApp opened for ${liveEncounter.phone}`)
+    }
+  }
+
+  const handleSendEmail = async () => {
+    let email = (liveEncounter as any).email || ""
+    if (!email) {
+      email = window.prompt("Enter patient email address:", "") || ""
+    }
+    if (!email || !email.includes("@")) return
+
+    const emailSubject = `${branding.hospitalName} - OP Clinical Journey (${liveEncounter.umr} · ${liveEncounter.opNumber})`
+    const emailBody =
+      `Dear ${liveEncounter.patientName},\n\n` +
+      `Thank you for visiting ${branding.hospitalName}. Below is your outpatient care journey and consultation record:\n\n` +
+      `• Permanent UMR: ${liveEncounter.umr}\n` +
+      `• OP Visit Number: ${liveEncounter.opNumber || "OP"}\n` +
+      `• Date: ${liveEncounter.date || new Date().toLocaleDateString()}\n` +
+      `• Attending Physician: ${liveEncounter.assignedDoctor || "OPD Doctor"} (${liveEncounter.dept || "General Medicine"})\n` +
+      `• Room / Chamber: ${liveEncounter.room || "OPD"}\n\n` +
+      (liveEncounter.diagnosis ? `CLINICAL DIAGNOSIS:\n${liveEncounter.diagnosis}\n\n` : "") +
+      (liveEncounter.advice ? `DOCTOR ADVICE & INSTRUCTIONS:\n${liveEncounter.advice}\n\n` : "") +
+      (liveEncounter.prescription && liveEncounter.prescription.length > 0
+        ? `MEDICATIONS PRESCRIBED:\n${liveEncounter.prescription.map((m: any, i: number) => ` ${i + 1}. ${typeof m === "string" ? m : `${m.name || m.medicine} - ${m.dosage || ""} (${m.frequency || ""})`}`).join("\n")}\n\n`
+        : "") +
+      `You can review your complete clinical trajectory and digital OP Card at:\n${window.location.origin}/#/patient/${encodeURIComponent(liveEncounter.umr)}\n\n` +
+      `Warm regards,\n${branding.hospitalName}\nHelpline: ${branding.helpline || "0891-2567890"}`
+
+    try {
+      await sendPatientMessage({
+        patient: {
+          name: liveEncounter.patientName,
+          phone: liveEncounter.phone,
+          email,
+          id: liveEncounter.umr,
+          encounterId: liveEncounter.id,
+        },
+        kind: "patient_journey",
+        channels: ["email"],
+        message: emailBody,
+      })
+      setSendNotice(`✓ OP Journey sent via Email to ${email}`)
+    } catch {
+      const url = emailHandoffUrl(email, emailSubject, emailBody)
+      if (url) window.open(url, "_blank")
+      setSendNotice(`Email client opened for ${email}`)
+    }
+  }
+
+  const handleDownloadJourneyPdf = async () => {
+    try {
+      setIsDownloadingPdf(true)
+      const doc = await buildJourneyDocument(journeyInput)
+      downloadPatientDocument(doc)
+      setSendNotice("✓ Official OP Journey PDF downloaded")
+    } catch (e) {
+      console.error("PDF generation failed:", e)
+      window.print()
+    } finally {
+      setIsDownloadingPdf(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 animate-in fade-in overflow-y-auto patient-journey-modal-root">
@@ -248,6 +437,84 @@ export default function PatientJourneyModal({
             </span>
           </div>
         </div>
+
+        {/* Send / Dispatch Status Notice Banner */}
+        {sendNotice && (
+          <div className="no-print bg-emerald-50 border-b border-emerald-200 px-6 py-2 text-[12px] text-emerald-800 font-semibold flex items-center justify-between animate-in fade-in">
+            <span className="flex items-center gap-1.5">
+              <span>✓</span> {sendNotice}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSendNotice(null)}
+              className="text-emerald-700 hover:text-emerald-950 font-bold px-1.5 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Permanent OP Card & Digital QR Section */}
+        <div className="no-print bg-white border-b border-[#E2E8F0] px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">💳</span>
+            <div>
+              <span className="text-[12.5px] font-bold text-gray-900 block">
+                Official OP Card &amp; Digital QR Link
+              </span>
+              <span className="text-[10.5px] text-[#64748B] block">
+                Permanent barcode &amp; mobile scan URL for {liveEncounter.umr}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowOpCard(!showOpCard)}
+              className="px-2.5 py-1 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#1B4FD8] border border-blue-200 text-[11.5px] font-bold rounded-none cursor-pointer flex items-center gap-1"
+            >
+              <span>{showOpCard ? "Hide Card ▲" : "View OP Card ▼"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                printOpCard(
+                  opCardDataFor(liveEncounter.umr, {
+                    patientName: liveEncounter.patientName,
+                    age: liveEncounter.age,
+                    sex: liveEncounter.sex,
+                    phone: liveEncounter.phone,
+                    bloodGroup: liveEncounter.bloodGroup,
+                  }),
+                  branding,
+                )
+              }
+              className="px-2.5 py-1 bg-white hover:bg-slate-50 text-gray-800 border border-[#CBD5E1] text-[11.5px] font-bold rounded-none cursor-pointer flex items-center gap-1"
+            >
+              <Icon.Download /> Print OP Card
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible OP Card Live Display */}
+        {showOpCard && (
+          <div className="no-print bg-[#F8FAFC] border-b border-[#CBD5E1] p-4 flex flex-col items-center justify-center gap-2 animate-in fade-in">
+            <OpCardPreview
+              card={opCardDataFor(liveEncounter.umr, {
+                patientName: liveEncounter.patientName,
+                age: liveEncounter.age,
+                sex: liveEncounter.sex,
+                phone: liveEncounter.phone,
+                bloodGroup: liveEncounter.bloodGroup,
+              })}
+              branding={branding}
+              zoom={0.92}
+            />
+            <div className="text-[11px] text-[#64748B] text-center max-w-sm mt-1">
+              Scanning the QR code on this card opens this complete patient care journey on any smartphone without login.
+            </div>
+          </div>
+        )}
 
         {/* Navigation Switcher Tabs */}
         <div className="bg-white border-b border-[#CBD5E1] px-6 py-2 flex items-center gap-2 flex-shrink-0">
@@ -1235,19 +1502,79 @@ export default function PatientJourneyModal({
         )}
 
         {/* Modal Bottom Actions */}
-        <div className="no-print px-6 py-3.5 bg-slate-50 border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0">
-          <div className="text-[11.5px] text-[#64748B]">
-            Permanent UMR: <strong>{encounter.umr}</strong> · Visit:{" "}
-            <strong>{encounter.opNumber}</strong>
+        <div className="no-print px-6 py-3.5 bg-slate-50 border-t border-[#E2E8F0] flex flex-col md:flex-row md:items-center justify-between gap-3 flex-shrink-0">
+          <div className="text-[11.5px] text-[#64748B] flex items-center gap-2 flex-wrap">
+            <span>
+              Permanent UMR: <strong>{encounter.umr}</strong> · Visit:{" "}
+              <strong>{encounter.opNumber}</strong>
+            </span>
+            <span>·</span>
+            <a
+              href={patientPageUrl(encounter.umr)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#1B4FD8] font-semibold hover:underline flex items-center gap-1"
+            >
+              <span>🔗</span> Open Full Record Page ↗
+            </a>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {/* WhatsApp Journey Dispatch */}
+            <button
+              type="button"
+              onClick={handleSendWhatsApp}
+              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+              title="Send OP Journey Summary via WhatsApp"
+            >
+              <span>💬</span> Send via WhatsApp
+            </button>
+
+            {/* Email Journey Dispatch */}
+            <button
+              type="button"
+              onClick={handleSendEmail}
+              className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+              title="Send OP Journey Report via Email"
+            >
+              <span>✉️</span> Send via Mail
+            </button>
+
+            {/* Universal Multi-Channel Send Dialog with attached PDF */}
+            <SendToPatientButton
+              patient={{
+                name: liveEncounter.patientName,
+                phone: liveEncounter.phone,
+                email: (liveEncounter as any).email,
+                id: liveEncounter.umr,
+                encounterId: liveEncounter.id,
+              }}
+              kind="patient_journey"
+              vars={journeyMessageVars(liveEncounter)}
+              buildDocument={() => buildJourneyDocument(journeyInput)}
+              documentLabel={`OP-Journey-${liveEncounter.opNumber || liveEncounter.umr}.pdf`}
+              label="Share Journey"
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-300 text-[#1B4FD8] text-[12px] font-bold rounded-none shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            />
+
+            {/* High-Resolution Official A4 PDF Download */}
+            <button
+              type="button"
+              disabled={isDownloadingPdf}
+              onClick={handleDownloadJourneyPdf}
+              className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 text-indigo-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              title="Download official branded PDF report"
+            >
+              <span>📄</span> {isDownloadingPdf ? "Building PDF…" : "Download PDF"}
+            </button>
+
+            {/* Print In-Modal Journey Report */}
             <button
               type="button"
               onClick={() => window.print()}
-              className="px-3.5 py-1.5 bg-white hover:bg-gray-100 border border-[#CBD5E1] text-gray-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+              className="px-3 py-1.5 bg-white hover:bg-gray-100 border border-[#CBD5E1] text-gray-800 text-[12px] font-bold rounded-none shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
             >
-              <Icon.Download /> Print Journey Report
+              <Icon.Download /> Print Report
             </button>
 
             {onNavigateToDoctorPortal && (
@@ -1260,7 +1587,7 @@ export default function PatientJourneyModal({
                 }}
                 className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-200 text-[12px] font-bold rounded-none transition-colors cursor-pointer"
               >
-                Open Doctor Workspace →
+                Doctor Workspace →
               </button>
             )}
 
@@ -1272,9 +1599,9 @@ export default function PatientJourneyModal({
                   onClose()
                   onNavigateToOPWorkflow(encId, 1)
                 }}
-                className="px-4 py-1.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12px] font-bold rounded-none shadow-xs transition-colors cursor-pointer"
+                className="px-3.5 py-1.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12px] font-bold rounded-none shadow-xs transition-colors cursor-pointer"
               >
-                Open Full 6-Step Clinical Journey ➔
+                6-Step Journey ➔
               </button>
             )}
           </div>

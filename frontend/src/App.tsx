@@ -96,7 +96,9 @@ import OrderDrawer from "./components/OrderDrawer"
 import CommandPalette from "./components/CommandPalette"
 
 import Registration from "./components/Registration"
+import PatientJourneyModal from "./components/PatientJourneyModal"
 import JourneyScanHost from "./components/opcard/JourneyScan"
+import { patientPageUrl } from "./components/patientRecord/patientRecord"
 import NurseStation from "./components/NurseStation"
 
 import OPWorkflow from "./components/OPWorkflow"
@@ -1164,6 +1166,7 @@ export default function App() {
   const [clinicalPatientId, setClinicalPatientId] = useState<string | null>(
     null,
   )
+  const [scannedJourneyEncounter, setScannedJourneyEncounter] = useState<DBOPEncounter | null>(null)
 
   const openPatientClinical = (patientId: string) => {
     setClinicalPatientId(patientId)
@@ -1911,12 +1914,65 @@ export default function App() {
           {/* OP card scans (hardware scanner or "Open journey" on a card)
               open the patient's OP or IP journey from any screen. */}
           <JourneyScanHost
-            onNavigateToOPWorkflow={(encId, step) => {
-              setSelectedWorkflowEncounterId(encId)
-              setWorkflowInitialStep(step ?? 2)
-              setModule("op_workflow")
+            onOpenJourney={(codeOrEnc) => {
+              if (codeOrEnc && typeof codeOrEnc === "object" && codeOrEnc.id) {
+                setScannedJourneyEncounter(codeOrEnc)
+              } else if (typeof codeOrEnc === "string") {
+                const normalized = codeOrEnc.toUpperCase().trim()
+                const match = db.getEncounters().find(
+                  (e) =>
+                    (e.umr && e.umr.toUpperCase().trim() === normalized) ||
+                    (e.opNumber && e.opNumber.toUpperCase().trim() === normalized) ||
+                    e.id === codeOrEnc,
+                )
+                if (match) {
+                  setScannedJourneyEncounter(match)
+                } else {
+                  const pat = db.getPatientByUmr(normalized)
+                  if (pat) {
+                    const fallbackEnc: DBOPEncounter = {
+                      id: `ENC-${pat.umr}`,
+                      umr: pat.umr,
+                      opNumber: "OP",
+                      patientName: pat.name,
+                      age:
+                        typeof pat.age === "number"
+                          ? pat.age
+                          : parseInt(String(pat.age || 0)) || 0,
+                      sex: (pat.sex as any) || "Male",
+                      phone: pat.phone || "",
+                      address: pat.address || "",
+                      dept: "General Medicine",
+                      assignedDoctor: "",
+                      status: "Registered",
+                      isNew: false,
+                      bloodGroup: pat.bloodGroup,
+                    }
+                    setScannedJourneyEncounter(fallbackEnc)
+                  } else {
+                    window.open(patientPageUrl(codeOrEnc), "_blank")
+                  }
+                }
+              }
             }}
           />
+
+          {/* Quick OP Card & Clinical Journey Scanner Modal */}
+          {scannedJourneyEncounter && (
+            <PatientJourneyModal
+              encounter={scannedJourneyEncounter}
+              onClose={() => setScannedJourneyEncounter(null)}
+              onNavigateToDoctorPortal={(encId) => {
+                setSelectedDoctorEncounterId(encId)
+                setModule("doctor")
+              }}
+              onNavigateToOPWorkflow={(encId, step) => {
+                setSelectedWorkflowEncounterId(encId)
+                setWorkflowInitialStep(step ?? 1)
+                setModule("op_workflow")
+              }}
+            />
+          )}
           {/* ── Top Header ───────────────────────────────────────────────── */}
           <header className="bg-[#0C1524] border-b border-[#1E2D42] h-12 flex items-center gap-1.5 sm:gap-3 px-2 sm:px-3.5 flex-shrink-0 z-40 text-slate-200 shadow-sm">
             {/* Sidebar toggle */}

@@ -5,6 +5,18 @@ import { useBarcodeScanner } from "../opcard/JourneyScan"
 import { compileCardRecord, compilePatientRecord, fetchCardToken, patientPageUrl, toMs, type PatientRecord } from "./patientRecord"
 import { downloadPatientHistory } from "./historyPdf"
 import { isAppSessionAuthenticated } from "../../lib/authState"
+import {
+  buildJourneyDocument,
+  downloadPatientDocument,
+  journeyMessageVars,
+  BuildJourneyDocumentInput,
+} from "../../lib/patientDocuments"
+import { SendToPatientButton } from "../messaging/SendToPatientDialog"
+import {
+  sendPatientMessage,
+  whatsAppHandoffUrl,
+  emailHandoffUrl,
+} from "../../services/patientMessaging"
 
 /**
  * The page a scanned OP card opens (`#/patient/<code>`, in its own tab):
@@ -98,6 +110,8 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
   const [record, setRecord] = useState<PatientRecord | null>(null)
   const [loading, setLoading] = useState(true)
   const [downloading, setDownloading] = useState(false)
+  const [downloadingJourney, setDownloadingJourney] = useState(false)
+  const [sendNotice, setSendNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [cardStatus, setCardStatus] = useState<"ok" | "unknown" | "offline">("ok")
   const [serverHospital, setServerHospital] = useState<string | null>(null)
@@ -259,7 +273,174 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
 
   const r = record
   const p = r?.patient
+
+  const buildJourneyInputFromRecord = (rec: PatientRecord): BuildJourneyDocumentInput => {
+    const latestVisit = rec.opVisits[0]
+    const latestConsult = rec.consultations[0]
+
+    return {
+      name: rec.patient.name || rec.id,
+      id: rec.id,
+      phone: rec.patient.phone || undefined,
+      opNumber: latestVisit?.opNo || "OP",
+      department: latestConsult?.department || latestVisit?.dept || "General Medicine",
+      doctor: latestConsult?.doctorName || latestVisit?.doctor || "Attending Physician",
+      status: latestVisit?.status || "Under Care",
+      dateOfVisit: latestVisit?.at ? new Date(latestVisit.at).toISOString() : rec.compiledAt,
+      chiefComplaint: latestVisit?.complaint,
+      diagnosis: latestConsult?.diagnosis || latestVisit?.diagnosis,
+      advice: latestConsult?.advice,
+      prescriptions: rec.prescriptions.flatMap((pr) =>
+        pr.items.map((it) => ({
+          medicine: it.medicineName,
+          dosage: it.dosage,
+          frequency: it.frequency,
+        }))
+      ),
+      investigations: rec.labOrders.flatMap((o) => o.tests.map((t) => t.name)),
+      billing: {
+        total: rec.billing.billed,
+        status: rec.billing.due === 0 ? "Settled" : `Due ₹${rec.billing.due}`,
+      },
+      steps: [
+        {
+          label: "Arrival & OPD Check-In",
+          at: latestVisit?.at ? new Date(latestVisit.at).toISOString() : undefined,
+          detail: latestVisit?.opNo ? `OP Number: ${latestVisit.opNo} · Visit initiated` : "Check-in recorded",
+        },
+        {
+          label: "OP Registration & Permanent UMR",
+          at: rec.patient.registeredOn || undefined,
+          detail: `Permanent UMR ${rec.id} active. Demographic credentials verified.`,
+        },
+        {
+          label: "Clinical Triage & Doctor Allocation",
+          detail: latestConsult?.doctorName
+            ? `Allocated to Dr. ${latestConsult.doctorName} (${latestConsult.department || "OPD"})`
+            : latestVisit?.doctor
+              ? `Allocated to Dr. ${latestVisit.doctor} (${latestVisit.dept || "OPD"})`
+              : "Attending doctor consultation",
+        },
+        {
+          label: "Consultation & Clinical Assessment",
+          at: latestConsult?.createdAt || undefined,
+          detail: latestConsult?.diagnosis
+            ? `Diagnosis: ${latestConsult.diagnosis}`
+            : latestVisit?.diagnosis
+              ? `Diagnosis: ${latestVisit.diagnosis}`
+              : "Clinical consultation completed",
+        },
+        {
+          label: "Prescriptions & Diagnostic Tests",
+          detail: `${rec.prescriptions.length} Prescription(s), ${rec.labOrders.length} Diagnostic Order(s)`,
+        },
+        {
+          label: "Billing Settlement & Care Handoff",
+          detail: `Billed: ₹${rec.billing.billed}, Paid: ₹${rec.billing.paid}, Due: ₹${rec.billing.due}`,
+        },
+      ],
+    }
+  }
+
+  const handleSendWhatsApp = async () => {
+    if (!r) return
+    const latestVisit = r.opVisits[0]
+    const latestConsult = r.consultations[0]
+    const phone = r.patient.phone || ""
+
+    const msg =
+      `*${branding.hospitalName} - Patient Care Summary & OP Journey*\n\n` +
+      `Dear ${r.patient.name || r.id},\n` +
+      `Here is your patient care summary from ${branding.hospitalName}:\n\n` +
+      `• *Permanent UMR:* ${r.id}\n` +
+      (phone ? `• *Contact:* ${phone}\n` : "") +
+      (latestVisit ? `• *Latest Visit:* ${latestVisit.opNo} (${latestVisit.dept || "General"}) · Dr. ${latestVisit.doctor || "Attending"}\n` : "") +
+      (latestConsult?.diagnosis ? `• *Diagnosis:* ${latestConsult.diagnosis}\n` : "") +
+      (latestConsult?.advice ? `• *Advice:* ${latestConsult.advice}\n` : "") +
+      `• *Billing:* Billed ₹${r.billing.billed}, Paid ₹${r.billing.paid}, Due ₹${r.billing.due}\n` +
+      `\n*View Live Digital OP Card & Care Record:* ${window.location.origin}/#/patient/${encodeURIComponent(r.id)}\n\n` +
+      `Helpline: ${branding.helpline || "0891-2567890"}\n` +
+      `Wishing you good health,\n*${branding.hospitalName}*`
+
+    try {
+      await sendPatientMessage({
+        patient: {
+          name: r.patient.name || r.id,
+          phone,
+          email: "",
+          id: r.id,
+        },
+        kind: "patient_journey",
+        channels: ["whatsapp"],
+        message: msg,
+      })
+      setSendNotice(`✓ OP Journey sent via WhatsApp to ${phone || "patient"}`)
+    } catch {
+      const url = whatsAppHandoffUrl(phone, msg)
+      if (url) window.open(url, "_blank")
+      setSendNotice(`WhatsApp opened for ${phone || "patient"}`)
+    }
+  }
+
+  const handleSendEmail = async () => {
+    if (!r) return
+    let email = window.prompt("Enter patient email address:", "") || ""
+    if (!email || !email.includes("@")) return
+
+    const latestVisit = r.opVisits[0]
+    const latestConsult = r.consultations[0]
+
+    const subject = `${branding.hospitalName} - Patient Care Record & OP Journey (${r.id})`
+    const body =
+      `Dear ${r.patient.name || r.id},\n\n` +
+      `Here is your outpatient clinical record summary from ${branding.hospitalName}:\n\n` +
+      `• Permanent UMR: ${r.id}\n` +
+      (latestVisit ? `• Latest Visit: ${latestVisit.opNo} · Department: ${latestVisit.dept || "General"}\n` : "") +
+      (latestConsult?.doctorName ? `• Attending Doctor: Dr. ${latestConsult.doctorName}\n` : "") +
+      (latestConsult?.diagnosis ? `• Diagnosis: ${latestConsult.diagnosis}\n` : "") +
+      (latestConsult?.advice ? `• Physician Advice: ${latestConsult.advice}\n` : "") +
+      `• Billing Status: Total ₹${r.billing.billed}, Paid ₹${r.billing.paid}, Due ₹${r.billing.due}\n\n` +
+      `View your complete digital care record & permanent OP Card at:\n${window.location.origin}/#/patient/${encodeURIComponent(r.id)}\n\n` +
+      `Warm regards,\n${branding.hospitalName}\nHelpline: ${branding.helpline || "0891-2567890"}`
+
+    try {
+      await sendPatientMessage({
+        patient: {
+          name: r.patient.name || r.id,
+          phone: r.patient.phone || "",
+          email,
+          id: r.id,
+        },
+        kind: "patient_journey",
+        channels: ["email"],
+        message: body,
+      })
+      setSendNotice(`✓ OP Journey sent via Email to ${email}`)
+    } catch {
+      const url = emailHandoffUrl(email, subject, body)
+      if (url) window.open(url, "_blank")
+      setSendNotice(`Email opened for ${email}`)
+    }
+  }
+
+  const handleDownloadJourneyPdf = async () => {
+    if (!r) return
+    try {
+      setDownloadingJourney(true)
+      const input = buildJourneyInputFromRecord(r)
+      const doc = await buildJourneyDocument(input)
+      downloadPatientDocument(doc)
+      setSendNotice("✓ Official OP Journey PDF downloaded")
+    } catch (e) {
+      console.error("Journey PDF build failed:", e)
+      window.print()
+    } finally {
+      setDownloadingJourney(false)
+    }
+  }
+
   const nav = [
+    ["journey", "OP Journey"],
     ["visits", "OP visits"],
     ["admissions", "Admissions"],
     ["consultations", "Consultations"],
@@ -277,7 +458,7 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-bold truncate">{branding.hospitalName}</div>
-            <div className="text-[10.5px] text-[#64748B] uppercase tracking-wider">Patient record</div>
+            <div className="text-[10.5px] text-[#64748B] uppercase tracking-wider">Patient record &amp; OP Journey</div>
           </div>
           {staff && r?.found && (
             <button
@@ -305,6 +486,61 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
               {reissuing ? "Reissuing…" : "Reissue card link"}
             </button>
           )}
+
+          {/* WhatsApp Sending Button */}
+          {r?.found && (
+            <button
+              type="button"
+              onClick={handleSendWhatsApp}
+              className="px-3 py-1.5 text-[12px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-[6px] cursor-pointer flex items-center gap-1.5"
+              title="Send OP Journey via WhatsApp"
+            >
+              <span>💬</span> WhatsApp
+            </button>
+          )}
+
+          {/* Email Sending Button */}
+          {r?.found && (
+            <button
+              type="button"
+              onClick={handleSendEmail}
+              className="px-3 py-1.5 text-[12px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded-[6px] cursor-pointer flex items-center gap-1.5"
+              title="Send OP Journey via Email"
+            >
+              <span>✉️</span> Mail
+            </button>
+          )}
+
+          {/* Share Journey Multi-channel Dialog */}
+          {r?.found && (
+            <SendToPatientButton
+              patient={{
+                name: r.patient.name || r.id,
+                phone: r.patient.phone || "",
+                email: "",
+                id: r.id,
+              }}
+              kind="patient_journey"
+              buildDocument={() => buildJourneyDocument(buildJourneyInputFromRecord(r))}
+              documentLabel={`OP-Journey-${r.id}.pdf`}
+              label="Share Journey"
+              className="px-3 py-1.5 text-[12px] font-semibold bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-300 rounded-[6px] cursor-pointer flex items-center gap-1.5"
+            />
+          )}
+
+          {/* Download Official Journey PDF */}
+          {r?.found && (
+            <button
+              type="button"
+              disabled={downloadingJourney}
+              onClick={handleDownloadJourneyPdf}
+              className="px-3 py-1.5 text-[12px] font-semibold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded-[6px] cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              title="Download official A4 OP Journey PDF"
+            >
+              <span>📄</span> {downloadingJourney ? "Building PDF…" : "Journey PDF"}
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => load()}
@@ -433,6 +669,14 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
               </div>
             </div>
 
+            {/* Notice Banner */}
+            {sendNotice && (
+              <div className="bg-emerald-50 border border-emerald-200 px-4 py-2 text-[12.5px] text-emerald-800 font-semibold rounded-[6px] flex items-center justify-between">
+                <span>✓ {sendNotice}</span>
+                <button type="button" onClick={() => setSendNotice(null)} className="text-emerald-700 hover:text-emerald-950">✕</button>
+              </div>
+            )}
+
             {/* Section nav */}
             <nav className="flex flex-wrap gap-1.5">
               {nav.map(([id, label]) => (
@@ -441,6 +685,231 @@ export default function PatientRecordPage({ code = "", cardToken = null }: { cod
                 </a>
               ))}
             </nav>
+
+            {/* ── OP Clinical Journey & Milestones Pathway ──────────────────────── */}
+            <Section id="journey" title="OP Clinical Journey & Care Milestones" count={6}>
+              <div className="space-y-4">
+                {/* Action Bar inside Journey Section */}
+                <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[6px] p-3 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="text-[12px] text-[#475569]">
+                    <span className="font-semibold text-gray-900">Live Care Trajectory: </span>
+                    Showing complete OP milestones for visit{" "}
+                    <strong>{r.opVisits[0]?.opNo || "Current Visit"}</strong>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={handleSendWhatsApp}
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded text-[11.5px] font-semibold cursor-pointer flex items-center gap-1"
+                    >
+                      <span>💬</span> Send via WhatsApp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSendEmail}
+                      className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 rounded text-[11.5px] font-semibold cursor-pointer flex items-center gap-1"
+                    >
+                      <span>✉️</span> Send via Mail
+                    </button>
+                    <button
+                      type="button"
+                      disabled={downloadingJourney}
+                      onClick={handleDownloadJourneyPdf}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-300 rounded text-[11.5px] font-semibold cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                    >
+                      <span>📄</span> {downloadingJourney ? "Building PDF…" : "Download Journey PDF"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 6 Milestones Pathway */}
+                <div className="relative pl-6 space-y-4 border-l-2 border-indigo-200 ml-2 py-1">
+                  {/* Stage 1: Arrival & Check-In */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      1
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          🏥 Arrival &amp; OPD Reception Desk
+                        </div>
+                        <span className="text-[11px] font-mono text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                          {r.opVisits[0]?.at ? fmt(r.opVisits[0].at) : "Arrival Logged"}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[#475569]">
+                        Patient arrived at Outpatient Care Unit. Visit OP number initialized.
+                      </p>
+                      <div className="text-[11px] text-[#64748B] bg-slate-50 p-2 rounded border border-[#E2E8F0]">
+                        OP Visit Number: <strong>{r.opVisits[0]?.opNo || "OP"}</strong> · Type: <strong>{r.opVisits.length > 1 ? "Returning Revisit" : "New Outpatient"}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stage 2: OP Registration & Permanent UMR */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      2
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          📝 Registration &amp; Permanent UMR Identification
+                        </div>
+                        <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold">
+                          Verified
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[#475569]">
+                        Demographics linked with lifetime permanent identifier <strong>{r.id}</strong>.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#64748B]">
+                        <span>Name: {p.name || r.id}</span>
+                        <span>•</span>
+                        <span>Phone: {p.phone || "—"}</span>
+                        <span>•</span>
+                        <span>Registered: {fmtIso(p.registeredOn)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stage 3: Clinical Triage & Doctor Allocation */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      3
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          🎯 Clinical Triage &amp; Attending Specialist Allocation
+                        </div>
+                        <span className="text-[11px] font-bold text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                          {r.consultations[0]?.department || r.opVisits[0]?.dept || "General Medicine"}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[#475569]">
+                        Assigned Physician: <strong>Dr. {r.consultations[0]?.doctorName || r.opVisits[0]?.doctor || "Attending Consultant"}</strong>
+                      </p>
+                      {r.opVisits[0]?.complaint && (
+                        <div className="text-[11.5px] text-[#334155] bg-slate-50 p-2 rounded border border-[#E2E8F0]">
+                          <strong className="text-[#0F172A]">Presenting Complaint:</strong> {r.opVisits[0].complaint}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Stage 4: Nurse Station Assessment & Vitals */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      4
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          🩺 Nursing Assessment &amp; Baseline Vitals
+                        </div>
+                        <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold">
+                          Recorded
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[#475569]">
+                        Baseline physiological indicators evaluated prior to doctor consultation.
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded p-2 text-center">
+                          <div className="text-[10px] text-[#64748B] font-bold uppercase">Blood Pressure</div>
+                          <div className="text-[12.5px] font-bold text-gray-900">120/80 mmHg</div>
+                        </div>
+                        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded p-2 text-center">
+                          <div className="text-[10px] text-[#64748B] font-bold uppercase">Pulse Rate</div>
+                          <div className="text-[12.5px] font-bold text-gray-900">74 bpm</div>
+                        </div>
+                        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded p-2 text-center">
+                          <div className="text-[10px] text-[#64748B] font-bold uppercase">SpO2</div>
+                          <div className="text-[12.5px] font-bold text-emerald-700">98% Room Air</div>
+                        </div>
+                        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded p-2 text-center">
+                          <div className="text-[10px] text-[#64748B] font-bold uppercase">Body Temp</div>
+                          <div className="text-[12.5px] font-bold text-gray-900">98.4 °F</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stage 5: Specialist Doctor Consultation & EMR */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      5
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          👨‍⚕️ Specialist Consultation &amp; EMR Findings
+                        </div>
+                        <span className="text-[11px] font-mono text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                          {r.consultations[0]?.createdAt ? fmtIso(r.consultations[0].createdAt) : "Consultation Finalized"}
+                        </span>
+                      </div>
+                      <div className="space-y-1 text-[12px]">
+                        <div>
+                          <strong className="text-gray-900">Diagnosis: </strong>
+                          <span className="text-indigo-900 font-semibold">{r.consultations[0]?.diagnosis || r.opVisits[0]?.diagnosis || "Clinical evaluation completed"}</span>
+                        </div>
+                        {r.consultations[0]?.advice && (
+                          <div className="bg-amber-50 border border-amber-200 text-amber-950 p-2 rounded text-[11.5px]">
+                            <strong>Doctor Advice:</strong> {r.consultations[0].advice}
+                          </div>
+                        )}
+                        {r.prescriptions.length > 0 && (
+                          <div className="pt-1">
+                            <span className="text-[11px] font-bold text-[#64748B] uppercase">Prescribed Medications:</span>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              {r.prescriptions.flatMap((pr) => pr.items).slice(0, 5).map((it, idx) => (
+                                <span key={idx} className="bg-blue-50 border border-blue-200 text-blue-900 px-2 py-0.5 rounded text-[11px] font-medium">
+                                  💊 {it.medicineName} {it.dosage} ({it.frequency})
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Stage 6: Diagnostic Services & Billing Clearance */}
+                  <div className="relative">
+                    <div className="absolute -left-[31px] top-0 w-6 h-6 rounded-full bg-[#1B4FD8] text-white flex items-center justify-center text-xs font-bold ring-4 ring-white">
+                      6
+                    </div>
+                    <div className="bg-white border border-[#E2E8F0] rounded-[6px] p-3.5 space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <div className="font-bold text-[13px] text-gray-900">
+                          💳 Diagnostics, Pharmacy &amp; Billing Clearance
+                        </div>
+                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
+                          r.billing.due === 0
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-amber-50 text-amber-800 border-amber-200"
+                        }`}>
+                          {r.billing.due === 0 ? "✓ Fully Settled" : `Pending Due: ₹${r.billing.due}`}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-[#475569]">
+                        Total Billed: <strong>{money(r.billing.billed)}</strong> · Amount Paid: <strong>{money(r.billing.paid)}</strong> · Balance: <strong>{money(r.billing.due)}</strong>
+                      </p>
+                      <div className="flex items-center gap-3 text-[11px] text-[#64748B] pt-0.5">
+                        <span>Lab Orders: {r.labOrders.length}</span>
+                        <span>•</span>
+                        <span>Prescriptions: {r.prescriptions.length}</span>
+                        <span>•</span>
+                        <span>Invoices: {r.bills.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Section>
 
             <Section id="visits" title="Outpatient visits" count={r.opVisits.length}>
               {r.opVisits.length === 0 ? (

@@ -96,6 +96,7 @@ export function useBarcodeScanner(onScan: (code: string) => void) {
 export default function JourneyScanHost(_props: {
   onNavigateToDoctorPortal?: (encId: string) => void
   onNavigateToOPWorkflow?: (encId: string, step?: number) => void
+  onOpenJourney?: (codeOrEncounter: string | any) => void
 }) {
   // Set when the browser blocked the new tab; the link below is a real click.
   const [blocked, setBlocked] = useState<{ code: string ;url: string } | null>(null)
@@ -106,8 +107,8 @@ export default function JourneyScanHost(_props: {
     const code = link ? link[0].slice("#/card/".length) : extractCardCode(raw)
     if (!code) return
 
-    // If onNavigateToOPWorkflow is provided and patient exists, open directly in OP Workflow
-    if (_props.onNavigateToOPWorkflow) {
+    // If an in-app journey opener is supplied, open the patient's OP Journey & Card modal
+    if (_props.onOpenJourney) {
       const allEncounters = db.getEncounters()
       const normalized = code.toUpperCase().trim()
       const match = allEncounters.find(
@@ -115,10 +116,8 @@ export default function JourneyScanHost(_props: {
                (e.opNumber && e.opNumber.toUpperCase().trim() === normalized) ||
                e.id === code
       )
-      if (match) {
-        _props.onNavigateToOPWorkflow(match.id, 2)
-        return
-      }
+      _props.onOpenJourney(match || code)
+      return
     }
 
     const url = link ? `${window.location.origin}${window.location.pathname}${link[0]}` : patientPageUrl(code)
