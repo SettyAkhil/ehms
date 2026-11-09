@@ -26,20 +26,26 @@ The application will start automatically at **`http://localhost:8443`**.
 
 ---
 
-## 🔑 Default Credentials
+## 🔑 Signing In
 
-| Role | Username / ID | Password | Access Level |
-| :--- | :--- | :--- | :--- |
-| **System Administrator** | `admin` | `password123` | Full Hospital Platform & Administration |
-| **Chief Physician** | `doctor` | `password123` | Doctor Portal, Encounters, Clinical |
-| **Laboratory Technician** | `lab` | `password123` | Diagnostics, Specimen Collection, Lab Workbench |
-| **Chief Pharmacist** | `pharmacy` | `password123` | Pharmacy & Dispensary, GRN, Stock Movement |
-| **Staff Nurse** | `nurse` | `password123` | Nursing Station, Vitals, Triage |
-| **Front Office Reception** | `reception` | `password123` | Patient Registration, Appointments, Queue |
-| **Billing Executive** | `billing` | `password123` | Cash Desk, OP/IP Invoices, Receipts |
-| **Insurance Officer** | `insurance` | `password123` | Pre-auth, Cashless Claims, TPA Decisions |
-| **Finance Manager** | `finance` | `password123` | General Ledger, Chart of Accounts, Vouchers |
-| **HR Manager** | `hr` | `password123` | Employees Master, Shifts, Attendance, Leaves |
+There are no shared demo accounts. Sign-in is two steps: **select your role**, then enter the
+User ID and password your administrator created for you. The server checks that the role
+matches the one assigned to the account.
+
+| Situation | First account |
+| :--- | :--- |
+| Local development (`npm run dev`) | `admin` / `Admin@123` (role: System Administrator) |
+| Docker deployment | `admin` / the `INITIAL_ADMIN_PASSWORD` generated in `.env` |
+
+The bootstrap admin is created only on an empty database, and its password is never reset
+afterwards. Change it after the first sign-in, then create staff accounts in **Administration**.
+
+---
+
+## 🚢 Production Deployment
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)**: Docker Compose stack, databases, environment, backups
+and operations.
 
 ---
 

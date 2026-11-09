@@ -30,7 +30,7 @@ if (-not (Test-Path "frontend/node_modules")) {
 $port = 8443
 Write-Host ""
 Write-Host "[STARTING] Launching HospAI Enterprise HMS on http://localhost:$port" -ForegroundColor Cyan
-Write-Host "[CREDENTIALS] System Administrator: admin / password123" -ForegroundColor Yellow
+Write-Host "[SIGN IN] Select System Administrator, then admin / Admin@123 (local default; change it after first login)" -ForegroundColor Yellow
 Write-Host ""
 
 Start-Process "http://localhost:$port" -ErrorAction SilentlyContinue

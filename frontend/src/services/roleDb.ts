@@ -963,7 +963,7 @@ export class RoleDatabase {
               id: `U_${matchedDoc.id}`,
               name: matchedDoc.name,
               username: matchedDoc.username || cleanUser,
-              password: matchedDoc.password || "Doctor@123",
+              password: matchedDoc.password,
               staffId: matchedDoc.staffId || matchedDoc.id,
               roleId: matchedDoc.roleId || "ROLE_DOCTOR",
               status: matchedDoc.verified !== false ? "Active" : "Inactive",
@@ -1018,34 +1018,9 @@ export class RoleDatabase {
     if (!user) return null
     if (user.status === "Inactive") return null
 
-    // 4. Password validation:
-    // Matches the exact individual password saved by the admin,
-    // OR matches standard demo passwords for the built-in demo accounts
-    const isMockAccount = [
-      "admin",
-      "doctor",
-      "nurse",
-      "pharmacy",
-      "lab",
-      "reception",
-      "billing",
-      "finance",
-      "radiology",
-      "insurance",
-      "hr",
-    ].includes(String(user.username || "").toLowerCase())
-
-    const pwMatches =
-      Boolean(user.password && user.password === cleanPass) ||
-      Boolean(user.password && user.password.toLowerCase() === cleanPass.toLowerCase()) ||
-      (isMockAccount &&
-        (cleanPass === "password123" ||
-          cleanPass === "Doctor@123" ||
-          cleanPass === "doctor123" ||
-          cleanPass === "Admin@123" ||
-          cleanPass === "admin" ||
-          cleanPass === "password")) ||
-      (!user.password && (cleanPass === "password123" || cleanPass === "Doctor@123"))
+    // 4. Password validation: only the exact password stored for this account
+    // (set by the administrator) is accepted. No shared demo/default passwords.
+    const pwMatches = Boolean(user.password) && user.password === cleanPass
 
     if (!pwMatches) {
       return null
@@ -1107,76 +1082,6 @@ export class RoleDatabase {
     }
     this.saveRoles(updated)
     return updated
-  }
-
-  static authenticate(username: string, password?: string): {
-    user: AppUser
-    role: AppRole
-  } {
-    const cleanUser = (username || "admin").trim().toLowerCase()
-    const cleanPass = (password || "").trim()
-
-    let users: AppUser[] = []
-    try {
-      users = this.getUsers()
-    } catch {
-      users = getInitialUsers()
-    }
-
-    let user = users.find((u) => {
-      if (!u || !u.username) return false
-      if (String(u.username).trim().toLowerCase() !== cleanUser) return false
-      if (u.status === "Inactive") return false
-
-      // 1. Exact match with stored password
-      if (u.password && u.password === cleanPass) return true
-
-      // 2. Admin standard allowed credentials
-      if (cleanUser === "admin") {
-        if (
-          !cleanPass ||
-          cleanPass === "password123" ||
-          cleanPass === "admin" ||
-          cleanPass === "Admin@123" ||
-          cleanPass.toLowerCase() === "admin@123" ||
-          cleanPass === "admin123"
-        ) {
-          return true
-        }
-      }
-
-      // 3. Fallback for standard default password
-      if (cleanPass === "password123" || cleanPass === "password") return true
-
-      return false
-    })
-
-    if (!user) {
-      if (cleanUser === "admin") {
-        const initial = getInitialUsers()
-        user = initial.find((u) => u.username === "admin") || initial[0]
-      } else {
-        throw new Error("Invalid username or password.")
-      }
-    }
-
-    let roles: AppRole[] = INITIAL_ROLES
-    try {
-      const storedRoles = this.getRoles()
-      if (Array.isArray(storedRoles) && storedRoles.length > 0) {
-        roles = storedRoles
-      }
-    } catch {
-      roles = INITIAL_ROLES
-    }
-
-    const role =
-      roles.find((r) => r && r.id === user.roleId) ||
-      roles.find((r) => r && r.id === "ROLE_ADMIN") ||
-      roles[0] ||
-      INITIAL_ROLES[0]
-
-    return { user, role }
   }
 
   static deleteRole(roleId: string): { success: boolean; error?: string } {

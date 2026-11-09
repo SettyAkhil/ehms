@@ -295,7 +295,12 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    if not password or not hashed:
+        return False
+    try:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
 
 
 def _now_utc() -> datetime:
@@ -675,8 +680,16 @@ def seed_initial_access_roles(hospital_id: Optional[int] = None):
 
 
 def create_default_users():
-    """Seed only the first System Admin; never create demo staff accounts."""
+    """Create the first System Admin on an empty database.
+
+    Never creates demo staff, and never modifies an existing account: the admin's
+    password is only set here when the account is first created, so a password
+    changed by the administrator survives restarts. The first-boot password comes
+    from INITIAL_ADMIN_PASSWORD (default "Admin@123" for local installs) and must
+    be changed after the first sign-in.
+    """
     hospital_id = resolve_hospital_id()
+    initial_password = os.getenv("INITIAL_ADMIN_PASSWORD", "").strip() or "Admin@123"
     with get_connection() as conn:
         cursor = conn.cursor()
 
@@ -684,7 +697,7 @@ def create_default_users():
             {
                 "username": "admin",
                 "email": "admin@hospital.com",
-                "password_hash": hash_password("Admin@123"),
+                "password_hash": hash_password(initial_password),
                 "role": "employee",
                 "access_role": "owner",
                 "user_type": "admin",
@@ -700,31 +713,20 @@ def create_default_users():
         ]
 
         for user in defaults:
-            # Only touches login-usability fields (password/email/active status) on an
-            # already-existing row -- NOT role/access_role/user_type/module_access.
-            # The sole local bootstrap account keeps its existing role grants.
-            # Re-seeding only restores its known password/email/active status;
-            # templates and all staff identities are handled separately.
+            # Existing account (any hospital row with this username/email): leave
+            # it exactly as the administrator configured it.
             cursor.execute(
                 """
-                UPDATE users
-                SET password_hash = ?,
-                    email = ?,
-                    status = 'active'
+                SELECT 1 FROM users
                 WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
                 """,
-                (
-                    user["password_hash"],
-                    user["email"],
-                    user["username"],
-                    user["email"],
-                ),
+                (user["username"], user["email"]),
             )
-            # Commit before add_employee(), which opens its own connection --
-            # otherwise this connection's still-open UPDATE transaction
-            # self-deadlocks against it ("database is locked").
+            exists = cursor.fetchone() is not None
+            # Close this connection's read transaction before add_employee(),
+            # which opens its own connection.
             conn.commit()
-            if cursor.rowcount == 0:
+            if not exists:
                 user["employee_id"] = generate_employee_id(hospital_id=hospital_id)
                 try:
                     add_employee(user, hospital_id=hospital_id)
@@ -778,64 +780,9 @@ def authenticate(
             else:
                 raise
         user = cursor.fetchone()
-        if not user:
-            # Check if doctor exists in doctors table and provision into users
-            try:
-                cursor.execute(
-                    _to_sql_params("""
-                        SELECT id, hospital_id, doctor_name, department, qualification,
-                               specialty, section, staff_id, username, room, status, email, phone
-                        FROM doctors
-                        WHERE (LOWER(username) = LOWER(?) OR LOWER(staff_id) = LOWER(?) OR LOWER(doctor_name) = LOWER(?))
-                          AND hospital_id = ?
-                    """),
-                    (clean_identifier, clean_identifier, clean_identifier, scoped_hospital_id),
-                )
-                doc_row = cursor.fetchone()
-                if doc_row:
-                    doc_map = dict(doc_row)
-                    doc_uname = (doc_map.get("username") or clean_identifier).strip().lower()
-                    doc_pwd = password if len(password) >= 4 else "Doctor@123"
-                    try:
-                        pw_hash = bcrypt.hashpw(doc_pwd.encode(), bcrypt.gensalt(10)).decode()
-                    except Exception:
-                        pw_hash = "mock_hash_doctor123"
-                    doc_modules = json.dumps([
-                        "dashboard", "clinical", "doctor_workflow", "patients", "chart",
-                        "inpatient", "emergency", "op_workflow", "appointments", "queue"
-                    ])
-                    cursor.execute(
-                        _to_sql_params("""
-                            INSERT INTO users (
-                                hospital_id, username, password_hash, role, role_key, access_role,
-                                user_type, module_access, job_role, full_name, email,
-                                phone, department, employee_id, status
-                            ) VALUES (?, ?, ?, 'staff', 'ROLE_DOCTOR', 'clinician', 'normal', ?, 'Doctor', ?, ?, ?, ?, ?, 'active')
-                        """),
-                        (
-                            scoped_hospital_id, doc_uname, pw_hash, doc_modules,
-                            doc_map.get("doctor_name"), doc_map.get("email") or f"{doc_uname}@hospital.org",
-                            doc_map.get("phone") or "", doc_map.get("department") or "Clinical",
-                            doc_map.get("staff_id") or f"DOC-{doc_map.get('id')}"
-                        )
-                    )
-                    conn.commit()
-                    cursor.execute(
-                        _to_sql_params("""
-                            SELECT u.id, u.hospital_id, u.username, u.password_hash, u.role, u.role_key, u.access_role, u.user_type,
-                                   u.module_access, u.job_role, u.full_name, u.email, u.phone, u.employee_id, u.status,
-                                   h.code as hospital_code, h.status as hospital_status,
-                                   r.status as assigned_role_status
-                            FROM users u
-                            LEFT JOIN hospitals h ON h.id = u.hospital_id
-                            LEFT JOIN hospital_roles r ON r.hospital_id = u.hospital_id AND r.role_key = u.role_key
-                            WHERE LOWER(u.username) = LOWER(?) AND u.hospital_id = ?
-                        """),
-                        (doc_uname, scoped_hospital_id),
-                    )
-                    user = cursor.fetchone()
-            except Exception as doc_lookup_err:
-                pass
+        # Only accounts that exist in `users` (created by an administrator or via
+        # Doctor Master, both of which store the admin-chosen password) may sign in.
+        # A doctors-table row alone is not a credential.
 
         if not user:
             return None
@@ -850,11 +797,8 @@ def authenticate(
             or str(user_map.get("access_role") or "").lower() == "clinician"
             or str(user_map.get("job_role") or "").lower() == "doctor"
         )
+        # The stored bcrypt hash is the only accepted credential.
         pw_valid = verify_password(password, user_map.get("password_hash", ""))
-        if not pw_valid and is_admin and password in ("Admin@123", "password123", "admin123", "Admin123", "admin"):
-            pw_valid = True
-        if not pw_valid and is_doctor and password in ("Doctor@123", "doctor123", "password123", "password"):
-            pw_valid = True
         if pw_valid:
             if user_map.get("status") != "active":
                 return {"error": "Account is not active. Please contact administrator."}

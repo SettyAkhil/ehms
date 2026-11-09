@@ -27,7 +27,7 @@ fi
 PORT=8443
 echo ""
 echo "[STARTING] Launching HospAI Enterprise HMS on http://localhost:$PORT"
-echo "[CREDENTIALS] System Administrator: admin / password123"
+echo "[SIGN IN] Select System Administrator, then admin / Admin@123 (local default; change it after first login)"
 echo ""
 
 npm --prefix frontend run dev -- --host 0.0.0.0 --port $PORT

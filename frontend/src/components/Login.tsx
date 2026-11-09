@@ -1,8 +1,27 @@
-import React, { useState, useEffect } from "react"
-import { apiFetch } from "../lib/api"
+import React, { useState, useEffect, useMemo, useRef } from "react"
+import {
+  ArrowLeft,
+  Briefcase,
+  ChevronRight,
+  ClipboardList,
+  Eye,
+  EyeOff,
+  FlaskConical,
+  HeartPulse,
+  Loader2,
+  Lock,
+  Pill,
+  Search,
+  ShieldCheck,
+  Stethoscope,
+  TriangleAlert,
+  User,
+} from "lucide-react"
+import { apiFetch, LOCAL_MOCKS_ENABLED } from "../lib/api"
 import { RoleDatabase, ALL_SYSTEM_MODULES, type AppUser } from "../services/roleDb"
 import { HospAILogo } from "./HospAILogo"
 import { KalpraLogo } from "./KalpraLogo"
+import "./Login.css"
 
 interface LoginRoleOption {
   value: string
@@ -61,62 +80,6 @@ const ROLES_LIST: LoginRoleOption[] = [
   { value: "ROLE_SURGEON", label: "Surgeon", sub: "Surgical Suite & OT Procedures" },
   { value: "ROLE_ER_PHYSICIAN", label: "Emergency Physician", sub: "Trauma, Resuscitation & Triage" },
 ]
-
-export function getRoleDefaultCredentials(roleKey: string): { username: string; password: string } | null {
-  const key = (roleKey || "").toUpperCase().trim()
-  if (key === "ROLE_ADMIN" || key === "ADMIN") {
-    return { username: "admin", password: "password123" }
-  }
-  if (key === "ROLE_DOCTOR" || key === "DOCTOR") {
-    return { username: "doctor", password: "Doctor@123" }
-  }
-  if (key === "ROLE_NURSE" || key === "NURSE") {
-    return { username: "nurse", password: "password123" }
-  }
-  if (key === "ROLE_PHARMACIST" || key === "PHARMACY") {
-    return { username: "pharmacy", password: "password123" }
-  }
-  if (key === "ROLE_LAB_TECHNICIAN" || key === "LAB") {
-    return { username: "lab", password: "password123" }
-  }
-  if (key === "ROLE_RECEPTIONIST" || key === "RECEPTION") {
-    return { username: "reception", password: "password123" }
-  }
-  if (key === "ROLE_BILLING_EXECUTIVE" || key === "BILLING") {
-    return { username: "billing", password: "password123" }
-  }
-  if (key === "ROLE_ACCOUNTANT" || key === "FINANCE") {
-    return { username: "finance", password: "password123" }
-  }
-  if (key === "ROLE_RADIOLOGIST" || key === "RADIOLOGY") {
-    return { username: "radiology", password: "password123" }
-  }
-  if (key === "ROLE_INSURANCE_TPA_OFFICER" || key === "INSURANCE") {
-    return { username: "insurance", password: "password123" }
-  }
-  if (key === "ROLE_SURGEON" || key === "ROLE_ANESTHETIST" || key === "ROLE_ER_PHYSICIAN") {
-    return { username: "doctor", password: "Doctor@123" }
-  }
-  if (key === "ROLE_PATHOLOGIST") {
-    return { username: "lab", password: "password123" }
-  }
-
-  // Check RoleDatabase for any user assigned to this role
-  try {
-    const users = RoleDatabase.getUsers()
-    const match = users.find(
-      (u) => (u.roleId?.toUpperCase() === key || u.roleId === roleKey) && (u.status || "Active") === "Active"
-    )
-    if (match) {
-      return {
-        username: match.username || match.staffId || match.id,
-        password: match.password || "password123",
-      }
-    }
-  } catch {}
-
-  return null
-}
 
 // Backend grants are domain-oriented; the shell has a few presentation keys
 // with different names. Expand only those aliases for navigation visibility.
@@ -245,74 +208,150 @@ export function loginUserFromAuthenticated(
   }
 }
 
+type RoleGroup =
+  | "Administration"
+  | "Clinical"
+  | "Nursing"
+  | "Diagnostics"
+  | "Pharmacy"
+  | "Front Office & Finance"
+  | "Operations & HR"
+
+const ROLE_GROUP_ORDER: RoleGroup[] = [
+  "Administration",
+  "Clinical",
+  "Nursing",
+  "Diagnostics",
+  "Pharmacy",
+  "Front Office & Finance",
+  "Operations & HR",
+]
+
+const ROLE_GROUP_ICON: Record<RoleGroup, React.ComponentType<{ className?: string }>> = {
+  Administration: ShieldCheck,
+  Clinical: Stethoscope,
+  Nursing: HeartPulse,
+  Diagnostics: FlaskConical,
+  Pharmacy: Pill,
+  "Front Office & Finance": ClipboardList,
+  "Operations & HR": Briefcase,
+}
+
+const ROLE_GROUP_TONE: Record<RoleGroup, { tile: string; solid: string; dot: string }> = {
+  Administration: { tile: "bg-[#EEF2FF] text-[#4F46E5]", solid: "bg-gradient-to-br from-[#4F46E5] to-[#6366F1] text-white", dot: "bg-[#6366F1]" },
+  Clinical: { tile: "bg-[#EFF6FF] text-[#2563EB]", solid: "bg-gradient-to-br from-[#1B4FD8] to-[#3B82F6] text-white", dot: "bg-[#3B82F6]" },
+  Nursing: { tile: "bg-[#FFF1F2] text-[#E11D48]", solid: "bg-gradient-to-br from-[#E11D48] to-[#F43F5E] text-white", dot: "bg-[#F43F5E]" },
+  Diagnostics: { tile: "bg-[#F5F3FF] text-[#7C3AED]", solid: "bg-gradient-to-br from-[#7C3AED] to-[#8B5CF6] text-white", dot: "bg-[#8B5CF6]" },
+  Pharmacy: { tile: "bg-[#ECFDF5] text-[#059669]", solid: "bg-gradient-to-br from-[#059669] to-[#10B981] text-white", dot: "bg-[#10B981]" },
+  "Front Office & Finance": { tile: "bg-[#FFFBEB] text-[#D97706]", solid: "bg-gradient-to-br from-[#D97706] to-[#F59E0B] text-white", dot: "bg-[#F59E0B]" },
+  "Operations & HR": { tile: "bg-[#F1F5F9] text-[#475569]", solid: "bg-gradient-to-br from-[#334155] to-[#64748B] text-white", dot: "bg-[#64748B]" },
+}
+
+function roleGroupOf(role: LoginRoleOption): RoleGroup {
+  const k = `${role.value} ${role.label}`.toUpperCase()
+  if (/ADMIN|IT_SUPPORT|IT SUPPORT|COMPLIANCE/.test(k)) return "Administration"
+  if (/NURS/.test(k)) return "Nursing"
+  if (/LAB|PATHOLOG|RADIOLOG/.test(k)) return "Diagnostics"
+  if (/PHARM/.test(k)) return "Pharmacy"
+  if (/DOCTOR|PHYSICIAN|SURGEON|ANESTHET|PHYSIO|CLINIC/.test(k)) return "Clinical"
+  if (/RECEPTION|FRONT|BILLING|CASHIER|ACCOUNT|FINANCE|INSURANCE|TPA|RECORDS/.test(k)) return "Front Office & Finance"
+  return "Operations & HR"
+}
+
+// Only the last chosen role (never a username or password) is remembered,
+// so returning staff land directly on the credentials step.
+const LAST_ROLE_KEY = "hospai_login_last_role"
+
+function readLastRole(): string {
+  try {
+    return window.localStorage.getItem(LAST_ROLE_KEY) || ""
+  } catch {
+    return ""
+  }
+}
+
+function writeLastRole(roleId: string | null) {
+  try {
+    if (roleId) window.localStorage.setItem(LAST_ROLE_KEY, roleId)
+    else window.localStorage.removeItem(LAST_ROLE_KEY)
+  } catch {
+    // storage unavailable -- nothing to remember
+  }
+}
+
 export default function Login({ onLogin }: LoginProps) {
+  const [step, setStep] = useState<"role" | "credentials">("role")
   const [user, setUser] = useState("")
   const [pass, setPass] = useState("")
+  const [showPass, setShowPass] = useState(false)
+  const [capsLock, setCapsLock] = useState(false)
+  const [rememberDevice, setRememberDevice] = useState(true)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [openRoleDropdown, setOpenRoleDropdown] = useState(false)
+  const [roleQuery, setRoleQuery] = useState("")
   const [selectedLoginRole, setSelectedLoginRole] = useState("")
-  const [loginRoles, setLoginRoles] = useState<LoginRoleOption[]>(ROLES_LIST)
+  const [loginRoles, setLoginRoles] = useState<LoginRoleOption[]>([])
+  const [rolesLoading, setRolesLoading] = useState(true)
   const [loginSummary, setLoginSummary] = useState<LoginSummary | null>(null)
+  const userInputRef = useRef<HTMLInputElement>(null)
+  const [stepDir, setStepDir] = useState<"forward" | "back">("forward")
+  const [errorNonce, setErrorNonce] = useState(0)
+
+  const showError = (message: string) => {
+    setError(message)
+    setErrorNonce((n) => n + 1)
+  }
 
   const activeRole = loginRoles.find((r) => r.value === selectedLoginRole)
 
+  // The hospital's active roles come from the server -- the same role keys that
+  // accounts are assigned to. The built-in list is only an offline fallback.
   useEffect(() => {
     let active = true
-    try {
-      const storedRoles = RoleDatabase.getRoles()
-      if (storedRoles?.length) {
-        const mapped = storedRoles.map((role) => ({
-          value: role.id,
-          label: role.name,
-          sub: role.description || "Assigned access is applied after sign-in",
-        }))
-        setLoginRoles((prev) => {
-          const combined = [...prev]
-          for (const item of mapped) {
-            if (!combined.some((c) => c.value.toUpperCase() === item.value.toUpperCase())) {
-              combined.push(item)
-            }
-          }
-          return combined
-        })
-      }
-    } catch {}
+    const describe = (id: string, description?: string) =>
+      description ||
+      ROLES_LIST.find((r) => r.value.toUpperCase() === id.toUpperCase())?.sub ||
+      "Hospital role"
 
     apiFetch<{ roles: Array<{ id: string; name: string; description?: string }> }>("/api/auth/login-roles")
       .then((response) => {
         if (!active) return
-        const addedRoles = (response.roles || [])
+        const roles = (response.roles || [])
           .filter((role) => role.id && role.name)
-          .map((role) => ({
-            value: role.id,
-            label: role.name,
-            sub: role.description || "Assigned access is applied after sign-in",
-          }))
-        setLoginRoles((prev) => {
-          const combined = [...prev]
-          for (const item of addedRoles) {
-            if (!combined.some((c) => c.value.toUpperCase() === item.value.toUpperCase())) {
-              combined.push(item)
-            }
-          }
-          return combined
-        })
+          .map((role) => ({ value: role.id, label: role.name, sub: describe(role.id, role.description) }))
+        if (!roles.length) throw new Error("No roles configured")
+        setLoginRoles(roles)
       })
       .catch(() => {
-        // Fallback to local roles in offline/standalone dev mode
-        const localRoles = RoleDatabase.getRoles().map((r) => ({
-          value: r.id,
-          label: r.name,
-          sub: r.isSystem ? "Built-in role" : "Hospital role",
-        }))
+        if (!active) return
+        let localRoles: LoginRoleOption[] = []
+        try {
+          localRoles = RoleDatabase.getRoles().map((r) => ({
+            value: r.id,
+            label: r.name,
+            sub: r.isSystem ? "Built-in role" : "Hospital role",
+          }))
+        } catch {}
         setLoginRoles([
           ...ROLES_LIST,
           ...localRoles.filter((role) => !ROLES_LIST.some((systemRole) => systemRole.value === role.value)),
         ])
       })
+      .finally(() => {
+        if (active) setRolesLoading(false)
+      })
     return () => { active = false }
   }, [])
+
+  // Returning staff: jump straight to credentials for their remembered role.
+  useEffect(() => {
+    if (rolesLoading || selectedLoginRole) return
+    const last = readLastRole()
+    if (last && loginRoles.some((r) => r.value === last)) {
+      setSelectedLoginRole(last)
+      setStep("credentials")
+    }
+  }, [rolesLoading]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let active = true
@@ -324,77 +363,78 @@ export default function Login({ onLogin }: LoginProps) {
     return () => { active = false }
   }, [])
 
+  useEffect(() => {
+    if (step === "credentials") userInputRef.current?.focus()
+  }, [step])
+
+  const groupedRoles = useMemo(() => {
+    const q = roleQuery.trim().toLowerCase()
+    const matches = loginRoles.filter(
+      (r) => !q || r.label.toLowerCase().includes(q) || r.sub.toLowerCase().includes(q),
+    )
+    const byGroup = new Map<RoleGroup, LoginRoleOption[]>()
+    for (const role of matches) {
+      const g = roleGroupOf(role)
+      byGroup.set(g, [...(byGroup.get(g) || []), role])
+    }
+    return ROLE_GROUP_ORDER.filter((g) => byGroup.has(g)).map((g) => ({
+      group: g,
+      roles: byGroup.get(g)!.sort((x, y) => x.label.localeCompare(y.label)),
+    }))
+  }, [loginRoles, roleQuery])
+
+  const chooseRole = (roleId: string) => {
+    setStepDir("forward")
+    setSelectedLoginRole(roleId)
+    setError("")
+    setStep("credentials")
+  }
+
+  const backToRoles = () => {
+    setStepDir("back")
+    setStep("role")
+    setPass("")
+    setShowPass(false)
+    setError("")
+  }
+
   const submit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault()
     }
-    let cleanUser = user.trim()
-    let cleanPass = pass
+    const username = user.trim()
+    const password = pass
 
-    if ((!cleanUser || !cleanPass) && selectedLoginRole) {
-      const creds = getRoleDefaultCredentials(selectedLoginRole)
-      if (creds) {
-        cleanUser = cleanUser || creds.username
-        cleanPass = cleanPass || creds.password
-        setUser(cleanUser)
-        setPass(cleanPass)
-      }
+    if (!selectedLoginRole) {
+      setStep("role")
+      showError("Please select your role to continue.")
+      return
     }
-
-    if (!cleanUser || !cleanPass) {
-      setError("Please select a role or enter your User ID and password.")
+    if (!username || !password) {
+      showError("Enter the User ID and password issued by your administrator.")
       return
     }
 
     // The username and password are sent exactly as entered -- the server is
-    // the sole authority on who this account is and what it's allowed to do.
-    // Only the role dropdown (an explicit, deliberate choice) is forwarded as
-    // the expected role.
-    const username = cleanUser
-    const password = cleanPass
-    const roleIdToSend = selectedLoginRole || undefined
+    // the sole authority on who this account is. The selected role is checked
+    // server-side against the role the administrator assigned to the account.
+    const roleIdToSend = selectedLoginRole
 
     setError("")
     setLoading(true)
 
-    // Check local accounts for offline / standalone dev mode
-    const localUsers = RoleDatabase.getUsers()
+    // Offline / standalone development only: a local account matched by the exact
+    // password the administrator stored for it, and by the selected role.
+    // Disabled in deployed builds, and never used to override the server.
     let foundUser: AppUser | undefined
-    try {
-      const authResult = RoleDatabase.authenticate(username, password)
-      if (authResult?.user) {
-        foundUser = authResult.user
+    if (LOCAL_MOCKS_ENABLED) {
+      try {
+        const local = RoleDatabase.authenticate(username, password)?.user
+        const localIsAdmin = local?.roleId === "ROLE_ADMIN" || local?.username.toLowerCase() === "admin"
+        if (local && (localIsAdmin || local.roleId === roleIdToSend)) foundUser = local
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
-
-    if (!foundUser) {
-      foundUser =
-        localUsers.find(
-          (u) =>
-            u.username.toLowerCase() === username.toLowerCase() &&
-            (u.password === password ||
-              password === "password123" ||
-              password === "admin" ||
-              password === "admin123" ||
-              password === "Admin@123" ||
-              password === "password" ||
-              !password)
-        ) ||
-        (username.toLowerCase() === "admin"
-          ? localUsers.find((u) => u.username.toLowerCase() === "admin") || {
-              id: "U_ADMIN",
-              username: "admin",
-              roleId: "ROLE_ADMIN",
-              name: "System Administrator",
-              staffId: "ADM-001",
-              status: "Active" as const,
-              department: "Administration",
-            }
-          : undefined) ||
-        // Standalone dev mode: allow login by username if user exists in database
-        localUsers.find((u) => u.username.toLowerCase() === username.toLowerCase())
     }
 
     try {
@@ -407,14 +447,21 @@ export default function Login({ onLogin }: LoginProps) {
             password,
             selected_role_id: roleIdToSend,
           }),
-          timeoutMs: 1500,
+          timeoutMs: LOCAL_MOCKS_ENABLED ? 1500 : 15000,
         })
         if (response?.error) {
-          throw new Error(response.error)
+          throw Object.assign(new Error(response.error), { status: 401 })
         }
         authenticated = response?.user
-      } catch (backendErr) {
-        console.warn("Backend authentication unreachable or failed, attempting local authentication", backendErr)
+      } catch (backendErr: any) {
+        const status = backendErr?.status
+        if (typeof status === "number" && status < 500 && status !== 404) {
+          // The server answered (wrong credentials, inactive account, role
+          // mismatch, ...). Its decision is final.
+          throw backendErr
+        }
+        if (!foundUser) throw backendErr
+        console.warn("Backend authentication unreachable, using local development account", backendErr)
       }
 
       if (!authenticated?.username && foundUser) {
@@ -441,6 +488,7 @@ export default function Login({ onLogin }: LoginProps) {
       }
 
       if (authenticated?.username) {
+        writeLastRole(rememberDevice ? roleIdToSend : null)
         const loginUser = loginUserFromAuthenticated(authenticated)
         onLogin(loginUser)
         return
@@ -448,48 +496,22 @@ export default function Login({ onLogin }: LoginProps) {
 
       throw new Error("Invalid username or password.")
     } catch (err: any) {
-      if (foundUser) {
-        const roles = RoleDatabase.getRoles()
-        const userRole = roles.find((r) => r.id === foundUser.roleId)
-        const isSuperAdmin =
-          foundUser.username.toLowerCase() === "admin" ||
-          foundUser.roleId === "ROLE_ADMIN" ||
-          (userRole?.name || "").toLowerCase().includes("admin")
-
-        const roleKey = isSuperAdmin
-          ? "ROLE_ADMIN"
-          : (foundUser.roleId || `ROLE_${foundUser.username.toUpperCase()}`)
-
-        const perms: string[] = isSuperAdmin
-          ? [...ALL_SYSTEM_MODULES, "*", "admin"]
-          : (userRole?.allowedModules && userRole.allowedModules.length > 0
-              ? userRole.allowedModules
-              : ALL_SYSTEM_MODULES)
-
-        const loginUser: LoginUserData = {
-          user: foundUser.username,
-          role: roleKey,
-          staffId: foundUser.staffId || foundUser.id || (isSuperAdmin ? "ADM-001" : "STF-001"),
-          staffName: foundUser.name || (isSuperAdmin ? "System Administrator" : foundUser.username),
-          staffTitle: userRole?.name || (isSuperAdmin ? "System Administrator" : "Hospital Staff"),
-          staffDepartment: foundUser.department || (isSuperAdmin ? "Administration" : "Clinical Operations"),
-          permissions: perms,
-          doctorId: roleKey === "ROLE_DOCTOR" ? (foundUser.staffId || "DOC-001") : undefined,
-        }
-        onLogin(loginUser)
-        return
-      }
-
       console.warn("Login submission failed", err)
       const message =
-        err instanceof Error && err.message !== "Invalid authentication response"
+        err instanceof Error && err.message && err.message !== "Invalid authentication response"
           ? err.message
-          : "Invalid credentials. For local dev mode, use username 'admin' and password 'password123'."
-      setError(message)
+          : "Invalid username or password."
+      showError(message)
+      setPass("")
     } finally {
       setLoading(false)
     }
   }
+
+  const ActiveRoleIcon = activeRole ? ROLE_GROUP_ICON[roleGroupOf(activeRole)] : ShieldCheck
+  const activeTone = ROLE_GROUP_TONE[activeRole ? roleGroupOf(activeRole) : "Administration"]
+  const inputCls =
+    "w-full border border-[#DDE2EC] rounded-none bg-[#FBFCFE] text-[13px] pl-10 pr-3.5 py-2.5 text-[#0F172A] placeholder:text-[#94A3B8] hover:border-[#C3CEE0] focus:bg-white focus:outline-none focus:border-[#1B4FD8] focus:ring-4 focus:ring-[#1B4FD8]/10 transition-all"
 
   return (
     <div
@@ -497,7 +519,10 @@ export default function Login({ onLogin }: LoginProps) {
       style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
     >
       {/* Left panel */}
-      <div className="hidden lg:flex flex-col justify-between w-1/2 bg-[#0C1524] p-12 select-none relative overflow-hidden">
+      <div className="hidden lg:flex flex-col justify-between w-1/2 bg-gradient-to-br from-[#0C1524] via-[#0E1A30] to-[#111C3A] p-12 select-none relative overflow-hidden">
+        <div aria-hidden="true" className="login-orb w-[460px] h-[460px] -top-32 -left-24 bg-[#1B4FD8]/25" />
+        <div aria-hidden="true" className="login-orb w-[380px] h-[380px] top-1/3 -right-24 bg-[#4F46E5]/20" style={{ animationDelay: "-5s" }} />
+        <div aria-hidden="true" className="login-orb w-[300px] h-[300px] bottom-24 left-1/4 bg-[#06B6D4]/15" style={{ animationDelay: "-10s" }} />
         {/* Bottom curve: white inside dark blue panel (lowered) */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-0"
@@ -522,7 +547,9 @@ export default function Login({ onLogin }: LoginProps) {
             <h1 className="text-white text-3xl font-bold leading-snug mb-3">
               Universal Hospital
               <br />
-              Management System
+              <span className="bg-gradient-to-r from-white via-[#C7D7FE] to-[#A5B4FC] bg-clip-text text-transparent">
+                Management System
+              </span>
             </h1>
             <p className="text-[#94A3B8] text-[13.5px] leading-relaxed max-w-lg">
               Enterprise-grade clinical operations platform for physicians,
@@ -556,7 +583,8 @@ export default function Login({ onLogin }: LoginProps) {
             ].map((f, i) => (
               <div
                 key={i}
-                className="flex items-center gap-3.5 p-3.5 rounded-none bg-white/5 border border-white/5 hover:border-white/10 transition-colors"
+                style={{ "--i": i + 2 } as React.CSSProperties}
+                className="login-stagger login-feature flex items-center gap-3.5 p-3.5 rounded-none bg-white/[0.04] backdrop-blur-sm border border-white/[0.07] hover:border-[#4F7BFF]/40 hover:bg-white/[0.07]"
               >
                 <span className="text-xl flex-shrink-0">{f.icon}</span>
                 <div className="min-w-0">
@@ -582,7 +610,18 @@ export default function Login({ onLogin }: LoginProps) {
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 flex flex-col justify-between bg-[#F0F2F5] px-8 py-10 relative overflow-hidden">
+      <div className="flex-1 flex flex-col justify-between bg-gradient-to-br from-[#F6F8FC] via-[#EEF2FA] to-[#E6ECF8] px-4 sm:px-8 py-10 relative overflow-hidden">
+        {/* Soft colour wash behind the card */}
+        <div
+          aria-hidden="true"
+          className="login-orb w-[420px] h-[420px] -top-24 -right-24 bg-[#C7D7FE]/60"
+        />
+        <div
+          aria-hidden="true"
+          className="login-orb w-[320px] h-[320px] top-1/3 -left-28 bg-[#DDD6FE]/50"
+          style={{ animationDelay: "-6s" }}
+        />
+
         {/* Bottom curve: #0C1524 dark blue inside white panel (lowered) */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none z-0"
@@ -596,256 +635,260 @@ export default function Login({ onLogin }: LoginProps) {
           />
         </svg>
 
-        <div className="w-full max-w-sm mx-auto my-auto relative z-10">
+        <div className="w-full max-w-md mx-auto my-auto relative z-10">
           <div className="flex justify-center mb-6 lg:hidden">
             <HospAILogo variant="horizontal" className="h-16 justify-center" />
           </div>
 
-          <div className="mb-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-1">
-              Sign in
-            </h2>
-            <p className="text-[12.5px] text-[#64748B]">
-              Sign in with the individual credentials issued by your Administrator
-            </p>
-          </div>
+          <div className="login-card bg-white/95 backdrop-blur border border-white shadow-[0_20px_50px_-20px_rgba(15,23,42,0.25),0_2px_6px_rgba(15,23,42,0.04)] overflow-hidden">
+            <div className="login-accent" />
 
-          {error && (
-            <div className="bg-[#FEF2F2] border border-[#FECACA] text-[#B91C1C] text-[12.5px] px-3.5 py-2.5 rounded-none mb-4 flex items-center gap-2">
-              <span className="font-bold">⚠</span> {error}
-            </div>
-          )}
-
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <label className="block text-[12px] font-semibold text-[#374151] mb-1.5">
-                User ID / Employee Number <span className="text-red-500">*</span>
-              </label>
-              <input
-                value={user}
-                onChange={(e) => setUser(e.target.value)}
-                placeholder="e.g. username, employee ID (e.g. dr.varma, STF-001, admin)"
-                className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 focus:outline-none focus:border-[#1B4FD8]"
-                autoFocus
-              />
-              <p className="text-[11px] text-[#94A3B8] mt-1">
-                Enter the User ID or Employee Number given to you by your Administrator
-              </p>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-[12px] font-semibold text-[#374151]">
-                  Password <span className="text-red-500">*</span>
-                </label>
-                <a
-                  href="#"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    setError("Contact your hospital administrator to reset your password.")
-                  }}
-                  className="text-[11.5px] text-[#64748B] hover:text-[#1B4FD8]"
-                >
-                  Reset password
-                </a>
+            {/* Step indicator */}
+            <div className="px-6 pt-5">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-[#64748B] mb-2">
+                <span>Step {step === "role" ? 1 : 2} of 2</span>
+                <span className="bg-gradient-to-r from-[#1B4FD8] to-[#4F46E5] bg-clip-text text-transparent">
+                  {step === "role" ? "Select role" : "Verify identity"}
+                </span>
               </div>
-              <input
-                type="password"
-                value={pass}
-                onChange={(e) => setPass(e.target.value)}
-                placeholder="Enter your account password"
-                className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 focus:outline-none focus:border-[#1B4FD8]"
-              />
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="h-1 login-progress-fill" style={{ width: "100%" }} />
+                <div className="h-1 bg-[#E2E8F0] overflow-hidden">
+                  <div className="h-full login-progress-fill" style={{ width: step === "credentials" ? "100%" : "0%" }} />
+                </div>
+              </div>
             </div>
 
-            {/* Role (Optional - Auto-detected from account by default) */}
-            <div className="relative">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-[12px] font-semibold text-[#374151]">
-                  Role <span className="text-[#64748B] font-normal text-[11px]">(Optional — auto-detected from account)</span>
-                </label>
-                {selectedLoginRole && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedLoginRole("")
-                      setError("")
-                    }}
-                    className="text-[11.5px] text-[#1B4FD8] hover:underline"
-                  >
-                    Auto-detect
-                  </button>
+            <div className="px-6 pt-5 pb-6">
+              {error && (
+                <div
+                  key={errorNonce}
+                  role="alert"
+                  className="login-shake bg-gradient-to-r from-[#FEF2F2] to-[#FFF5F5] border border-[#FECACA] border-l-[3px] border-l-[#DC2626] text-[#B91C1C] text-[12.5px] px-3.5 py-2.5 mb-4 flex items-start gap-2"
+                >
+                  <TriangleAlert className="w-4 h-4 flex-shrink-0 mt-px" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div key={step} className={stepDir === "forward" ? "login-step-fwd" : "login-step-back"}>
+                {step === "role" ? (
+                  <>
+                    <div className="mb-4">
+                      <h2 className="text-xl font-semibold text-[#0F172A] mb-1">Select your role</h2>
+                      <p className="text-[12.5px] text-[#64748B]">
+                        Choose the role your administrator assigned to your account.
+                      </p>
+                    </div>
+
+                    <div className="group relative mb-3">
+                      <Search className="w-4 h-4 text-[#94A3B8] group-focus-within:text-[#1B4FD8] transition-colors absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        value={roleQuery}
+                        onChange={(e) => setRoleQuery(e.target.value)}
+                        placeholder="Search roles"
+                        aria-label="Search roles"
+                        className={inputCls}
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className="max-h-[22rem] overflow-y-auto -mx-1 px-1 pb-1" role="listbox" aria-label="Roles">
+                      {rolesLoading ? (
+                        <div className="space-y-2" aria-busy="true">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className="h-[54px] login-skeleton" />
+                          ))}
+                        </div>
+                      ) : groupedRoles.length === 0 ? (
+                        <div className="login-stagger text-center text-[12.5px] text-[#64748B] py-10 border border-dashed border-[#CBD5E1] bg-[#F8FAFC]">
+                          No roles match "{roleQuery}"
+                        </div>
+                      ) : (
+                        (() => {
+                          let order = 0
+                          return groupedRoles.map(({ group, roles }) => {
+                            const GroupIcon = ROLE_GROUP_ICON[group]
+                            const tone = ROLE_GROUP_TONE[group]
+                            return (
+                              <div key={group} className="mb-3 last:mb-0">
+                                <div
+                                  className="login-stagger flex items-center gap-2 text-[10.5px] font-bold uppercase tracking-wider text-[#94A3B8] px-1 mb-1.5"
+                                  style={{ "--i": Math.min(order, 14) } as React.CSSProperties}
+                                >
+                                  <span className={`w-1.5 h-1.5 rounded-full ${tone.dot}`} />
+                                  {group}
+                                </div>
+                                <div className="space-y-1.5">
+                                  {roles.map((r) => {
+                                    const isSelected = selectedLoginRole === r.value
+                                    const i = Math.min(++order, 14)
+                                    return (
+                                      <button
+                                        key={r.value}
+                                        type="button"
+                                        role="option"
+                                        aria-selected={isSelected}
+                                        onClick={() => chooseRole(r.value)}
+                                        style={{ "--i": i } as React.CSSProperties}
+                                        className={`login-stagger login-role group w-full flex items-center gap-3 px-3 py-2.5 text-left border focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4FD8]/30 ${
+                                          isSelected
+                                            ? "border-[#1B4FD8] bg-gradient-to-r from-[#EFF6FF] to-[#EEF2FF]"
+                                            : "border-[#E2E8F0] bg-white hover:border-[#93B4F8] hover:bg-[#FBFCFF]"
+                                        }`}
+                                      >
+                                        <span
+                                          className={`w-9 h-9 flex items-center justify-center flex-shrink-0 transition-colors ${
+                                            isSelected ? tone.solid : tone.tile
+                                          }`}
+                                        >
+                                          <GroupIcon className="w-4 h-4" />
+                                        </span>
+                                        <span className="min-w-0 flex-1">
+                                          <span className="block text-[13px] font-semibold text-[#0F172A] truncate">{r.label}</span>
+                                          <span className="block text-[11.5px] text-[#64748B] truncate">{r.sub}</span>
+                                        </span>
+                                        <ChevronRight className="w-4 h-4 text-[#CBD5E1] group-hover:text-[#1B4FD8] group-hover:translate-x-0.5 flex-shrink-0 transition-all" />
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })
+                        })()
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <form onSubmit={submit} className="space-y-4" noValidate>
+                    <div>
+                      <h2 className="text-xl font-semibold text-[#0F172A] mb-1">Sign in</h2>
+                      <p className="text-[12.5px] text-[#64748B]">
+                        Enter the credentials issued to you by your administrator.
+                      </p>
+                    </div>
+
+                    {/* Selected role */}
+                    <div className="flex items-center gap-3 border border-[#C7D7FE] bg-gradient-to-r from-[#EFF6FF] via-[#EEF2FF] to-[#F5F3FF] px-3 py-2.5">
+                      <span className={`w-9 h-9 flex items-center justify-center flex-shrink-0 shadow-sm ${activeTone.solid}`}>
+                        <ActiveRoleIcon className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10.5px] font-semibold uppercase tracking-wider text-[#64748B]">Signing in as</div>
+                        <div className="text-[13px] font-semibold text-[#0F172A] truncate">
+                          {activeRole?.label || selectedLoginRole}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={backToRoles}
+                        className="group/change flex items-center gap-1 text-[12px] font-semibold text-[#1B4FD8] hover:text-[#4F46E5] flex-shrink-0 transition-colors"
+                      >
+                        <ArrowLeft className="w-3.5 h-3.5 transition-transform group-hover/change:-translate-x-0.5" /> Change
+                      </button>
+                    </div>
+
+                    <div>
+                      <label htmlFor="login-user" className="block text-[12px] font-semibold text-[#374151] mb-1.5">
+                        User ID / Employee Number
+                      </label>
+                      <div className="group relative">
+                        <User className="w-4 h-4 text-[#94A3B8] group-focus-within:text-[#1B4FD8] transition-colors absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          id="login-user"
+                          ref={userInputRef}
+                          value={user}
+                          onChange={(e) => setUser(e.target.value)}
+                          placeholder="e.g. dr.varma or STF-001"
+                          autoComplete="username"
+                          autoCapitalize="none"
+                          spellCheck={false}
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label htmlFor="login-pass" className="block text-[12px] font-semibold text-[#374151]">
+                          Password
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => showError("Contact your hospital administrator to reset your password.")}
+                          className="text-[11.5px] text-[#64748B] hover:text-[#1B4FD8] transition-colors"
+                        >
+                          Forgot password?
+                        </button>
+                      </div>
+                      <div className="group relative">
+                        <Lock className="w-4 h-4 text-[#94A3B8] group-focus-within:text-[#1B4FD8] transition-colors absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        <input
+                          id="login-pass"
+                          type={showPass ? "text" : "password"}
+                          value={pass}
+                          onChange={(e) => setPass(e.target.value)}
+                          onKeyUp={(e) => setCapsLock(e.getModifierState("CapsLock"))}
+                          onKeyDown={(e) => setCapsLock(e.getModifierState("CapsLock"))}
+                          onBlur={() => setCapsLock(false)}
+                          placeholder="Enter your password"
+                          autoComplete="current-password"
+                          className={`${inputCls} pr-10`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPass((v) => !v)}
+                          aria-label={showPass ? "Hide password" : "Show password"}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-[#94A3B8] hover:text-[#1B4FD8] transition-colors"
+                        >
+                          {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      {capsLock && (
+                        <p className="login-stagger text-[11px] text-[#B45309] mt-1.5 flex items-center gap-1">
+                          <TriangleAlert className="w-3 h-3" /> Caps Lock is on
+                        </p>
+                      )}
+                    </div>
+
+                    <label htmlFor="remember-device" className="flex items-center gap-2 cursor-pointer select-none w-fit">
+                      <input
+                        type="checkbox"
+                        id="remember-device"
+                        checked={rememberDevice}
+                        onChange={(e) => setRememberDevice(e.target.checked)}
+                        className="w-3.5 h-3.5 accent-[#1B4FD8] rounded-none"
+                      />
+                      <span className="text-[12px] text-[#64748B]">Remember my role on this device</span>
+                    </label>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="login-btn w-full py-2.5 rounded-none text-white font-semibold text-[13px]"
+                    >
+                      {loading ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Verifying...
+                        </span>
+                      ) : (
+                        <span className="relative z-10 flex items-center justify-center gap-1.5">
+                          Sign in <ChevronRight className="w-4 h-4" />
+                        </span>
+                      )}
+                    </button>
+                  </form>
                 )}
               </div>
-
-              <button
-                type="button"
-                onClick={() => setOpenRoleDropdown((prev) => !prev)}
-                className="w-full border border-[#DDE2EC] rounded-none bg-white text-[13px] px-3.5 py-2.5 flex items-center justify-between text-left focus:outline-none focus:border-[#1B4FD8] hover:border-[#CBD5E1] transition-colors cursor-pointer"
-              >
-                <div className="min-w-0 pr-2 truncate">
-                  {activeRole ? (
-                    <>
-                      <span className="font-semibold text-[#0F172A]">
-                        {activeRole.label}
-                      </span>
-                      <span className="text-[11.5px] text-[#64748B] ml-2 font-normal">
-                        — {activeRole.sub}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="text-[#64748B] font-medium">
-                      Auto-detect from account (or click to choose role)
-                    </span>
-                  )}
-                </div>
-                <svg
-                  className={`w-4 h-4 text-[#64748B] transition-transform duration-150 flex-shrink-0 ${openRoleDropdown ? "rotate-180 text-[#1B4FD8]" : ""
-                    }`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-
-              {openRoleDropdown && (
-                <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#CBD5E1] shadow-lg rounded-none z-50 max-h-60 overflow-y-auto py-1 divide-y divide-[#F1F5F9]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedLoginRole("")
-                      setOpenRoleDropdown(false)
-                    }}
-                    className={`w-full px-3.5 py-2 text-left flex items-center justify-between transition-colors cursor-pointer ${selectedLoginRole === ""
-                      ? "bg-[#EFF6FF] text-[#1B4FD8]"
-                      : "hover:bg-[#F8FAFC] text-[#64748B]"
-                      }`}
-                  >
-                    <div>
-                      <span className="text-[12.5px] font-semibold text-[#0F172A]">
-                        Auto-detect from account (Default)
-                      </span>
-                      <span className="text-[11px] text-[#64748B] ml-2 font-normal">
-                        — Role and permissions loaded directly from your saved account
-                      </span>
-                    </div>
-                    {selectedLoginRole === "" && (
-                      <span className="text-[#1B4FD8] font-bold text-[12px] ml-2">
-                        ✓
-                      </span>
-                    )}
-                  </button>
-                  {loginRoles.map((r) => {
-                    const isSelected = selectedLoginRole === r.value
-                    return (
-                      <button
-                        key={r.value}
-                        type="button"
-                        onClick={() => {
-                          setSelectedLoginRole(r.value)
-                          setOpenRoleDropdown(false)
-                          // Only auto-fill credentials if user has NOT already typed their individual credentials
-                          if (!user.trim() && !pass) {
-                            const creds = getRoleDefaultCredentials(r.value)
-                            if (creds) {
-                              setUser(creds.username)
-                              setPass(creds.password)
-                            }
-                          }
-                          setError("")
-                        }}
-                        className={`w-full px-3.5 py-2 text-left flex items-center justify-between transition-colors cursor-pointer ${isSelected
-                          ? "bg-[#EFF6FF] text-[#1B4FD8]"
-                          : "hover:bg-[#F8FAFC] text-[#334155]"
-                          }`}
-                      >
-                        <div className="min-w-0 truncate">
-                          <span
-                            className={`text-[12.5px] ${isSelected
-                              ? "font-bold text-[#1B4FD8]"
-                              : "font-medium text-[#0F172A]"
-                              }`}
-                          >
-                            {r.label}
-                          </span>
-                          <span className="text-[11px] text-[#64748B] ml-2 font-normal">
-                            — {r.sub}
-                          </span>
-                        </div>
-                        {isSelected && (
-                          <span className="text-[#1B4FD8] font-bold text-[12px] ml-2">
-                            ✓
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
             </div>
 
-            {selectedLoginRole && (
-              <div className="bg-[#EFF6FF] border border-[#BFDBFE] px-3 py-2 text-[11.5px] text-[#334155]">
-                <span className="font-semibold text-[#1B4FD8]">{activeRole?.label}</span> selected.
-                <span className="text-[#64748B] ml-1">Sign in with the individual credentials issued for this role.</span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 mt-2">
-              <input
-                type="checkbox"
-                id="mfa"
-                className="w-3.5 h-3.5 accent-[#1B4FD8] rounded-none"
-                defaultChecked
-              />
-              <label htmlFor="mfa" className="text-[12px] text-[#64748B]">
-                Remember this device for 8 hours
-              </label>
+            <div className="flex items-center gap-2 border-t border-[#EEF2F7] bg-gradient-to-r from-[#F8FAFC] to-[#F1F5FB] px-6 py-3 text-[11px] text-[#64748B]">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#16A34A] flex-shrink-0" />
+              Access is verified against the role assigned to your account.
             </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className={`w-full py-2.5 rounded-none text-white font-semibold text-[13px] transition-colors mt-3 ${loading
-                ? "bg-[#94A3B8] cursor-not-allowed"
-                : "bg-[#1B4FD8] hover:bg-[#1740B4]"
-                }`}
-            >
-              {loading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <svg
-                    className="animate-spin w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="white"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="white"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  Authenticating...
-                </span>
-              ) : (
-                "Sign In to HMS"
-              )}
-            </button>
-          </form>
+          </div>
         </div>
 
         {/* Footer on right side (inside dark blue curve) */}

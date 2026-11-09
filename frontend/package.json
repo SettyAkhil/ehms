@@ -13,7 +13,6 @@
     "dev:stop": "node ../scripts/dev-stop.mjs"
   },
   "dependencies": {
-    "@rolldown/binding-win32-x64-msvc": "^1.2.16",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/pg": "^8.23.1",

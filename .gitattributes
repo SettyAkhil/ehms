@@ -1,0 +1,7 @@
+# Files executed or parsed inside Linux containers must keep LF line endings,
+# even when the repository is checked out on Windows.
+*.sh                     text eol=lf
+*.template               text eol=lf
+*.Dockerfile             text eol=lf
+docker-compose.yml       text eol=lf
+deploy/**                text eol=lf

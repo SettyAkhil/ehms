@@ -26,7 +26,7 @@ const DEFAULT_HOSPITAL_CODE = "hosp-default"
 // Browser-resident stores are useful only for isolated development demos. They
 // must never silently replace a failed API call in a deployed HMS, where that
 // would make a clinical or financial screen claim a successful local write.
-const LOCAL_MOCKS_ENABLED =
+export const LOCAL_MOCKS_ENABLED =
   Boolean((import.meta as any)?.env?.DEV) &&
   (import.meta as any)?.env?.VITE_ENABLE_LOCAL_MOCKS !== "false"
 
@@ -2142,6 +2142,10 @@ export async function apiFetch<T = any>(
   // Authentication is never mockable: even a development-only local data
   // fallback must not create or restore a session without the backend.
   const isAuthRequest = path.startsWith("/api/auth/")
+  // Endpoints that grant or restore a session. A browser-store answer for these
+  // would let any credential (or a hand-edited localStorage) sign in, so they
+  // are only ever answered locally in dev mode when the backend is unreachable.
+  const isCredentialRequest = path === "/api/auth/login" || path === "/api/auth/session"
 
   // Serve ER, bed management, reports, EMR, and patient notes directly from live persistent store.
   // Authentication is excluded here deliberately -- see isAuthRequest below.
@@ -2264,7 +2268,8 @@ export async function apiFetch<T = any>(
       }
 
       // Browser mocks may answer a failed request in dev or offline fallback
-      if (response.status >= 500 || response.status === 404 || response.status === 401 || LOCAL_MOCKS_ENABLED) {
+      // A server's answer to a login/session request is final -- never replaced locally.
+      if (!isCredentialRequest && (response.status >= 500 || response.status === 404 || response.status === 401 || LOCAL_MOCKS_ENABLED)) {
         const localResult = await handleLocalErMock<T>(path, options)
         if (localResult !== null) return localResult as T
       }
@@ -2291,10 +2296,14 @@ export async function apiFetch<T = any>(
 
     lastBackendProbeTime = Date.now()
 
-    // Offline fallback to browser stores:
-    const localResult = await handleLocalErMock<T>(path, options)
-    if (localResult !== null) {
-      return localResult as T
+    // Offline fallback to browser stores. Login/session only fall back when the
+    // backend gave no answer at all, and only in local dev mode.
+    const serverAnswered = typeof err?.status === "number"
+    if (!isCredentialRequest || (LOCAL_MOCKS_ENABLED && !serverAnswered)) {
+      const localResult = await handleLocalErMock<T>(path, options)
+      if (localResult !== null) {
+        return localResult as T
+      }
     }
 
     if (err?.name === "AbortError" && !callerSignal?.aborted) {
