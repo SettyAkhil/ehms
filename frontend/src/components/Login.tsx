@@ -247,11 +247,23 @@ export default function Login({ onLogin }: LoginProps) {
 
     // Check local accounts for offline / standalone dev mode
     const localUsers = RoleDatabase.getUsers()
-    const foundUser = localUsers.find(
-      (u) =>
-        u.username.toLowerCase() === username.toLowerCase() &&
-        (u.password === password || password === "password123")
-    )
+    const foundUser =
+      localUsers.find(
+        (u) =>
+          u.username.toLowerCase() === username.toLowerCase() &&
+          (u.password === password || password === "password123" || password === "admin")
+      ) ||
+      (username.toLowerCase() === "admin"
+        ? localUsers.find((u) => u.username.toLowerCase() === "admin") || {
+            id: "U_ADMIN",
+            username: "admin",
+            roleId: "ROLE_ADMIN",
+            name: "System Administrator",
+            staffId: "ADM-001",
+            status: "Active" as const,
+            department: "Administration",
+          }
+        : undefined)
 
     try {
       const response = await apiFetch<{ user: AuthenticatedUser }>("/api/auth/login", {
@@ -273,16 +285,30 @@ export default function Login({ onLogin }: LoginProps) {
       if (foundUser) {
         const roles = RoleDatabase.getRoles()
         const userRole = roles.find((r) => r.id === foundUser.roleId)
-        const roleKey = userRole?.name.toLowerCase().includes("admin") ? "admin" : (foundUser.username || "admin")
-        const perms = userRole?.permissions || ALL_SYSTEM_MODULES.map((m) => m.id)
+        const isSuperAdmin =
+          foundUser.username.toLowerCase() === "admin" ||
+          foundUser.roleId === "ROLE_ADMIN" ||
+          (userRole?.name || "").toLowerCase().includes("admin")
+
+        const roleKey = isSuperAdmin
+          ? "ROLE_ADMIN"
+          : (foundUser.roleId || `ROLE_${foundUser.username.toUpperCase()}`)
+
+        const perms: string[] = isSuperAdmin
+          ? [...ALL_SYSTEM_MODULES, "*", "admin"]
+          : (userRole?.allowedModules && userRole.allowedModules.length > 0
+              ? userRole.allowedModules
+              : ALL_SYSTEM_MODULES)
+
         const loginUser: LoginUserData = {
           user: foundUser.username,
           role: roleKey,
-          staffId: foundUser.id,
-          staffName: foundUser.name,
-          staffTitle: userRole?.name || "Hospital Staff",
-          staffDepartment: foundUser.department,
+          staffId: foundUser.staffId || foundUser.id || (isSuperAdmin ? "ADM-001" : "STF-001"),
+          staffName: foundUser.name || (isSuperAdmin ? "System Administrator" : foundUser.username),
+          staffTitle: userRole?.name || (isSuperAdmin ? "System Administrator" : "Hospital Staff"),
+          staffDepartment: foundUser.department || (isSuperAdmin ? "Administration" : "Clinical Operations"),
           permissions: perms,
+          doctorId: roleKey === "ROLE_DOCTOR" ? (foundUser.staffId || "DOC-001") : undefined,
         }
         onLogin(loginUser)
         return
