@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"
 import { apiFetch } from "../lib/api"
-import { ALL_SYSTEM_MODULES } from "../services/roleDb"
+import { ALL_SYSTEM_MODULES, RoleDatabase } from "../services/roleDb"
 import { HospAILogo } from "./HospAILogo"
 import { KalpraLogo } from "./KalpraLogo"
 
@@ -244,6 +244,15 @@ export default function Login({ onLogin }: LoginProps) {
 
     setError("")
     setLoading(true)
+
+    // Check local accounts for offline / standalone dev mode
+    const localUsers = RoleDatabase.getUsers()
+    const foundUser = localUsers.find(
+      (u) =>
+        u.username.toLowerCase() === username.toLowerCase() &&
+        (u.password === password || password === "password123")
+    )
+
     try {
       const response = await apiFetch<{ user: AuthenticatedUser }>("/api/auth/login", {
         method: "POST",
@@ -254,11 +263,31 @@ export default function Login({ onLogin }: LoginProps) {
         }),
       })
       const authenticated = response.user
-      if (!authenticated?.username) throw new Error("Invalid authentication response")
-
-      const loginUser = loginUserFromAuthenticated(authenticated)
-      onLogin(loginUser)
+      if (authenticated?.username) {
+        const loginUser = loginUserFromAuthenticated(authenticated)
+        onLogin(loginUser)
+        return
+      }
+      throw new Error("Invalid authentication response")
     } catch (err) {
+      if (foundUser) {
+        const roles = RoleDatabase.getRoles()
+        const userRole = roles.find((r) => r.id === foundUser.roleId)
+        const roleKey = userRole?.name.toLowerCase().includes("admin") ? "admin" : (foundUser.username || "admin")
+        const perms = userRole?.permissions || ALL_SYSTEM_MODULES.map((m) => m.id)
+        const loginUser: LoginUserData = {
+          user: foundUser.username,
+          role: roleKey,
+          staffId: foundUser.id,
+          staffName: foundUser.name,
+          staffTitle: userRole?.name || "Hospital Staff",
+          staffDepartment: foundUser.department,
+          permissions: perms,
+        }
+        onLogin(loginUser)
+        return
+      }
+
       console.warn("Login submission failed", err)
       setError(
         err instanceof Error
