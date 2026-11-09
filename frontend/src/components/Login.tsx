@@ -65,7 +65,7 @@ const ROLES_LIST: LoginRoleOption[] = [
 const NAVIGATION_MODULE_ALIASES: Record<string, string[]> = {
   patients: ["patients", "register", "appointments", "patient_messages", "clinical", "chart"],
   op: ["outpatient", "op_management", "queue", "op_nurse", "opd_procedures"],
-  er: ["emergency", "emergency_ui", "triage"],
+  er: ["emergency", "triage"],
   beds: ["inpatient", "beds", "admissions", "readmission", "discharge"],
   symptom_ai: ["intelligence", "symptom_ai", "clinical_rag", "clinical_summaries", "bulk_ai", "nl_filtering"],
   billing: ["billing", "billing_op", "billing_ip", "billing_er", "lab_billing", "billing_unified", "payments", "billing_revenue"],
