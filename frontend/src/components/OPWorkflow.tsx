@@ -16,6 +16,7 @@ import {
 import { SendToPatientButton } from "./messaging/SendToPatientDialog"
 import HospitalReceiptModal from "./HospitalReceiptModal"
 import PatientJourneyModal from "./PatientJourneyModal"
+import JourneyReportPrintModal from "./opcard/JourneyReportPrintModal"
 
 export interface OPPatient {
   id?: string
@@ -251,6 +252,81 @@ export default function OPWorkflow({
   // Patient workflow state
   const [patient, setPatient] = useState<OPPatient>(EMPTY_OP_PATIENT)
   const [selectedJourneyEncounter, setSelectedJourneyEncounter] = useState<DBOPEncounter | null>(null)
+  const [printJourneyEncounter, setPrintJourneyEncounter] = useState<DBOPEncounter | null>(null)
+
+  const handleSendJourneyWhatsApp = async (targetEnc?: DBOPEncounter | null) => {
+    const enc = targetEnc || dbEncounters.find((e) => e.id === patient.id || (e.umr && e.umr === patient.umr)) || (patient as any)
+    const phone = enc.phone || patient.phone
+    const targetUmr = enc.umr || patient.umr
+    const message =
+      `🏥 *${branding.hospitalName.toUpperCase()}*\n` +
+      `*Complete Outpatient Clinical Journey Summary*\n\n` +
+      `👤 *Patient:* ${enc.patientName || patient.name}\n` +
+      `🆔 *UMR:* ${targetUmr}\n` +
+      `📋 *OP Encounter:* ${enc.opNumber || patient.opNumber}\n` +
+      `👨‍⚕️ *Consultant:* ${enc.assignedDoctor || patient.assignedDoctor || "OPD Consultant"}\n` +
+      `🩺 *Specialty:* ${enc.dept || patient.aiSpecialty || "General Medicine"}\n` +
+      `📅 *Date:* ${enc.date || patient.date || new Date().toLocaleDateString()}\n\n` +
+      `*Clinical Pathway Completed:*\n` +
+      `✓ 1. OP Registration & UMR Verification\n` +
+      `✓ 2. Symptom Triage & Physician Allocation\n` +
+      `✓ 3. Clinical Consultation & Digital Prescription\n` +
+      `✓ 4. Billing & Encounter Settlement\n\n` +
+      `*View Live Digital OP Card & Care Record:* ${window.location.origin}/#/patient/${encodeURIComponent(targetUmr)}\n\n` +
+      `For queries or emergency assistance: ${branding.helpline || "+91-8816-279999"}`
+
+    try {
+      await sendPatientMessage({
+        patient: { name: enc.patientName || patient.name, phone, id: targetUmr, encounterId: enc.id || patient.id },
+        kind: "patient_journey",
+        channels: ["whatsapp"],
+        message,
+      })
+      setSmsSentNotice(`✓ OP Journey sent via WhatsApp to ${phone}`)
+    } catch {
+      window.open(whatsAppHandoffUrl(phone, message), "_blank")
+      setSmsSentNotice(`WhatsApp opened for ${phone}`)
+    }
+  }
+
+  const handleSendJourneyEmail = async (targetEnc?: DBOPEncounter | null) => {
+    const enc = targetEnc || dbEncounters.find((e) => e.id === patient.id || (e.umr && e.umr === patient.umr)) || (patient as any)
+    const targetUmr = enc.umr || patient.umr
+    let email = (enc as any).email || patient.email || ""
+    if (!email) {
+      email = window.prompt("Enter patient email to send OP Journey report:", "") || ""
+    }
+    if (!email || !email.includes("@")) return
+
+    const subject = `Your Outpatient Care Journey & OP Card - ${branding.hospitalName}`
+    const body =
+      `Dear ${enc.patientName || patient.name},\n\n` +
+      `Thank you for visiting ${branding.hospitalName}.\n\n` +
+      `Here is a summary of your Outpatient Encounter (${enc.opNumber || patient.opNumber}):\n` +
+      `- Permanent UMR: ${targetUmr}\n` +
+      `- Consultant: ${enc.assignedDoctor || patient.assignedDoctor}\n` +
+      `- Department: ${enc.dept || patient.aiSpecialty}\n` +
+      `- Date: ${enc.date || patient.date || new Date().toLocaleDateString()}\n\n` +
+      `You can review your complete clinical trajectory and digital OP Card at:\n` +
+      `${window.location.origin}/#/patient/${encodeURIComponent(targetUmr)}\n\n` +
+      `Warm regards,\n` +
+      `${branding.hospitalName} Outpatient Care Team\n` +
+      `Helpline: ${branding.helpline || "+91-8816-279999"}`
+
+    try {
+      await sendPatientMessage({
+        patient: { name: enc.patientName || patient.name, phone: enc.phone || patient.phone, email, id: targetUmr, encounterId: enc.id || patient.id },
+        kind: "patient_journey",
+        channels: ["email"],
+        subject,
+        message: body,
+      })
+      setSmsSentNotice(`✓ OP Journey report sent via Email to ${email}`)
+    } catch {
+      window.open(emailHandoffUrl(email, subject, body), "_blank")
+      setSmsSentNotice(`Email client opened for ${email}`)
+    }
+  }
 
   const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [aiAnalysisResult, setAiAnalysisResult] = useState<{
@@ -939,24 +1015,73 @@ export default function OPWorkflow({
             </select>
           </div>
 
-          {/* Direct Button to View OP Journey & Card */}
-          <button
-            type="button"
-            onClick={() => {
-              const match = dbEncounters.find(
-                (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
-              )
-              if (match) {
-                setSelectedJourneyEncounter(match)
-              } else if (patient.umr) {
-                openJourneyForCode(cardBarcodeValue(patient.umr))
+          {/* Quick Actions for OP Journey & Card */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                const match = dbEncounters.find(
+                  (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                )
+                if (match) {
+                  setSelectedJourneyEncounter(match)
+                } else if (patient.umr) {
+                  openJourneyForCode(cardBarcodeValue(patient.umr))
+                }
+              }}
+              className="px-3 py-1.5 bg-[#1B4FD8] hover:bg-blue-700 text-white text-[12px] font-bold rounded cursor-pointer flex items-center gap-1.5 whitespace-nowrap shadow-xs transition-colors"
+              title="View complete OP Journey & Card with WhatsApp, Mail and PDF send"
+            >
+              <span>🧭</span> OP Journey &amp; Card
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSendJourneyWhatsApp()}
+              className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[12px] font-bold rounded cursor-pointer flex items-center gap-1 whitespace-nowrap transition-colors"
+              title="Send OP Journey Summary to Patient via WhatsApp"
+            >
+              <span>💬</span> WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSendJourneyEmail()}
+              className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[12px] font-bold rounded cursor-pointer flex items-center gap-1 whitespace-nowrap transition-colors"
+              title="Send OP Journey Report to Patient via Email"
+            >
+              <span>✉️</span> Mail
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const match = dbEncounters.find(
+                  (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                )
+                setPrintJourneyEncounter(match || null)
+              }}
+              className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-[12px] font-semibold rounded cursor-pointer flex items-center gap-1 whitespace-nowrap shadow-2xs"
+              title="Open clean publication-grade A4 Print Preview"
+            >
+              <span>📄</span> Print Journey
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                printOpCard(
+                  opCardDataFor(patient.umr, {
+                    patientName: patient.name,
+                    age: patient.age,
+                    sex: patient.sex,
+                    phone: patient.phone,
+                  }),
+                  branding,
+                )
               }
-            }}
-            className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#1B4FD8] border border-blue-200 text-[12px] font-bold rounded cursor-pointer flex items-center gap-1.5 whitespace-nowrap shadow-2xs transition-colors"
-            title="View complete OP Journey & Card with WhatsApp, Mail and PDF send"
-          >
-            <span>🧭</span> OP Journey &amp; Card
-          </button>
+              className="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-[12px] font-semibold rounded cursor-pointer flex items-center gap-1 whitespace-nowrap shadow-2xs"
+              title="Print physical ID card size OP Card"
+            >
+              <span>🪪</span> Print Card
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1352,11 +1477,73 @@ export default function OPWorkflow({
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded self-start sm:self-auto">
-                <span className="text-[12px]">✨</span>
-                <span className="text-[11.5px] font-semibold text-[#1B4FD8]">
-                  AI Autonomous Triage
-                </span>
+              <div className="flex items-center gap-1.5 flex-wrap self-start sm:self-auto">
+                <div className="flex items-center gap-1 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded">
+                  <span className="text-[11px]">✨</span>
+                  <span className="text-[11px] font-semibold text-[#1B4FD8]">
+                    AI Triage
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const match = dbEncounters.find(
+                      (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                    )
+                    setSelectedJourneyEncounter(match || (patient as any))
+                  }}
+                  className="px-2.5 py-1 bg-[#1B4FD8] hover:bg-blue-700 text-white text-[11.5px] font-bold rounded shadow-2xs flex items-center gap-1 cursor-pointer transition-colors"
+                  title="View full interactive OP Journey & Card"
+                >
+                  <span>🧭</span> OP Journey &amp; Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendJourneyWhatsApp()}
+                  className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-[11px] font-bold rounded flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Send OP Journey via WhatsApp"
+                >
+                  <span>💬</span> WhatsApp
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSendJourneyEmail()}
+                  className="px-2 py-1 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-sky-800 text-[11px] font-bold rounded flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Send OP Journey via Email"
+                >
+                  <span>✉️</span> Mail
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const match = dbEncounters.find(
+                      (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                    )
+                    setPrintJourneyEncounter(match || null)
+                  }}
+                  className="px-2 py-1 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-[11px] font-medium rounded flex items-center gap-1 cursor-pointer shadow-2xs"
+                  title="Open clean A4 Print Preview for OP Journey"
+                >
+                  <span>📄</span> Print Journey
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    printOpCard(
+                      opCardDataFor(patient.umr, {
+                        patientName: patient.name,
+                        age: patient.age,
+                        sex: patient.sex,
+                        phone: patient.phone,
+                      }),
+                      branding,
+                    )
+                  }
+                  className="px-2 py-1 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-[11px] font-medium rounded flex items-center gap-1 cursor-pointer shadow-2xs"
+                  title="Print physical ID card size OP Card"
+                >
+                  <span>🪪</span> Print Card
+                </button>
               </div>
             </div>
 
@@ -3309,6 +3496,53 @@ export default function OPWorkflow({
                       <button
                         type="button"
                         onClick={() => {
+                          const match = dbEncounters.find(
+                            (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                          )
+                          setSelectedJourneyEncounter(match || (patient as any))
+                        }}
+                        className="px-4 py-2.5 bg-[#1B4FD8] hover:bg-blue-700 text-white text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="View complete OP Journey & Card"
+                      >
+                        <span>🧭</span> OP Journey &amp; Card
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const match = dbEncounters.find(
+                            (enc) => enc.id === patient.id || (enc.umr && enc.umr === patient.umr),
+                          )
+                          setPrintJourneyEncounter(match || null)
+                        }}
+                        className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-300 text-indigo-800 text-[12.5px] font-bold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Open clean A4 Print Preview for OP Journey Report"
+                      >
+                        <span>📄</span> Print OP Journey
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          printOpCard(
+                            opCardDataFor(patient.umr, {
+                              patientName: patient.name,
+                              age: patient.age,
+                              sex: patient.sex,
+                              phone: patient.phone,
+                            }),
+                            branding,
+                          )
+                        }
+                        className="px-4 py-2.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-[12.5px] font-semibold rounded shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                        title="Print physical ID-card OP Card"
+                      >
+                        <span>🪪</span> Print OP Card
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
                           setCurrentStep(1)
                         }}
                         className="px-5 py-2.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12.5px] font-bold rounded shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -3391,6 +3625,14 @@ export default function OPWorkflow({
               setCurrentStep(step ?? 1)
             }
           }}
+        />
+      )}
+
+      {/* Clean Publication-Grade A4 Journey Print Preview Modal */}
+      {printJourneyEncounter && (
+        <JourneyReportPrintModal
+          encounter={printJourneyEncounter}
+          onClose={() => setPrintJourneyEncounter(null)}
         />
       )}
     </div>

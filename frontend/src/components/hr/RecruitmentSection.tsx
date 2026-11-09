@@ -28,15 +28,16 @@ export default function RecruitmentSection({ canManage, canActivate }: { canMana
 function Requisitions() {
   const refs = useOrgRefs()
   const list = useHr(() => hr.get<Req[]>("/api/v1/recruitment/requisitions"), [])
+  const reqList: Req[] = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || (list.data as any)?.requisitions || [])
   const [f, setF] = useState<any>(null)
   const [busy, run] = useRun()
   const dn = (id: string) => refs.data?.departments.find((d) => d.id === id)?.name ?? "—"
   const des = (id: string) => refs.data?.designations.find((d) => d.id === id)?.title ?? "—"
   return (
     <Panel title="Manpower requisitions" actions={<Btn variant="primary" onClick={() => setF({ department_id: "", designation_id: "", positions: "1", employment_type: "permanent", justification: "" })}><Plus className="w-3.5 h-3.5" /> Raise requisition</Btn>}>
-      {list.loading && !list.data ? <Loading /> : !list.data?.length ? <Empty title="No requisitions" hint="A department raises one; approval (department head, then HR) lets recruiters open a vacancy." /> : (
+      {list.loading && !list.data ? <Loading /> : !reqList.length ? <Empty title="No requisitions" hint="A department raises one; approval (department head, then HR) lets recruiters open a vacancy." /> : (
         <Table head={["Code", "Department", "Role", "Positions", "Justification", "Raised by", "Status"]}>
-          {list.data.map((r) => (
+          {reqList.map((r) => (
             <tr key={r.id}>
               <td className="px-4 py-2 font-mono text-xs">{r.code}</td>
               <td className="px-4 py-2 font-medium">{dn(r.department_id)}</td>
@@ -69,19 +70,21 @@ function Requisitions() {
 function Vacancies({ canManage }: { canManage: boolean }) {
   const list = useHr(() => hr.get<Vacancy[]>("/api/v1/recruitment/vacancies"), [])
   const reqs = useHr(() => hr.get<Req[]>("/api/v1/recruitment/requisitions", { status: "approved" }), [])
+  const vacList: Vacancy[] = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || (list.data as any)?.vacancies || [])
+  const approvedReqs: Req[] = Array.isArray(reqs.data) ? reqs.data : ((reqs.data as any)?.items || (reqs.data as any)?.requisitions || [])
   const [f, setF] = useState<any>(null)
   const [busy, run] = useRun()
   return (
-    <Panel title="Vacancies" actions={canManage && <Btn variant="primary" disabled={!reqs.data?.length} onClick={() => setF({ requisition_id: reqs.data?.[0]?.id, title: "", description: "", requirements: "", openings: "1", closes_on: "" })}><Plus className="w-3.5 h-3.5" /> Open vacancy</Btn>}>
-      {list.loading && !list.data ? <Loading /> : !list.data?.length ? <Empty title="No vacancies" hint={reqs.data?.length ? undefined : "A vacancy needs an approved requisition."} /> : (
+    <Panel title="Vacancies" actions={canManage && <Btn variant="primary" disabled={!approvedReqs.length} onClick={() => setF({ requisition_id: approvedReqs[0]?.id, title: "", description: "", requirements: "", openings: "1", closes_on: "" })}><Plus className="w-3.5 h-3.5" /> Open vacancy</Btn>}>
+      {list.loading && !list.data ? <Loading /> : !vacList.length ? <Empty title="No vacancies" hint={approvedReqs.length ? undefined : "A vacancy needs an approved requisition."} /> : (
         <Table head={["Vacancy", "Openings", "Applications", "Interview", "Offered", "Hired", "Closes", "Status", ""]}>
-          {list.data.map((v) => (
+          {vacList.map((v) => (
             <tr key={v.id}>
               <td className="px-4 py-2">{v.title}</td>
               <td className="px-4 py-2 tabular-nums">{v.openings}</td>
-              <td className="px-4 py-2 tabular-nums">{Object.values(v.pipeline).reduce((a, b) => a + b, 0)}</td>
-              <td className="px-4 py-2 tabular-nums">{v.pipeline.interview ?? 0}</td>
-              <td className="px-4 py-2 tabular-nums">{v.pipeline.offered ?? 0}</td>
+              <td className="px-4 py-2 tabular-nums">{Object.values(v.pipeline || {}).reduce((a, b) => a + b, 0)}</td>
+              <td className="px-4 py-2 tabular-nums">{v.pipeline?.interview ?? 0}</td>
+              <td className="px-4 py-2 tabular-nums">{v.pipeline?.offered ?? 0}</td>
               <td className="px-4 py-2 tabular-nums">{v.hired}</td>
               <td className="px-4 py-2">{fmtDate(v.closes_on)}</td>
               <td className="px-4 py-2"><StatusBadge value={v.status === "open" ? "success" : "draft"} label={humanize(v.status)} /></td>
@@ -93,7 +96,7 @@ function Vacancies({ canManage }: { canManage: boolean }) {
       {f && (
         <Drawer open wide title="Open a vacancy" onClose={() => setF(null)} footer={<><Btn onClick={() => setF(null)}>Cancel</Btn><Btn variant="primary" busy={busy === "s"} disabled={f.title.length < 3 || f.description.length < 10} onClick={() => run("s", () => hr.post("/api/v1/recruitment/vacancies", { ...f, openings: Number(f.openings), closes_on: f.closes_on || null, requirements: f.requirements || null }), "Vacancy opened").then((r) => { if (r) { setF(null); list.reload() } })}>Open</Btn></>}>
           <div className="space-y-3">
-            <Field label="Requisition"><select className={inputCls} value={f.requisition_id} onChange={(e) => setF({ ...f, requisition_id: e.target.value })}>{reqs.data?.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.positions} position(s)</option>)}</select></Field>
+            <Field label="Requisition"><select className={inputCls} value={f.requisition_id} onChange={(e) => setF({ ...f, requisition_id: e.target.value })}>{approvedReqs.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.positions} position(s)</option>)}</select></Field>
             <Field label="Title" required><input className={inputCls} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></Field>
             <Field label="Job description" required><textarea rows={5} className={inputCls} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} /></Field>
             <Field label="Requirements"><textarea rows={3} className={inputCls} value={f.requirements} onChange={(e) => setF({ ...f, requirements: e.target.value })} /></Field>
@@ -110,9 +113,11 @@ function Vacancies({ canManage }: { canManage: boolean }) {
 
 function Pipeline({ canManage, canActivate }: { canManage: boolean; canActivate: boolean }) {
   const vacancies = useHr(() => hr.get<Vacancy[]>("/api/v1/recruitment/vacancies", { status: "open" }), [])
+  const vacList: Vacancy[] = Array.isArray(vacancies.data) ? vacancies.data : ((vacancies.data as any)?.items || (vacancies.data as any)?.vacancies || [])
   const [vac, setVac] = useState("")
   const [version, setVersion] = useState(0)
   const apps = useHr(() => hr.get<Appl[]>("/api/v1/recruitment/applications", { vacancy_id: vac || undefined }), [vac, version])
+  const appList: Appl[] = Array.isArray(apps.data) ? apps.data : ((apps.data as any)?.items || (apps.data as any)?.applications || [])
   const [adding, setAdding] = useState(false)
   const [open, setOpen] = useState<Appl | null>(null)
   const reload = () => setVersion((v) => v + 1)
@@ -121,14 +126,14 @@ function Pipeline({ canManage, canActivate }: { canManage: boolean; canActivate:
       <div className="flex items-center gap-2">
         <select className={filterCls + " max-w-xs"} value={vac} onChange={(e) => setVac(e.target.value)} aria-label="Vacancy">
           <option value="">All open vacancies</option>
-          {vacancies.data?.map((v) => <option key={v.id} value={v.id}>{v.title}</option>)}
+          {vacList.map((v) => <option key={v.id} value={v.id}>{v.title}</option>)}
         </select>
-        {canManage && <Btn variant="primary" disabled={!vacancies.data?.length} onClick={() => setAdding(true)}><Plus className="w-3.5 h-3.5" /> Add candidate</Btn>}
+        {canManage && <Btn variant="primary" disabled={!vacList.length} onClick={() => setAdding(true)}><Plus className="w-3.5 h-3.5" /> Add candidate</Btn>}
       </div>
       {apps.loading && !apps.data ? <Loading /> : apps.error ? <ErrorState error={apps.error} onRetry={apps.reload} /> : (
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-2">
           {STAGES.map((st) => {
-            const col = apps.data?.filter((a) => a.stage === st) ?? []
+            const col = appList.filter((a) => a.stage === st)
             return (
               <div key={st} className="bg-[#F8FAFC] border border-[#DDE2EC] rounded p-2 min-h-[160px]">
                 <div className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-2">{humanize(st)} · {col.length}</div>
@@ -146,10 +151,10 @@ function Pipeline({ canManage, canActivate }: { canManage: boolean; canActivate:
           })}
         </div>
       )}
-      {!!apps.data?.filter((a) => ["rejected", "withdrawn"].includes(a.stage)).length && (
-        <p className="text-xs text-[#64748B]">{apps.data.filter((a) => ["rejected", "withdrawn"].includes(a.stage)).length} rejected or withdrawn applications are hidden from the board.</p>
+      {!!appList.filter((a) => ["rejected", "withdrawn"].includes(a.stage)).length && (
+        <p className="text-xs text-[#64748B]">{appList.filter((a) => ["rejected", "withdrawn"].includes(a.stage)).length} rejected or withdrawn applications are hidden from the board.</p>
       )}
-      {adding && <AddCandidate vacancies={vacancies.data ?? []} defaultVacancy={vac} onClose={() => setAdding(false)} onDone={() => { setAdding(false); reload() }} />}
+      {adding && <AddCandidate vacancies={vacList} defaultVacancy={vac} onClose={() => setAdding(false)} onDone={() => { setAdding(false); reload() }} />}
       {open && <ApplicationDrawer app={open} canManage={canManage} canActivate={canActivate} onClose={() => setOpen(null)} onChanged={() => { setOpen(null); reload() }} />}
     </div>
   )

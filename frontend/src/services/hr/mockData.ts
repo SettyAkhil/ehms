@@ -387,12 +387,46 @@ export function handleHrMockDispatch(method: string, path: string, body?: any, q
     return { items, total: items.length, page: 1, page_size: 50 }
   }
 
-  if (p.includes("/attendance/live") || p.includes("/workforce/on-duty")) {
+  if (p.includes("/attendance/live")) {
     return {
       date: new Date().toISOString().split("T")[0],
+      counts: { in: 0, out: 0, not_arrived: 0, total: 0, unmapped_punches: 0 },
+      rows: [],
+      departments: [],
+      staff: [],
+      last_sync_at: new Date().toISOString(),
+    }
+  }
+
+  if (p.includes("/workforce/on-duty")) {
+    return {
       departments: [],
       staff: [],
     }
+  }
+
+  if (p.includes("/workforce/rosters")) {
+    return []
+  }
+
+  if (p.includes("/workforce/assignments")) {
+    return []
+  }
+
+  if (p.includes("/workforce/requirements")) {
+    return []
+  }
+
+  if (p.includes("/workforce/allocations")) {
+    return []
+  }
+
+  if (p.includes("/recruitment/applications")) {
+    return []
+  }
+
+  if (p.includes("/recruitment/vacancies") || p.includes("/vacancies")) {
+    return []
   }
 
   if (p.includes("/attendance/daily") || p.includes("/attendance")) {
@@ -413,10 +447,15 @@ export function handleHrMockDispatch(method: string, path: string, body?: any, q
     return {
       rows: MOCK_DEPARTMENTS.map((d) => ({
         department: d.name,
+        shift: "General",
+        category: "nurse",
         required: 0,
+        assigned: 0,
         allocated: 0,
         actual: 0,
         shortage: 0,
+        patients: 0,
+        staff: [],
       })),
       total_shortage: 0,
       census_error: null,
@@ -435,8 +474,16 @@ export function handleHrMockDispatch(method: string, path: string, body?: any, q
     return { runs: MOCK_PAYROLL, current: null }
   }
 
+  if (p.includes("/recruitment/applications") || p.includes("/applications")) {
+    return []
+  }
+
+  if (p.includes("/recruitment/vacancies") || p.includes("/vacancies")) {
+    return []
+  }
+
   if (p.includes("/recruitment")) {
-    return { requisitions: MOCK_RECRUITMENT }
+    return []
   }
 
   if (p.includes("/training/matrix")) {

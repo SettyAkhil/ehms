@@ -77,7 +77,8 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
 
   const templates = useHr(() => hr.get<ShiftTemplate[]>("/api/v1/workforce/shifts"), [])
   const rosters = useHr(() => (dept ? hr.get<Roster[]>("/api/v1/workforce/rosters", { department_id: dept }) : Promise.resolve([])), [dept])
-  const roster = rosters.data?.find((r) => r.period_start <= start && r.period_end >= end) ?? null
+  const rosterList: Roster[] = Array.isArray(rosters.data) ? rosters.data : ((rosters.data as any)?.items || (rosters.data as any)?.rosters || [])
+  const roster = rosterList.find((r) => r.period_start <= start && r.period_end >= end) ?? null
   const staff = useHr(
     () => (dept ? hr.get<Page<EmployeeListItem>>("/api/v1/hr/employees", { department_id: dept, status: "active", page_size: 200 }) : Promise.resolve(null)),
     [dept],
@@ -87,6 +88,9 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
     () => (roster ? hr.get<Cell[]>("/api/v1/workforce/assignments", { date_from: start, date_to: end, roster_id: roster.id }) : Promise.resolve([] as Cell[])),
     [roster?.id, start, end, version],
   )
+  const cellList: Cell[] = Array.isArray(cells.data) ? cells.data : ((cells.data as any)?.items || [])
+  const tmplList: ShiftTemplate[] = Array.isArray(templates.data) ? templates.data : ((templates.data as any)?.items || (templates.data as any)?.shifts || [])
+  const staffList: EmployeeListItem[] = Array.isArray(staff.data?.items) ? staff.data!.items : (Array.isArray(staff.data) ? (staff.data as any) : [])
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [validation, setValidation] = useState<{ errors: { issue: string }[]; warnings: { issue: string }[] } | null>(null)
   const [rotation, setRotation] = useState(false)
@@ -100,10 +104,10 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
   const value = (emp: string, d: string) => {
     const key = `${emp}|${d}`
     if (key in draft) return draft[key]
-    const c = cells.data?.find((x) => x.employee_id === emp && x.work_date === d)
+    const c = cellList.find((x) => x.employee_id === emp && x.work_date === d)
     return c ? (c.is_weekly_off ? "OFF" : c.shift_template_id ?? "") : ""
   }
-  const tmplById = Object.fromEntries((templates.data ?? []).map((t) => [t.id, t]))
+  const tmplById = Object.fromEntries(tmplList.map((t) => [t.id, t]))
   const dirty = Object.keys(draft).length
 
   const createRoster = () =>
@@ -248,7 +252,7 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {staff.data.items.map((e) => (
+                  {staffList.map((e) => (
                     <tr key={e.id}>
                       <td className="sticky left-0 bg-white px-4 py-1 border-t border-[#EEF1F6]">
                         <div className="text-gray-900 text-sm font-semibold">{e.full_name}</div>
@@ -272,7 +276,7 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
                             >
                               <option value="">—</option>
                               <option value="OFF">Off</option>
-                              {templates.data?.map((x) => (
+                              {tmplList.map((x) => (
                                 <option key={x.id} value={x.id}>
                                   {x.code}
                                 </option>
@@ -288,7 +292,7 @@ function RosterBuilder({ canEdit }: { canEdit: boolean }) {
             </div>
           )}
           <div className="flex flex-wrap gap-3 mt-3 text-[11px] text-[#64748B]">
-            {templates.data?.map((t) => (
+            {tmplList.map((t) => (
               <span key={t.id} className="flex items-center gap-1">
                 <span className="w-3 h-3 rounded-xs" style={{ background: t.color ?? (t.is_night ? "#582C5F" : "#1B4FD8") }} />
                 {t.code} {hhmm(t.start_time)}–{hhmm(t.end_time)}
@@ -381,13 +385,14 @@ function Templates({ canEdit }: { canEdit: boolean }) {
         <input className={inputCls} inputMode="numeric" value={String(form[k])} onChange={(e) => setForm({ ...form, [k]: Number(e.target.value.replace(/\D/g, "")) })} />
       </Field>
     )
+  const listItems: ShiftTemplate[] = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || [])
   return (
     <Panel title="Shift templates" actions={canEdit && <Btn variant="primary" onClick={() => setForm(blank)}><Plus className="w-3.5 h-3.5" /> New shift</Btn>}>
-      {!list.data?.length ? (
+      {!listItems.length ? (
         <Empty title="No shifts defined" hint="For example General 09:00–17:00, Morning 07:00–14:00, Evening 14:00–21:00, Night 21:00–07:00." />
       ) : (
         <Table head={["Code", "Name", "Hours", "Break", "Grace in/out", "Full / half day", "OT after", "Rest", ""]}>
-          {list.data.map((t) => (
+          {listItems.map((t) => (
             <tr key={t.id}>
               <td className="px-4 py-2 font-mono text-xs">{t.code}</td>
               <td className="px-4 py-2">
@@ -507,11 +512,11 @@ function Holidays({ canEdit }: { canEdit: boolean }) {
       )}
       {list.loading && !list.data ? (
         <Loading />
-      ) : !list.data?.length ? (
+      ) : !(Array.isArray(list.data) ? list.data : (list.data as any)?.items || []).length ? (
         <Empty title={`No holidays in ${year}`} />
       ) : (
         <Table head={["Date", "Holiday", "Type", ""]}>
-          {list.data.map((h) => (
+          {(Array.isArray(list.data) ? list.data : (list.data as any)?.items || []).map((h) => (
             <tr key={h.id}>
               <td className="px-4 py-2 whitespace-nowrap">{fmtDate(h.holiday_date)}</td>
               <td className="px-4 py-2">{h.name}</td>
@@ -537,13 +542,14 @@ function Swaps() {
   const list = useHr(() => hr.get<{ id: string; kind: string; status: string; reason: string; work_date: string; requester: string; counterpart: string; created_at: string }[]>("/api/v1/workforce/swaps"), [])
   if (list.loading && !list.data) return <Loading />
   if (list.error) return <ErrorState error={list.error} onRetry={list.reload} />
+  const swapItems = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || [])
   return (
     <Panel title="Swap and replacement requests" actions={<span className="text-[11px] text-[#64748B]">Staff raise these from My HR; decisions are made under Approvals</span>}>
-      {!list.data?.length ? (
+      {!swapItems.length ? (
         <Empty title="No swap requests" />
       ) : (
         <Table head={["Date", "Type", "Requested by", "With", "Reason", "Status"]}>
-          {list.data.map((s) => (
+          {swapItems.map((s) => (
             <tr key={s.id}>
               <td className="px-4 py-2">{fmtDate(s.work_date)}</td>
               <td className="px-4 py-2 capitalize">{s.kind}</td>
@@ -566,6 +572,7 @@ function Handovers() {
   const [dept, setDept] = useState("")
   const list = useHr(() => hr.get<{ id: string; work_date: string; notes: string; from_name: string; to_name: string | null; acknowledged_at: string | null; created_at: string }[]>("/api/v1/workforce/handovers", { department_id: dept || undefined }), [dept])
   const [busy, run] = useRun()
+  const handoverItems = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || [])
   return (
     <Panel
       title="Shift handovers"
@@ -582,11 +589,11 @@ function Handovers() {
     >
       {list.loading && !list.data ? (
         <Loading />
-      ) : !list.data?.length ? (
+      ) : !handoverItems.length ? (
         <Empty title="No handovers recorded" hint="Staff record handovers at the end of their shift from My HR." />
       ) : (
         <ul className="divide-y divide-[#EEF1F6]">
-          {list.data.map((h) => (
+          {handoverItems.map((h) => (
             <li key={h.id} className="py-2 text-sm">
               <div className="flex justify-between gap-2">
                 <span className="text-gray-900 font-medium">

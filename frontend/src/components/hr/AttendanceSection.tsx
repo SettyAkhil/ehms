@@ -189,7 +189,7 @@ function Live() {
         ) : board.error ? (
           <ErrorState error={board.error} onRetry={board.reload} />
         ) : rows.length === 0 ? (
-          <Empty title={board.data?.counts.total ? "No one matches these filters" : "No active employees yet"} />
+          <Empty title={board.data?.counts?.total ? "No one matches these filters" : "No active employees yet"} />
         ) : (
           <Table head={["Employee", "Department", "Designation", "Branch", "First in", "Last out", "Punches", "Status", "Synced"]}>
             {rows.map((r) => (

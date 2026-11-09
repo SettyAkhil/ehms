@@ -54,35 +54,43 @@ function Coverage() {
       ) : cov.error ? (
         <ErrorState error={cov.error} onRetry={cov.reload} />
       ) : (
-        <>
-          {"census_error" in (cov.data as any) && (cov.data as any).census_error && <p className="text-xs text-amber-700">{(cov.data as any).census_error} — ratios use the minimum counts.</p>}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Kpi label="Requirements checked" value={cov.data!.rows.length} />
-            <Kpi label="Short by" value={cov.data!.total_shortage} tone={cov.data!.total_shortage ? "bad" : "good"} hint="staff across all shifts" />
-          </div>
-          <Panel title="Coverage by department and shift">
-            {!cov.data!.rows.length ? (
-              <Empty title="No staffing requirements set" hint="Add requirements per department, shift and staff category under Requirements." />
-            ) : (
-              <Table head={["Department", "Shift", "Category", "Patients", "Required", "Rostered", "Status", "Staff"]}>
-                {cov.data!.rows.map((r, i) => (
-                  <tr key={i}>
-                    <td className="px-4 py-2">{r.department}</td>
-                    <td className="px-4 py-2">{r.shift}</td>
-                    <td className="px-4 py-2">{categoryLabel(r.category)}</td>
-                    <td className="px-4 py-2 tabular-nums">{r.patients ?? "—"}</td>
-                    <td className="px-4 py-2 tabular-nums">{r.required}</td>
-                    <td className="px-4 py-2 tabular-nums">{r.assigned}</td>
-                    <td className="px-4 py-2">{r.shortage ? <StatusBadge value="failed" label={`Short ${r.shortage}`} /> : <StatusBadge value="success" label="Covered" />}</td>
-                    <td className="px-4 py-2 text-xs text-gray-500 max-w-xs truncate" title={r.staff.map((s) => s.name).join(", ")}>
-                      {r.staff.map((s) => s.name + (s.source !== "roster" ? ` (${s.source})` : "")).join(", ") || "—"}
-                    </td>
-                  </tr>
-                ))}
-              </Table>
-            )}
-          </Panel>
-        </>
+        (() => {
+          const rows = Array.isArray(cov.data?.rows) ? cov.data.rows : []
+          return (
+            <>
+              {cov.data && "census_error" in (cov.data as any) && (cov.data as any).census_error && <p className="text-xs text-amber-700">{(cov.data as any).census_error} — ratios use the minimum counts.</p>}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Kpi label="Requirements checked" value={rows.length} />
+                <Kpi label="Short by" value={cov.data?.total_shortage ?? 0} tone={(cov.data?.total_shortage ?? 0) ? "bad" : "good"} hint="staff across all shifts" />
+              </div>
+              <Panel title="Coverage by department and shift">
+                {!rows.length ? (
+                  <Empty title="No staffing requirements set" hint="Add requirements per department, shift and staff category under Requirements." />
+                ) : (
+                  <Table head={["Department", "Shift", "Category", "Patients", "Required", "Rostered", "Status", "Staff"]}>
+                    {rows.map((r, i) => {
+                      const staffMembers = Array.isArray(r.staff) ? r.staff : []
+                      return (
+                        <tr key={i}>
+                          <td className="px-4 py-2">{r.department}</td>
+                          <td className="px-4 py-2">{r.shift}</td>
+                          <td className="px-4 py-2">{categoryLabel(r.category)}</td>
+                          <td className="px-4 py-2 tabular-nums">{r.patients ?? "—"}</td>
+                          <td className="px-4 py-2 tabular-nums">{r.required}</td>
+                          <td className="px-4 py-2 tabular-nums">{r.assigned}</td>
+                          <td className="px-4 py-2">{r.shortage ? <StatusBadge value="failed" label={`Short ${r.shortage}`} /> : <StatusBadge value="success" label="Covered" />}</td>
+                          <td className="px-4 py-2 text-xs text-gray-500 max-w-xs truncate" title={staffMembers.map((s) => s.name).join(", ")}>
+                            {staffMembers.map((s) => s.name + (s.source !== "roster" ? ` (${s.source})` : "")).join(", ") || "—"}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </Table>
+                )}
+              </Panel>
+            </>
+          )
+        })()
       )}
     </div>
   )
@@ -99,10 +107,11 @@ export function OnDutyList({ hmsModule, departmentId, compact }: { hmsModule?: s
   )
   if (duty.loading && !duty.data) return <Loading label="Loading duty roster…" />
   if (duty.error) return <ErrorState error={duty.error} onRetry={duty.reload} />
-  if (!duty.data!.staff.length) return <Empty title="Nobody is rostered on duty right now" hint="Duty comes from published HR rosters." />
+  const staffList = Array.isArray(duty.data?.staff) ? duty.data.staff : []
+  if (!staffList.length) return <Empty title="Nobody is rostered on duty right now" hint="Duty comes from published HR rosters." />
   return (
     <ul className={`divide-y divide-[#DDE2EC] ${compact ? "text-xs" : "text-sm"}`}>
-      {duty.data!.staff.map((s) => (
+      {staffList.map((s) => (
         <li key={s.employee_id} className="py-2 flex items-center justify-between gap-2">
           <span>
             <span className="text-gray-900 font-medium">{s.name}</span>
@@ -171,15 +180,17 @@ function Requirements({ canEdit }: { canEdit: boolean }) {
         list.reload()
       }
     })
+  const reqItems = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || [])
+  const activeReqs = reqItems.filter((r) => !("effective_to" in r) || !(r as any).effective_to)
   return (
     <Panel title="Staffing requirements" actions={canEdit && <Btn variant="primary" onClick={() => setF(blank)}><Plus className="w-3.5 h-3.5" /> Add requirement</Btn>}>
       {list.loading && !list.data ? (
         <Loading />
-      ) : !list.data?.filter((r) => !("effective_to" in r) || !(r as any).effective_to).length ? (
+      ) : !activeReqs.length ? (
         <Empty title="No requirements yet" hint="e.g. ICU, night shift: at least 4 nurses, or 1 nurse per 2 patients when the census is higher." />
       ) : (
         <Table head={["Department", "Shift", "Category", "Minimum", "Patients per staff", "Competency", "From", ""]}>
-          {list.data!.filter((r) => !(r as any).effective_to).map((r) => (
+          {activeReqs.map((r) => (
             <tr key={r.id}>
               <td className="px-4 py-2">{dname(r.department_id)}</td>
               <td className="px-4 py-2">{sname(r.shift_template_id)}</td>
@@ -267,7 +278,8 @@ function Allocations({ canEdit }: { canEdit: boolean }) {
         list.reload()
       }
     })
-  return (
+    const allocItems = Array.isArray(list.data) ? list.data : ((list.data as any)?.items || [])
+    return (
     <Panel
       title="Temporary and replacement allocations"
       actions={
@@ -283,11 +295,11 @@ function Allocations({ canEdit }: { canEdit: boolean }) {
     >
       {list.loading && !list.data ? (
         <Loading />
-      ) : !list.data?.length ? (
+      ) : !allocItems.length ? (
         <Empty title="No allocations in the next two weeks" />
       ) : (
         <Table head={["Date", "Employee", "Deployed to", "Type", "Reason", ""]}>
-          {list.data.map((a) => (
+          {allocItems.map((a) => (
             <tr key={a.id}>
               <td className="px-4 py-2">{fmtDate(a.work_date)}</td>
               <td className="px-4 py-2">{a.employee_name}</td>
