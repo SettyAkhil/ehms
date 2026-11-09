@@ -252,30 +252,30 @@ export default function InvoicePrintModal({
 
     const qty = Number(c.quantity || c.qty || c.returnQuantity || 1)
     const rate = Number(c.unitPrice || c.mrp || c.rate || 0)
-    const amount = Number(c.grossAmount !== undefined ? c.grossAmount : qty * rate)
+    const amount = +(qty * rate).toFixed(2)
     const discountPercent = Number(c.discount || 0)
-    const discAmt = Number(
+    const discAmt = +(
       c.discountAmount !== undefined
         ? c.discountAmount
-        : amount * (discountPercent / 100),
-    )
-    const taxableAmt = Number(
-      c.taxableAmount !== undefined ? c.taxableAmount : amount - discAmt,
-    )
+        : amount * (discountPercent / 100)
+    ).toFixed(2)
+    const taxableAmt = +(
+      c.taxableAmount !== undefined ? c.taxableAmount : amount - discAmt
+    ).toFixed(2)
     const taxRate = Number(c.tax !== undefined ? c.tax : 5)
     const cgstRate = Number(c.cgstRate !== undefined ? c.cgstRate : taxRate / 2)
     const sgstRate = Number(c.sgstRate !== undefined ? c.sgstRate : taxRate / 2)
-    const cgstAmt = Number(
-      c.cgstAmount !== undefined ? c.cgstAmount : taxableAmt * (cgstRate / 100),
-    )
-    const sgstAmt = Number(
-      c.sgstAmount !== undefined ? c.sgstAmount : taxableAmt * (sgstRate / 100),
-    )
-    const billAmt = Number(
+    const cgstAmt = +(
+      c.cgstAmount !== undefined ? c.cgstAmount : taxableAmt * (cgstRate / 100)
+    ).toFixed(2)
+    const sgstAmt = +(
+      c.sgstAmount !== undefined ? c.sgstAmount : taxableAmt * (sgstRate / 100)
+    ).toFixed(2)
+    const billAmt = +(
       c.totalPrice !== undefined
         ? c.totalPrice
-        : taxableAmt + cgstAmt + sgstAmt,
-    )
+        : taxableAmt + cgstAmt + sgstAmt
+    ).toFixed(2)
 
     // Clean HSN code
     const hsnCode = c.hsnCode || c.hsn || "3004 039"
@@ -326,21 +326,23 @@ export default function InvoicePrintModal({
     }
   })
 
-  // Calculate table totals
+  // Calculate table totals with exact 2-decimal precision (never dropping decimals)
   const totalQty = processedItems.reduce((s, i) => s + (i.qty || 0), 0)
-  const totalGrossAmount = processedItems.reduce((s, i) => s + (i.amount || 0), 0)
-  const totalDiscAmt = processedItems.reduce((s, i) => s + (i.discAmt || 0), 0)
-  const totalTaxableAmt = processedItems.reduce(
+  const totalGrossAmount = +(processedItems.reduce((s, i) => s + (i.amount || 0), 0)).toFixed(2)
+  const totalDiscAmt = +(processedItems.reduce((s, i) => s + (i.discAmt || 0), 0)).toFixed(2)
+  const totalTaxableAmt = +(processedItems.reduce(
     (s, i) => s + (i.taxableAmt || 0),
     0,
-  )
-  const totalCgstAmt = processedItems.reduce((s, i) => s + (i.cgstAmt || 0), 0)
-  const totalSgstAmt = processedItems.reduce((s, i) => s + (i.sgstAmt || 0), 0)
+  )).toFixed(2)
+  const totalCgstAmt = +(processedItems.reduce((s, i) => s + (i.cgstAmt || 0), 0)).toFixed(2)
+  const totalSgstAmt = +(processedItems.reduce((s, i) => s + (i.sgstAmt || 0), 0)).toFixed(2)
+  const calculatedItemsTotal = +(processedItems.reduce((s, i) => s + (i.billAmt || 0), 0)).toFixed(2)
+  const exactComputedTotal = +(totalTaxableAmt + totalCgstAmt + totalSgstAmt).toFixed(2)
+
+  // Use exact decimal calculation: ensures Taxable (e.g. 210.00) + CGST (2.63) + SGST (2.63) = 215.26
   const totalBillAmt = isReturnVoucher
-    ? Number(activeReturn?.totalRefund || activeReturn?.refundAmount || processedItems.reduce((s, i) => s + (i.refundAmount || i.billAmt || 0), 0))
-    : effectiveBill.totalAmount !== undefined
-    ? Number(effectiveBill.totalAmount)
-    : processedItems.reduce((s, i) => s + (i.billAmt || 0), 0)
+    ? Number(activeReturn?.totalRefund || activeReturn?.refundAmount || calculatedItemsTotal)
+    : exactComputedTotal
 
   const handlePrintReceipt = () => {
     window.print()
