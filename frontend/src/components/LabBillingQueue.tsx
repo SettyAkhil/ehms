@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react"
 import { StatusBadge } from "./shared"
 import { LabOrder, LabOrderDatabase } from "../services/labOrdersDb"
 import { AuditDatabase } from "../services/auditDb"
-import { ClaimRecord, BillingDatabase } from "../services/billingDb"
 import HospitalReceiptModal from "./HospitalReceiptModal"
 import { BillingHeader, KpiTile } from "./billing/BillingChrome"
 import { FlaskConical, Hourglass } from "lucide-react"
@@ -20,7 +19,6 @@ const PAYMENT_MODES: NonNullable<LabOrder["billing"]["mode"]>[] = [
   "Cash",
   "Card",
   "UPI",
-  "Insurance",
   "Corporate",
 ]
 
@@ -37,6 +35,8 @@ export default function LabBillingQueue({
   const [view, setView] = useState<"pending" | "settled">("pending")
   const [receipt, setReceipt] = useState<LabOrder | null>(null)
   const [showReceiptModal, setShowReceiptModal] = useState(false)
+  const [collecting, setCollecting] = useState(false)
+  const [collectError, setCollectError] = useState<string | null>(null)
 
   useEffect(() => LabOrderDatabase.subscribe(() => setTick((t) => t + 1)), [])
 
@@ -72,76 +72,28 @@ export default function LabBillingQueue({
     setDiscount(0)
   }, [selected?.id])
 
-  const collect = () => {
-    if (!selected || selected.billing.status === "Paid") return
-    const updated = LabOrderDatabase.markBilled(selected.id, {
-      mode,
-      discount,
-      collectedBy,
-    })
-    if (!updated) return
-
-    // Sync to BillingDatabase so payment appears in Central Billing Payment History & claims
+  const collect = async () => {
+    if (!selected || selected.billing.status === "Paid" || collecting) return
+    setCollectError(null)
+    setCollecting(true)
+    let updated: LabOrder | undefined
     try {
-      const umr = selected.umr || `UMR${Math.floor(100000 + Math.random() * 900000)}`
-      const testNames = (selected.tests || []).map((t) => t.name).join(", ") || "Diagnostic Investigations"
-      const mappedMethod =
-        mode === "UPI"
-          ? "UPI / Digital"
-          : mode === "Card"
-          ? "Debit Card"
-          : mode === "Insurance"
-          ? "Insurance Copay"
-          : mode === "Corporate"
-          ? "Bank Transfer"
-          : "Cash"
-
-      const claim = BillingDatabase.createClaim({
-        patientName: selected.patientName,
-        patientId: umr,
-        mrn: umr,
-        age: 35,
-        gender: "Male",
-        department: "Laboratory",
-        insuranceProvider: "Self-Pay",
-        policyNumber: "N/A",
-        status: "Draft",
-        items: [
-          {
-            id: `ITEM-LAB-${selected.id}`,
-            description: `Laboratory: ${testNames}`,
-            category: "Laboratory",
-            cptCode: "80053",
-            quantity: 1,
-            unitPrice: updated.billing.total,
-            total: updated.billing.total,
-            insuranceCovered: 0,
-            patientPayable: updated.billing.total,
-            orderedBy: selected.doctor || "Ordering Physician",
-            orderedAt: selected.createdAt || new Date().toISOString(),
-          },
-        ],
-        subtotal: updated.billing.subtotal || updated.billing.total,
-        discount: updated.billing.discount || 0,
-        tax: 0,
-        totalAmount: updated.billing.total,
-        insurancePortion: 0,
-        patientPortion: updated.billing.total,
-        amountPaid: 0,
-        balanceDue: updated.billing.total,
-        dateOfService: new Date().toISOString().split("T")[0],
-      })
-
-      BillingDatabase.recordPayment(claim.id, {
-        amount: updated.billing.total,
-        paymentMethod: mappedMethod as any,
-        transactionRef: updated.billing.receiptNo,
+      updated = await LabOrderDatabase.markBilled(selected.id, {
+        mode,
+        discount,
         collectedBy,
-        notes: `Lab Test Billing settlement for ${selected.id}`,
       })
-    } catch (e) {
-      console.warn("Could not sync lab payment to BillingDatabase:", e)
+    } catch (error) {
+      setCollectError(
+        error instanceof Error
+          ? `Payment was not recorded: ${error.message}`
+          : "Payment was not recorded. Please retry.",
+      )
+      return
+    } finally {
+      setCollecting(false)
     }
+    if (!updated) return
 
     AuditDatabase.logEvent(
       "Lab Order Billed",
@@ -472,12 +424,18 @@ export default function LabBillingQueue({
                       </span>
                     </div>
 
+                    {collectError && (
+                      <p className="text-[11.5px] text-[#B91C1C] bg-[#FEF2F2] border border-[#FECACA] px-3 py-2">
+                        {collectError}
+                      </p>
+                    )}
                     <button
                       type="button"
                       onClick={collect}
-                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-700 text-white text-[13px] font-bold cursor-pointer transition-colors shadow-2xs"
+                      disabled={collecting}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-700 text-white text-[13px] font-bold cursor-pointer transition-colors shadow-2xs disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      Collect payment &amp; send to laboratory
+                      {collecting ? "Recording payment…" : "Collect payment & send to laboratory"}
                     </button>
                     <p className="text-[11px] text-[#94A3B8] text-center">
                       The laboratory only sees this order once it is paid.

@@ -579,8 +579,8 @@ export class NursingWorkflowDb {
       localStorage.setItem(KEY_NOTES, JSON.stringify(list))
 
       if (data?.vitals && patientId) {
-        try {
-          db.recordVitals(
+        {
+          void db.recordVitals(
             patientId,
             {
               bp: data.vitals.bloodPressure || data.vitals.bp || "--",
@@ -591,9 +591,14 @@ export class NursingWorkflowDb {
               notes: `${data.remarks || data.assessment || ""}${data.vitals.respiratoryRate || data.vitals.rr ? ` [RR: ${data.vitals.respiratoryRate || data.vitals.rr}]` : ""}`,
             },
             user?.profile?.name || "Jessica Carter, RN"
-          )
-        } catch {
-          // If encounter lookup by ID fails, fallback gracefully
+          ).catch((error) => {
+            console.error("Nursing note vitals were not saved to the server:", error)
+            window.dispatchEvent(
+              new CustomEvent("app:sync-error", {
+                detail: { scope: "vitals", message: error instanceof Error ? error.message : String(error) },
+              }),
+            )
+          })
         }
       }
 

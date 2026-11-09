@@ -396,10 +396,21 @@ export default function NurseStation({
     setAssignedDoctorName(selected?.assignedDoctor || "")
   }, [selectedId, selected?.assignedDoctor])
 
-  const dispatch = () => {
+  const dispatch = async () => {
     if (!selected) return
     const chosenDoctor = (assignedDoctorName || selected.assignedDoctor || "").trim()
     const docObj = chosenDoctor ? (getDoctorByName(chosenDoctor) || getDoctorById(chosenDoctor)) : null
+
+    try {
+      await db.recordVitals(selected.id, vitals, nurseName)
+    } catch (error) {
+      alert(
+        `Vitals were NOT saved, so the patient has not been sent to the doctor.\n\n${
+          error instanceof Error ? error.message : "Please retry."
+        }`,
+      )
+      return
+    }
 
     if (chosenDoctor) {
       db.updateEncounter(selected.id, {
@@ -413,7 +424,6 @@ export default function NurseStation({
       } as any)
     }
 
-    db.recordVitals(selected.id, vitals, nurseName)
     setSent({
       name: selected.patientName,
       doctor: docObj?.name || chosenDoctor || "the duty doctor",

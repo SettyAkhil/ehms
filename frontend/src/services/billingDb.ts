@@ -2672,6 +2672,16 @@ export class BillingDatabase {
     receiptNo?: string,
     optionalTestName?: string,
   ): { success: boolean; updatedCount: number; message: string } {
+    // Payment clearance is a financial authorization, not a browser UI event.
+    // The former local implementation marked diagnostic orders paid and even
+    // created studies from claim descriptions. Keep this fail-closed until a
+    // verified billing-to-department backend event is available.
+    return {
+      success: false,
+      updatedCount: 0,
+      message: "Awaiting verified backend payment clearance.",
+    }
+
     const targetName = (patientIdOrName || "").toLowerCase().trim();
     const targetMrn = targetName.replace("umr", "").replace("p-", "").trim();
     const nowIso = new Date().toISOString();

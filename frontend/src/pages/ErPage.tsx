@@ -79,7 +79,6 @@ import {
   type ErPatientMedicalProfile,
 } from "../services/erDb"
 
-import { BedDatabase } from "../services/bedDb"
 
 import {
   BillingDatabase,
@@ -589,6 +588,28 @@ export type ErVisitDetail = ErVisit & {
   investigations?: ErInvestigationItem[]
 
   timeline_events?: ErTimelineEventItem[]
+
+}
+
+// Timeline events are stored on the server as ER clinical notes whose
+// note_type is the event type and whose content is "<event name> — <notes>".
+const TIMELINE_NOTE_TYPES = new Set<string>([
+  "patient_arrived", "bed_assigned", "initial_vitals", "medication_given", "intervention_given",
+  "investigation_ordered", "followup_vitals", "patient_stabilized", "doctor_assigned", "doctor_arrived",
+  "doctor_assessment_completed", "destination_assigned", "destination_bed_assigned", "patient_transferred",
+  "stabilized", "transferred",
+])
+const TIMELINE_SEPARATOR = " — "
+
+async function postErTimelineNote(
+  visitId: number | string,
+  event: { event_type: string ;event_name: string ;notes?: string | null ;[extra: string]: unknown },
+): Promise<void> {
+  const content = event.notes ? `${event.event_name}${TIMELINE_SEPARATOR}${event.notes}` : event.event_name
+  await apiFetch(`/api/er/visits/${visitId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ note_type: event.event_type, content }),
+  })
 }
 
 export type TriageCategory = {
@@ -2673,10 +2694,9 @@ function NewPatientIntakePanel({
   )
 
   // 6. MLC
-
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("No")
-
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const handleDobChange = (dobVal: string) => {
     setNewDob(dobVal)
@@ -2758,6 +2778,8 @@ function NewPatientIntakePanel({
   }, [newPhone, newName, newLastName])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     const missing: string[] = []
 
     if (!newName.trim()) missing.push("First Name")
@@ -2820,12 +2842,13 @@ function NewPatientIntakePanel({
       }
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
-      let regRes: any
-      try {
-        regRes = await apiFetch<{
+      // The server is the only place an ER visit is created; if it fails the
+      // outer catch reports it and nothing is shown as registered.
+      const regRes = await apiFetch<{
           patient_id: string
           patient: Patient
           visit: { id: number ;visit_no: string }
@@ -2840,7 +2863,7 @@ function NewPatientIntakePanel({
               dob: newDob || undefined,
               blood_group: newBloodGroup,
               allergies: newAllergies.trim() || "No Known Allergies",
-              phone: newPhone.trim() || "0000000000",
+              phone: newPhone.trim() || undefined,
               emergency_contact: newEmergencyContact.trim(),
               emergency_contact_name: newEmergencyContactName.trim() || undefined,
               emergency_contact_relation: newEmergencyContactRelation || undefined,
@@ -2859,6 +2882,8 @@ function NewPatientIntakePanel({
               consciousness: consciousnessLevel,
               info_provided_by: infoProvidedBy,
               police_involved: newMlc === "Yes",
+              triage_category: triageCategory,
+              triage_bed_label: triageBedLabel,
             },
             complaint: [
               {
@@ -2868,62 +2893,15 @@ function NewPatientIntakePanel({
             ],
           }),
         })
-      } catch (apiErr) {
-        console.warn("Backend register-patient returned error, saving locally:", apiErr)
-      }
 
-      let visitId = regRes?.visit?.id ?? (regRes as any)?.id
-      let visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
-      const patientId = regRes?.patient_id ?? regRes?.patient?.patient_id ?? `P-${Math.floor(100000 + Math.random() * 900000)}`
 
-      // Persist to ErDatabase only if apiFetch did not already create it
-      if (!visitId) {
-        visitId = Date.now()
-        visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
+      const visitId = regRes?.visit?.id ?? (regRes as any)?.id
+      const visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
 
-        try {
-        ErDatabase.addPatient({
-          patient_id: patientId,
-          name: newName.trim(),
-          last_name: newLastName.trim(),
-          gender: newGender as any,
-          age: newAge.trim() ? parseInt(newAge) : 35,
-          phone: newPhone.trim() || undefined,
-          blood_group: newBloodGroup,
-          allergies: newAllergies.trim() || "No Known Allergies",
-          address: newAddress.trim() || undefined,
-          emergency_contact: newEmergencyContact.trim() || undefined,
-        })
-
-        await ErDatabase.createVisit({
-          patientId,
-          arrivalDate,
-          arrivalTime,
-          arrivalMode,
-          broughtBy,
-          conditionAtArrival,
-          consciousnessLevel,
-          triageCategory,
-          triageBedLabel,
-          complaint: complaint.trim(),
-          caseCategory,
-          mlc: newMlc,
-          attendantName: attendantName.trim() || undefined,
-          attendantRelation: attendantRelation || undefined,
-          patientDetails: {
-            name: newName.trim(),
-            last_name: newLastName.trim(),
-            gender: newGender as any,
-            age: newAge.trim() ? parseInt(newAge) : 35,
-            phone: newPhone.trim() || undefined,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not save to ErDatabase:", dbErr)
-      }
-      }
+      if (!visitId) throw new Error("The server did not return an ER visit. Registration was not completed.")
 
       // Manual Triage & Bed Allocation Assignment
+      let triageError: string | null = null
       try {
         await apiFetch(`/api/er/visits/${visitId}/triage`, {
           method: "POST",
@@ -2935,19 +2913,27 @@ function NewPatientIntakePanel({
           }),
         })
       } catch (tErr) {
-        console.warn("Triage save:", tErr)
+        triageError = tErr instanceof Error ? tErr.message : "unknown error"
       }
 
-      setNotice({
-        type: "success",
-        message: `Emergency Encounter created for ${newName} ${newLastName} (${visitNo}).`,
-      })
+      setNotice(
+        triageError
+          ? {
+              type: "warning",
+              message: `Encounter ${visitNo} created, but TRIAGE WAS NOT SAVED (${triageError}). Re-enter triage now.`,
+            }
+          : {
+              type: "success",
+              message: `Emergency Encounter created for ${newName} ${newLastName} (${visitNo}).`,
+            },
+      )
 
       onCreated(visitId)
     } catch (error: any) {
       reportError(setNotice, error, "Failed to create ER encounter.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -3818,10 +3804,11 @@ function UnidentifiedPatientIntakePanel({
   const [assignedSpecialty, setAssignedSpecialty] = useState("")
 
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("Yes")
-
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
     if (!unknownLabel.trim()) {
       setNotice({
         type: "error",
@@ -3840,6 +3827,7 @@ function UnidentifiedPatientIntakePanel({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -3877,64 +3865,22 @@ function UnidentifiedPatientIntakePanel({
         unknown_patient_label: unknownLabel.trim(),
         assigned_doctor_name: finalDoctor || undefined,
         assigned_specialty: finalSpecialty || undefined,
+        triage_category: triageCategory,
+        triage_bed_label: triageBedLabel,
       }
 
-      let visitRes: any
-      try {
-        visitRes = await apiFetch<{ id: number ;visit_no: string }>(
-          "/api/er/visits",
-          { method: "POST", body: JSON.stringify(payload) },
-        )
-      } catch (vErr) {
-        console.warn("API error creating unidentified visit, saving locally:", vErr)
-      }
+      // Created on the server only; a failure is reported by the outer catch.
+      const visitRes = await apiFetch<{ id: number ;visit_no: string }>(
+        "/api/er/visits",
+        { method: "POST", body: JSON.stringify(payload) },
+      )
+      const visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
+      const visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
+      if (!visitId) throw new Error("The server did not return an ER visit. Intake was not completed.")
 
-      let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
-      let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
-
-      // Persist to ErDatabase only if apiFetch did not already create it
-      if (!visitId) {
-        visitId = Date.now()
-        visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
-        const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
-
-        try {
-        ErDatabase.addPatient({
-          patient_id: tempPatientId,
-          name: unknownLabel.trim(),
-          gender: apparentGender as any,
-          age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
-          allergies: "Unknown / Trauma Intake",
-        })
-
-        await ErDatabase.createVisit({
-          patientId: tempPatientId,
-          arrivalDate,
-          arrivalTime,
-          arrivalMode,
-          broughtBy,
-          conditionAtArrival,
-          consciousnessLevel,
-          triageCategory,
-          triageBedLabel,
-          complaint: complaintText,
-          caseCategory,
-          mlc: newMlc,
-          attendantName: emsOfficer.trim() || undefined,
-          attendantRelation: "EMS / Police",
-          assignedDoctorName: finalDoctor || undefined,
-          assignedSpecialty: finalSpecialty || undefined,
-          patientDetails: {
-            name: unknownLabel.trim(),
-            gender: apparentGender as any,
-            age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
-          },
-        })
-      } catch (dbErr) {
-        console.warn("Could not record unidentified visit in ErDatabase:", dbErr)
-      }
-      }
-
+      // The visit exists; record which follow-up saves failed so staff re-enter
+      // them instead of assuming they were stored.
+      const failed: string[] = []
       try {
         await apiFetch(`/api/er/visits/${visitId}/complaints`, {
           method: "POST",
@@ -3943,9 +3889,10 @@ function UnidentifiedPatientIntakePanel({
             case_category: caseCategory || undefined,
           }),
         })
-      } catch {}
+      } catch {
+        failed.push("chief complaint")
+      }
 
-      // Set STAT Triage & Bed Allocation immediately
       if (triageCategory) {
         try {
           await apiFetch(`/api/er/visits/${visitId}/triage`, {
@@ -3957,10 +3904,11 @@ function UnidentifiedPatientIntakePanel({
               reason: `STAT Unidentified Trauma Intake — Acuity: ${conditionAtArrival}, Bed: ${triageBedLabel}`,
             }),
           })
-        } catch {}
+        } catch {
+          failed.push("triage")
+        }
       }
 
-      // Assign Doctor ONLY if explicitly selected
       if (finalDoctor) {
         try {
           await apiFetch(`/api/er/visits/${visitId}/assign-doctor`, {
@@ -3970,17 +3918,24 @@ function UnidentifiedPatientIntakePanel({
               specialty: finalSpecialty,
             }),
           })
-        } catch (dErr) {
-          console.warn("Doctor assign:", dErr)
+        } catch {
+          failed.push("doctor assignment")
         }
       }
 
-      setNotice({
-        type: "success",
-        message: finalDoctor
-          ? `Emergency Encounter created for ${unknownLabel} (${visitNo}) — Assigned ${finalDoctor}.`
-          : `Emergency Encounter created for ${unknownLabel} (${visitNo}) — Triaged to ${triageBedLabel}.`,
-      })
+      setNotice(
+        failed.length
+          ? {
+              type: "warning",
+              message: `Encounter ${visitNo} created for ${unknownLabel}, but these were NOT saved: ${failed.join(", ")}. Re-enter them now.`,
+            }
+          : {
+              type: "success",
+              message: finalDoctor
+                ? `Emergency Encounter created for ${unknownLabel} (${visitNo}) — Assigned ${finalDoctor}.`
+                : `Emergency Encounter created for ${unknownLabel} (${visitNo}) — Triaged to ${triageBedLabel}.`,
+            },
+      )
 
       onCreated(visitId)
     } catch (error: any) {
@@ -3991,6 +3946,7 @@ function UnidentifiedPatientIntakePanel({
       )
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -4644,6 +4600,7 @@ function ExistingPatientIntakePanel({
   const [newMlc, setNewMlc] = useState<"No" | "Yes">("No")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   // Historical data for selected existing patient (kept strictly separate from active form)
 
@@ -4727,6 +4684,8 @@ function ExistingPatientIntakePanel({
   }, [searchQuery])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     if (!selectedPatient) {
       setNotice({
         type: "error",
@@ -4742,6 +4701,7 @@ function ExistingPatientIntakePanel({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -4885,6 +4845,7 @@ function ExistingPatientIntakePanel({
       reportError(setNotice, error, "Failed to create ER encounter.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -6093,6 +6054,41 @@ function getSynthesizedTimeline(detail: ErVisitDetail): ErTimelineEventItem[] {
 
   events.push(...existingEvents)
 
+  // Server-recorded timeline notes and treatments (the authoritative record).
+  ;(detail.clinical_notes || []).forEach((n) => {
+    if (!TIMELINE_NOTE_TYPES.has(n.note_type)) return
+    const sep = n.content.indexOf(TIMELINE_SEPARATOR)
+    const eventType = (n.note_type === "stabilized"
+      ? "patient_stabilized"
+      : n.note_type === "transferred"
+        ? "patient_transferred"
+        : n.note_type) as ErTimelineEventType
+    events.push({
+      id: 100000 + n.id,
+      event_type: eventType,
+      event_name: sep >= 0 ? n.content.slice(0, sep) : n.content,
+      notes: sep >= 0 ? n.content.slice(sep + TIMELINE_SEPARATOR.length) : null,
+      timestamp: n.created_at,
+      logged_by: n.author || "ER Staff",
+      visit_id: detail.id,
+      visit_no: detail.visit_no,
+      patient_id: detail.patient_id,
+    })
+  })
+  ;(detail.treatments || []).forEach((t) => {
+    events.push({
+      id: 200000 + t.id,
+      event_type: "medication_given",
+      event_name: t.intervention_type,
+      notes: t.description || null,
+      timestamp: t.performed_at,
+      logged_by: t.administered_by || "ER Staff",
+      visit_id: detail.id,
+      visit_no: detail.visit_no,
+      patient_id: detail.patient_id,
+    })
+  })
+
   // 2. Automatically ensure "Patient Arrived / Registered" is always present from detail.arrival_at
 
   const hasArrivalEvent = events.some((e) => e.event_type === "patient_arrived")
@@ -6301,6 +6297,7 @@ function AddTimelineEventModal({
   )
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   // Auto-captured metadata
 
@@ -6538,6 +6535,7 @@ function AddTimelineEventModal({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -6668,11 +6666,6 @@ function AddTimelineEventModal({
           notes: investigationForm.notes,
         }
 
-        ErDatabase.addInvestigation(detail.id, {
-          name: investigationForm.testName,
-
-          priority: investigationForm.priority,
-        })
 
         const priced = resolveErItemPrice(
           investigationForm.testName,
@@ -6830,7 +6823,19 @@ function AddTimelineEventModal({
         }
       }
 
-      ErDatabase.addTimelineEvent(detail.id, eventPayload)
+      await postErTimelineNote(detail.id, {
+        ...eventPayload,
+        event_type: eventPayload.event_type || selectedType,
+        event_name: eventPayload.event_name || def.label,
+        notes: [
+          eventPayload.notes,
+          eventPayload.investigation_data
+            ? `Test: ${eventPayload.investigation_data.test_name} (Priority: ${eventPayload.investigation_data.priority})`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" • ") || null,
+      })
 
       setNotice({
         type: "success",
@@ -6848,6 +6853,7 @@ function AddTimelineEventModal({
       })
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -8405,6 +8411,43 @@ function ErDischargeModal({
   )
 }
 
+// ==================== Server bed availability ====================
+
+type ServerBed = {
+  id: number
+  ward: string
+  room_no: string
+  bed_no: string
+  bed_type: string
+  status: string
+  daily_rate: number
+}
+
+/** Live available beds from Bed Management (/api/beds) -- never the browser cache. */
+function useServerAvailableBeds(icu: boolean) {
+  const [beds, setBeds] = useState<ServerBed[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    apiFetch<{ beds: ServerBed[] }>("/api/beds")
+      .then((data) => {
+        if (!active) return
+        setBeds(
+          (data.beds || []).filter(
+            (b) => b.status === "Available" && (icu ? b.bed_type === "ICU" : b.bed_type !== "ICU"),
+          ),
+        )
+      })
+      .catch((err) => active && setError(err instanceof Error ? err.message : "Could not load beds."))
+      .finally(() => active && setLoading(false))
+    return () => {
+      active = false
+    }
+  }, [icu])
+  return { beds, loading, error }
+}
+
 // ==================== ErWardBedModal ====================
 
 function ErWardBedModal({
@@ -8428,15 +8471,12 @@ function ErWardBedModal({
 
   saving?: boolean
 }) {
-  const availableBeds = useMemo(() => {
-    return BedDatabase.load().filter(
-      (b) => b.bed_type !== "ICU" && b.status === "Available",
-    )
-  }, [])
+  const { beds: availableBeds, loading: bedsLoading, error: bedsError } = useServerAvailableBeds(false)
 
-  const [selectedBedId, setSelectedBedId] = useState<number>(
-    availableBeds[0]?.id || 101,
-  )
+  const [selectedBedId, setSelectedBedId] = useState<number>(0)
+  useEffect(() => {
+    if (!availableBeds.some((b) => b.id === selectedBedId)) setSelectedBedId(availableBeds[0]?.id || 0)
+  }, [availableBeds, selectedBedId])
 
   const [transferNotes, setTransferNotes] = useState(
     "Patient stabilized in ER. Transferred with peripheral IV line and chart. Receiving nurse handover given.",
@@ -8546,8 +8586,11 @@ function ErWardBedModal({
               </select>
             ) : (
               <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-amber-900 text-xs">
-                No general ward beds currently marked available. System will
-                assign overflow/admit bed.
+                {bedsLoading
+                  ? "Loading available beds…"
+                  : bedsError
+                    ? `Could not load beds: ${bedsError}`
+                    : "No general ward beds are available. Ask Bed Management to free a bed before transferring."}
               </div>
             )}
           </div>
@@ -8576,7 +8619,7 @@ function ErWardBedModal({
           <button
             type="button"
             onClick={() => onConfirm(selectedBedId, transferNotes)}
-            disabled={saving || !isAllowed}
+            disabled={saving || !isAllowed || !selectedBedId}
             className={`px-5 py-2 text-white rounded text-xs font-bold flex items-center gap-1.5 shadow-xs ${
               isAllowed
                 ? "bg-[#1B4FD8] hover:bg-[#1E40AF] cursor-pointer"
@@ -8615,13 +8658,12 @@ function ErIcuBedModal({
 
   saving?: boolean
 }) {
-  const availableBeds = useMemo(() => {
-    return BedDatabase.load().filter((b) => b.bed_type === "ICU")
-  }, [])
+  const { beds: availableBeds, loading: bedsLoading, error: bedsError } = useServerAvailableBeds(true)
 
-  const [selectedBedId, setSelectedBedId] = useState<number>(
-    availableBeds[0]?.id || 201,
-  )
+  const [selectedBedId, setSelectedBedId] = useState<number>(0)
+  useEffect(() => {
+    if (!availableBeds.some((b) => b.id === selectedBedId)) setSelectedBedId(availableBeds[0]?.id || 0)
+  }, [availableBeds, selectedBedId])
 
   const [transferNotes, setTransferNotes] = useState(
     "STAT Intensive Care Unit transfer. Monitored airway & IV inotropes. Daily ICU Flowsheet charted.",
@@ -8714,18 +8756,27 @@ function ErIcuBedModal({
             <label className="block font-bold text-slate-700 mb-1">
               Select Available ICU Bed *
             </label>
-            <select
-              value={selectedBedId}
-              onChange={(e) => setSelectedBedId(Number(e.target.value))}
-              className="w-full border border-slate-300 rounded-md p-2 bg-white font-bold text-purple-900"
-            >
-              {availableBeds.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.ward} — Bed #{b.bed_no} (Floor 2 - Critical Care) [₹
-                  {b.daily_rate}/day]
-                </option>
-              ))}
-            </select>
+            {availableBeds.length > 0 ? (
+              <select
+                value={selectedBedId}
+                onChange={(e) => setSelectedBedId(Number(e.target.value))}
+                className="w-full border border-slate-300 rounded-md p-2 bg-white font-bold text-purple-900"
+              >
+                {availableBeds.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.ward} — Room {b.room_no} / Bed {b.bed_no} [₹{b.daily_rate}/day]
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="p-2.5 bg-amber-50 border border-amber-200 rounded text-amber-900 text-xs">
+                {bedsLoading
+                  ? "Loading available ICU beds…"
+                  : bedsError
+                    ? `Could not load beds: ${bedsError}`
+                    : "No ICU beds are available. Ask Bed Management to free a bed before transferring."}
+              </div>
+            )}
           </div>
 
           <div>
@@ -8752,7 +8803,7 @@ function ErIcuBedModal({
           <button
             type="button"
             onClick={() => onConfirm(selectedBedId, transferNotes)}
-            disabled={saving || !isAllowed}
+            disabled={saving || !isAllowed || !selectedBedId}
             className={`px-5 py-2 text-white rounded text-xs font-bold flex items-center gap-1.5 shadow-xs ${
               isAllowed
                 ? "bg-[#7C3AED] hover:bg-[#6D28D9] cursor-pointer"
@@ -10011,13 +10062,25 @@ export function VisitDetailPanel({
     detail.status === "closed" ||
     detail.bed_requests?.some((b) => b.status === "allocated")
 
-  const allocatedBedRecord = useMemo(() => {
+  const [allocatedBedRecord, setAllocatedBedRecord] = useState<
+    { ward: string ;room_no: string ;bed_no: string } | null
+  >(null)
+  useEffect(() => {
     const pid = detail.patient_id || detail.patient?.patient_id
-    const beds = BedDatabase.load()
-    return beds.find(
-      (b) => b.status === "Occupied" && ((pid && b.patient_id === pid) || (detail.id && b.admission_notes?.includes(String(detail.id)))),
-    )
-  }, [detail.patient_id, detail.patient?.patient_id, detail.id])
+    if (!pid) {
+      setAllocatedBedRecord(null)
+      return
+    }
+    let active = true
+    apiFetch<{ beds: Array<{ ward: string ;room_no: string ;bed_no: string ;status: string ;patient_id?: string | null }> }>("/api/beds")
+      .then((data) => {
+        if (active) setAllocatedBedRecord((data.beds || []).find((b) => b.status === "Occupied" && b.patient_id === pid) || null)
+      })
+      .catch(() => active && setAllocatedBedRecord(null))
+    return () => {
+      active = false
+    }
+  }, [detail.patient_id, detail.patient?.patient_id, detail.bed_requests])
 
   const currentAllocatedBedLabel = allocatedBedRecord
     ? `${allocatedBedRecord.ward} (Room ${allocatedBedRecord.room_no} / Bed ${allocatedBedRecord.bed_no})`
@@ -10252,17 +10315,14 @@ export function VisitDetailPanel({
 
   // Step 7: Mark Patient Clinically Stabilized
 
-  const handleMarkPatientStable = () => {
+  const handleMarkPatientStable = async () => {
     try {
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "patient_stabilized",
-
-        event_name: "Patient Vitals Stabilized",
-
-        notes:
-          "Patient vital signs and acute presentation successfully stabilized under emergency resuscitation protocol.",
-
-        logged_by: "Staff RN",
+      await apiFetch(`/api/er/visits/${detail.id}/stabilized`, {
+        method: "POST",
+        body: JSON.stringify({
+          notes:
+            "Patient vital signs and acute presentation stabilized under emergency resuscitation protocol.",
+        }),
       })
 
       setNotice({
@@ -10272,33 +10332,28 @@ export function VisitDetailPanel({
 
       onRefresh()
     } catch (err: any) {
-      setNotice({
-        type: "error",
-        message: err.message || "Failed to log stabilization.",
-      })
+      reportError(setNotice, err, "Stabilization was not recorded.")
     }
   }
 
-  // Step 15A: Execute Discharge Home
+  // Step 15A: Execute Discharge Home -- records the discharge disposition and
+  // closes the visit on the server (which also raises the ER invoice).
 
-  const handleExecuteDischarge = (data: {
+  const handleExecuteDischarge = async (data: {
     condition: string
     instructions: string
   }) => {
     try {
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "destination_assigned",
-
-        event_name: "Patient Discharged Home",
-
-        notes: `Condition: ${data.condition}. Advice: ${data.instructions || "Standard discharge instructions."}`,
-
-        logged_by: "Staff RN",
+      await apiFetch(`/api/er/visits/${detail.id}/disposition`, {
+        method: "POST",
+        body: JSON.stringify({
+          outcome: "discharge",
+          clinical_reason: `Condition: ${data.condition}. Advice: ${data.instructions || "Standard discharge instructions."}`,
+        }),
       })
-
-      ErDatabase.updateVisit(detail.id, {
-        status: "closed",
-        closed_at: new Date().toISOString(),
+      await apiFetch(`/api/er/visits/${detail.id}/close`, {
+        method: "POST",
+        body: JSON.stringify({}),
       })
 
       setNotice({
@@ -10310,142 +10365,64 @@ export function VisitDetailPanel({
 
       onRefresh()
     } catch (err: any) {
-      setNotice({
-        type: "error",
-        message: err.message || "Failed to discharge patient.",
-      })
+      reportError(setNotice, err, "Discharge was NOT completed. The visit is still open.")
     }
   }
 
   // Step 15B: Execute Inpatient Ward Bed Allocation & Transfer
 
-  const handleExecuteWardTransfer = (selectedBedId: number, notes: string) => {
+  // Ward / ICU admission from the ER fulfils the visit's pending bed request on
+  // the server (created when an admitting disposition was recorded). The bed is
+  // claimed atomically there, so two staff cannot place patients in one bed.
+  const [bedTransferSaving, setBedTransferSaving] = useState(false)
+
+  const allocateBedFromEr = async (
+    selectedBedId: number,
+    notes: string,
+    kind: "ward" | "icu",
+  ) => {
+    if (bedTransferSaving) return
+    setBedTransferSaving(true)
     try {
-      const bed = BedDatabase.load().find((b) => b.id === selectedBedId)
-
-      const wardName = bed ? bed.ward : "General Inpatient Ward"
-
-      const bedLabel = bed
-        ? `${bed.ward} (Room ${bed.room_no} / Bed ${bed.bed_no})`
-        : `Ward Bed #${selectedBedId}`
-
-      BedDatabase.assignBed(
-        selectedBedId,
-
-        {
-          patient_id: detail.patient_id || `P-${detail.id}`,
-
-          name: detail.patient_name || displayName,
-
-          last_name: detail.patient_last_name || "",
-
-          age: detail.patient_age ?? undefined,
-
-          gender: detail.patient_gender || "Other",
-
-          phone: detail.patient_phone || undefined,
-        },
-
-        `Transferred from ER (${detail.visit_no}) to ${wardName}. Handover: ${notes}`,
-
-        7,
-      )
-
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "patient_transferred",
-
-        event_name: `Transferred to ${wardName} (${bedLabel})`,
-
-        notes: `Handover notes: ${notes}`,
-
-        logged_by: "Staff RN",
+      const { bed_requests } = await apiFetch<{
+        bed_requests: Array<{ id: number ;er_visit_id: number }>
+      }>("/api/er/bed-requests?status=pending")
+      const request = (bed_requests || []).find((r) => Number(r.er_visit_id) === Number(detail.id))
+      if (!request) {
+        throw new Error(
+          "No pending bed request for this visit. Record an admission disposition first, then allocate the bed.",
+        )
+      }
+      await apiFetch(`/api/er/bed-requests/${request.id}/allocate`, {
+        method: "POST",
+        body: JSON.stringify({
+          bed_id: selectedBedId,
+          notes:
+            kind === "icu"
+              ? `Emergency ICU transfer from ER (${detail.visit_no}). Critical care handover: ${notes}`
+              : `Transferred from ER (${detail.visit_no}). Handover: ${notes}`,
+          expected_los_days: kind === "icu" ? 10 : 7,
+        }),
       })
-
-      ErDatabase.updateVisit(detail.id, {
-        status: "closed",
-        closed_at: new Date().toISOString(),
-      })
-
       setNotice({
         type: "success",
-        message: `Patient ${displayName} transferred to ${wardName} (${bedLabel}) successfully.`,
+        message: `Bed allocated for ${displayName}. ${kind === "icu" ? "ICU" : "Ward"} handover recorded.`,
       })
-
-      setShowWardBedModal(false)
-
+      if (kind === "icu") setShowIcuBedModal(false)
+      else setShowWardBedModal(false)
       onRefresh()
     } catch (err: any) {
-      setNotice({
-        type: "error",
-        message: err.message || "Failed to transfer to ward.",
-      })
+      reportError(setNotice, err, `Bed was not allocated -- the ${kind === "icu" ? "ICU" : "ward"} transfer did not happen.`)
+    } finally {
+      setBedTransferSaving(false)
     }
   }
 
-  // Step 15C: Execute ICU Critical Care Bed Allocation & Transfer
+  const handleExecuteWardTransfer = (selectedBedId: number, notes: string) =>
+    allocateBedFromEr(selectedBedId, notes, "ward")
 
-  const handleExecuteIcuTransfer = (selectedBedId: number, notes: string) => {
-    try {
-      const bed = BedDatabase.load().find((b) => b.id === selectedBedId)
-
-      const icuUnit = bed ? bed.ward : "Trauma & Surgical ICU"
-
-      const bedLabel = bed
-        ? `${bed.ward} (Room ${bed.room_no} / Bed ${bed.bed_no})`
-        : `ICU Bed #${selectedBedId}`
-
-      BedDatabase.assignBed(
-        selectedBedId,
-
-        {
-          patient_id: detail.patient_id || `P-${detail.id}`,
-
-          name: detail.patient_name || displayName,
-
-          last_name: detail.patient_last_name || "",
-
-          age: detail.patient_age ?? undefined,
-
-          gender: detail.patient_gender || "Other",
-
-          phone: detail.patient_phone || undefined,
-        },
-
-        `Emergency ICU transfer from ER (${detail.visit_no}). Critical care handover: ${notes}`,
-
-        10,
-      )
-
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "patient_transferred",
-
-        event_name: `Critical Care Transfer to ${icuUnit} (${bedLabel})`,
-
-        notes: `Critical care handover notes: ${notes}`,
-
-        logged_by: "Staff RN",
-      })
-
-      ErDatabase.updateVisit(detail.id, {
-        status: "closed",
-        closed_at: new Date().toISOString(),
-      })
-
-      setNotice({
-        type: "success",
-        message: `Patient ${displayName} transferred to ${icuUnit} (${bedLabel}) successfully.`,
-      })
-
-      setShowIcuBedModal(false)
-
-      onRefresh()
-    } catch (err: any) {
-      setNotice({
-        type: "error",
-        message: err.message || "Failed to transfer to ICU.",
-      })
-    }
-  }
+  const handleExecuteIcuTransfer = (selectedBedId: number, notes: string) =>
+    allocateBedFromEr(selectedBedId, notes, "icu")
 
   const handleGenerateErBill = () => {
     try {
@@ -10715,7 +10692,17 @@ export function VisitDetailPanel({
         } catch {}
       });
 
-      // Log dispatch to timeline safely
+      postErTimelineNote(detail.id, {
+        event_type: "destination_assigned",
+        event_name: "Bill Dispatched to Central Billing",
+        notes: `ER clinical bill of ₹${(activeClaim.balanceDue || activeClaim.patientPortion).toLocaleString("en-IN")} dispatched to Central Billing Desk (Invoice: ${activeClaim.invoiceNo}). Clearance pending.`,
+      }).catch((tlErr) =>
+        setNotice({
+          type: "warning",
+          message: `Bill sent, but the timeline entry was not saved: ${tlErr instanceof Error ? tlErr.message : tlErr}`,
+        }),
+      );
+
       try {
         ErDatabase.addTimelineEvent(Number(detail.id), {
           event_type: "destination_assigned",
@@ -10835,16 +10822,24 @@ export function VisitDetailPanel({
   }
 
   const handleSavePatientDemographics = async () => {
-    const patientId = detail.patient_id || detail.patient?.patient_id || `P-${detail.id}`
+    const patientId = detail.patient_id || detail.patient?.patient_id
+    if (!patientId) {
+      setNotice({
+        type: "error",
+        message: "This visit is not linked to a confirmed patient record yet. Merge the unknown patient first.",
+      })
+      return
+    }
 
     setActionSaving(true)
 
     try {
+      const parsedAge = parseInt(editPatientForm.age, 10)
       const payload = {
         name: editPatientForm.name.trim(),
         last_name: editPatientForm.last_name.trim(),
         gender: editPatientForm.gender as any,
-        age: parseInt(editPatientForm.age, 10) || 30,
+        age: Number.isFinite(parsedAge) ? parsedAge : undefined,
         dob: editPatientForm.dob || undefined,
         phone: editPatientForm.phone.trim(),
         emergency_contact: editPatientForm.emergency_contact.trim(),
@@ -10854,26 +10849,11 @@ export function VisitDetailPanel({
         blood_group: editPatientForm.blood_group,
       }
 
-      // Update ErDatabase persistent store (updates both patient and linked visits)
-      ErDatabase.updatePatient(patientId, payload)
-
-      // Also update current detail visit in ErDatabase directly
-      ErDatabase.updateVisit(detail.id, {
-        patient_name: payload.name,
-        patient_last_name: payload.last_name,
-        patient_gender: payload.gender,
-        patient_age: payload.age,
-        patient_phone: payload.phone,
-        patient_emergency_contact: payload.emergency_contact,
+      // Saved on the server first; the screen only changes once it succeeds.
+      await apiFetch(`/api/patients/${encodeURIComponent(patientId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
       })
-
-      // Try backend endpoint update
-      try {
-        await apiFetch(`/api/er/patients/${patientId}`, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        })
-      } catch {}
 
       // Update in-memory detail object for immediate UI responsiveness
       if (detail.patient) {
@@ -10882,7 +10862,7 @@ export function VisitDetailPanel({
       detail.patient_name = payload.name
       detail.patient_last_name = payload.last_name
       detail.patient_gender = payload.gender
-      detail.patient_age = payload.age
+      detail.patient_age = payload.age ?? detail.patient_age
       detail.patient_phone = payload.phone
       detail.patient_emergency_contact = payload.emergency_contact
 
@@ -11014,30 +10994,10 @@ export function VisitDetailPanel({
     setActionSaving(true)
 
     try {
-      const pid = detail.patient_id || detail.patient?.patient_id
-      const allBeds = BedDatabase.load()
-      const existingBed = allBeds.find(
-        (b) => b.status === "Occupied" && ((pid && b.patient_id === pid) || (detail.id && b.admission_notes?.includes(String(detail.id)))),
+      const allocReq = (detail.bed_requests || []).find(
+        (b) => b.status === "allocated" && b.allocated_bed_id,
       )
-
-      let allocatedBedLabel = ""
-      let targetBedId: number | null = null
-
-      if (existingBed) {
-        targetBedId = existingBed.id
-        allocatedBedLabel = `${existingBed.ward} (Room ${existingBed.room_no} / Bed ${existingBed.bed_no})`
-      } else {
-        const allocReq = (detail.bed_requests || []).find((b) => b.status === "allocated" && b.allocated_bed_id)
-        if (allocReq && allocReq.allocated_bed_id) {
-          const bMatch = allBeds.find((b) => b.id === allocReq.allocated_bed_id)
-          if (bMatch) {
-            targetBedId = bMatch.id
-            allocatedBedLabel = `${bMatch.ward} (Room ${bMatch.room_no} / Bed ${bMatch.bed_no})`
-          }
-        }
-      }
-
-      if (!targetBedId) {
+      if (!allocReq?.allocated_bed_id) {
         setNotice({
           type: "warning",
           message: "No bed has been allocated by Bed Management yet. Please allocate a bed from Bed Management first.",
@@ -11047,39 +11007,16 @@ export function VisitDetailPanel({
         return
       }
 
-      const pendingReq = (detail.bed_requests || []).find(
-        (b) => b.status === "pending" || b.status === "allocated",
-      )
+      const { beds } = await apiFetch<{ beds: Array<{ id: number ;ward: string ;room_no: string ;bed_no: string }> }>("/api/beds")
+      const bed = (beds || []).find((b) => b.id === allocReq.allocated_bed_id)
+      const allocatedBedLabel = bed
+        ? `${bed.ward} (Room ${bed.room_no} / Bed ${bed.bed_no})`
+        : `Bed #${allocReq.allocated_bed_id}`
 
-      if (pendingReq) {
-        ErDatabase.allocateBedRequest(
-          pendingReq.id,
-          targetBedId,
-          `Physical transfer confirmed from ER to ${allocatedBedLabel}.`,
-        )
-      } else {
-        ErDatabase.updateVisit(detail.id, {
-          status: "closed",
-          closed_at: new Date().toISOString(),
-        })
-      }
-
-      // Update transfer notification in BedDatabase
-      const notifs = BedDatabase.getTransferNotifications()
-
-      const matchNotif = notifs.find(
-        (n) =>
-          n.er_visit_id === detail.id || (pid && n.patient_id === pid),
-      )
-
-      if (matchNotif) {
-        BedDatabase.updateNotificationStatus(
-          matchNotif.id,
-          "allocated",
-          targetBedId,
-          allocatedBedLabel,
-        )
-      }
+      await apiFetch(`/api/er/visits/${detail.id}/transfer-complete`, {
+        method: "POST",
+        body: JSON.stringify({ notes: `Physical transfer confirmed from ER to ${allocatedBedLabel}.` }),
+      })
 
       setNotice({
         type: "success",
@@ -11089,15 +11026,8 @@ export function VisitDetailPanel({
       setShowTransferModal(false)
 
       onRefresh()
-    } catch {
-      setNotice({
-        type: "success",
-        message: "Transfer completed and bed board updated.",
-      })
-
-      setShowTransferModal(false)
-
-      onRefresh()
+    } catch (error: any) {
+      reportError(setNotice, error, "Transfer was NOT confirmed. The patient is still recorded in the ER.")
     } finally {
       setActionSaving(false)
     }
@@ -11157,26 +11087,15 @@ export function VisitDetailPanel({
         .filter(Boolean)
         .join(" • ")
 
-      ErDatabase.addTreatment(detail.id, {
+      await apiFetch(`/api/er/visits/${detail.id}/treatments`, {
+        method: "POST",
+        body: JSON.stringify({
         intervention_type: fullTitle,
 
         description: desc,
-      })
 
-      // Also add to patient journey timeline
-
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "medication_given",
-
-        event_name: `Medication Given: ${medName} ${dose}`.trim(),
-
-        notes: `Route: ${route}. ${
-          quickMedication.notes.trim()
-            ? `Notes: ${quickMedication.notes.trim()}`
-            : "Administered per clinical orders."
-        }`,
-
-        logged_by: quickMedication.administeredBy || "Staff RN",
+        administered_by: quickMedication.administeredBy || "Staff RN",
+      }),
       })
 
       // Accrue charge automatically to Central Billing
@@ -11273,22 +11192,15 @@ export function VisitDetailPanel({
 
       const desc = quickIntervention.description.trim() || typeStr;
 
-      ErDatabase.addTreatment(detail.id, {
+      await apiFetch(`/api/er/visits/${detail.id}/treatments`, {
+        method: "POST",
+        body: JSON.stringify({
         intervention_type: typeStr,
 
         description: desc,
-      });
 
-      // Also add to patient journey timeline
-
-      ErDatabase.addTimelineEvent(detail.id, {
-        event_type: "intervention_given",
-
-        event_name: `Intervention: ${typeStr}`,
-
-        notes: desc,
-
-        logged_by: "Staff RN",
+        administered_by: "Staff RN",
+      }),
       })
 
       // Accrue charge automatically to Central Billing
@@ -11366,22 +11278,12 @@ export function VisitDetailPanel({
     setActionSaving(true)
 
     try {
-      ErDatabase.addInvestigation(detail.id, {
-        name: quickInvestigation.name,
-
-        priority: quickInvestigation.priority,
-      })
-
-      // Also add to patient journey timeline
-
-      ErDatabase.addTimelineEvent(detail.id, {
+      await postErTimelineNote(detail.id, {
         event_type: "investigation_ordered",
 
-        event_name: `Diagnostic Test: ${quickInvestigation.name}`,
+        event_name: `Diagnostic Test Ordered: ${quickInvestigation.name}`,
 
-        notes: `Priority: ${quickInvestigation.priority}. Specimen collected and dispatched to emergency lab.`,
-
-        logged_by: "Staff RN",
+        notes: `Priority: ${quickInvestigation.priority}.`,
       })
 
       // Accrue charge automatically to Central Billing
@@ -11457,19 +11359,13 @@ export function VisitDetailPanel({
     }
   }
 
-  const handleDeleteTimelineEvent = (eventId: number) => {
-    try {
-      ErDatabase.deleteTimelineEvent(detail.id, eventId)
-
-      onRefresh()
-
-      setNotice({ type: "success", message: "Timeline event removed." })
-    } catch (err: any) {
-      setNotice({
-        type: "error",
-        message: err.message || "Failed to remove event.",
-      })
-    }
+  const handleDeleteTimelineEvent = (_eventId: number) => {
+    // Timeline entries are part of the medical record on the server and are
+    // never deleted; corrections are recorded as a new entry.
+    setNotice({
+      type: "warning",
+      message: "Timeline entries are part of the medical record and cannot be deleted. Add a correction entry instead.",
+    })
   }
 
   return (
@@ -15458,6 +15354,7 @@ export function VisitDetailPanel({
           erClearance={erClearance}
           onClose={() => setShowWardBedModal(false)}
           onConfirm={handleExecuteWardTransfer}
+          saving={bedTransferSaving}
         />
       )}
 
@@ -15468,6 +15365,7 @@ export function VisitDetailPanel({
           erClearance={erClearance}
           onClose={() => setShowIcuBedModal(false)}
           onConfirm={handleExecuteIcuTransfer}
+          saving={bedTransferSaving}
         />
       )}
 
@@ -16347,6 +16245,7 @@ function MergeUnknownPatient({
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   useEffect(() => {
     if (selectedPatient || !searchQuery.trim()) {
@@ -16371,6 +16270,8 @@ function MergeUnknownPatient({
   }, [searchQuery, selectedPatient])
 
   const submit = async () => {
+    if (saving || isSubmittingRef.current) return
+
     if (!selectedPatient) {
       setNotice({
         type: "error",
@@ -16380,6 +16281,7 @@ function MergeUnknownPatient({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16399,6 +16301,7 @@ function MergeUnknownPatient({
       reportError(setNotice, error, "Failed to merge this visit.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16534,6 +16437,7 @@ function AddComplaintForm({
   const [caseCategory, setCaseCategory] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
     if (!complaint.trim()) {
@@ -16542,6 +16446,7 @@ function AddComplaintForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16568,6 +16473,7 @@ function AddComplaintForm({
       reportError(setNotice, error, "Failed to add complaint.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -16777,8 +16683,10 @@ function AddVitalsForm({
   const [consciousness, setConsciousness] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -16829,6 +16737,7 @@ function AddVitalsForm({
       reportError(setNotice, error, "Failed to record vitals.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -17003,6 +16912,7 @@ function TriageForm({
   const [reason, setReason] = useState(existing?.reason || "")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -17063,6 +16973,7 @@ function TriageForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -17087,6 +16998,7 @@ function TriageForm({
       reportError(setNotice, error, "Failed to save triage.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -17597,6 +17509,7 @@ function AddTreatmentForm({
   const [description, setDescription] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -17623,6 +17536,7 @@ function AddTreatmentForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -17630,20 +17544,15 @@ function AddTreatmentForm({
 
       const priced = resolveErItemPrice(label, "intervention")
 
-      ErDatabase.addTreatment(visitId, {
+      await apiFetch(`/api/er/visits/${visitId}/treatments`, {
+        method: "POST",
+        body: JSON.stringify({
         intervention_type: label,
 
         description: description || undefined,
-      })
 
-      ErDatabase.addTimelineEvent(visitId, {
-        event_type: "intervention_given",
-
-        event_name: `Procedure: ${label}`,
-
-        notes: description || undefined,
-
-        logged_by: "Staff RN",
+        administered_by: "Staff RN",
+      }),
       })
 
       const chargeRes = BillingDatabase.addErClinicalCharge(
@@ -17705,6 +17614,7 @@ function AddTreatmentForm({
       reportError(setNotice, error, "Failed to log intervention.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -17835,6 +17745,7 @@ function DoctorAssignForm({
   const [doctorName, setDoctorName] = useState(existingDoctor || "")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const [aiFilled, setAiFilled] = useState(false)
 
@@ -17893,6 +17804,7 @@ function DoctorAssignForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -17934,6 +17846,7 @@ function DoctorAssignForm({
       reportError(setNotice, error, "Failed to assign a doctor.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -19041,6 +18954,7 @@ function AddNoteForm({
   const [content, setContent] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const submit = async () => {
     if (!content.trim()) {
@@ -19049,6 +18963,7 @@ function AddNoteForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -19065,6 +18980,7 @@ function AddNoteForm({
       reportError(setNotice, error, "Failed to add note.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 
@@ -19117,6 +19033,7 @@ function DispositionForm({
   const [priority, setPriority] = useState("")
 
   const [saving, setSaving] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   const applyBedNeedSuggestion = () => {
     if (!bedNeed) return
@@ -19136,6 +19053,7 @@ function DispositionForm({
       return
     }
 
+    isSubmittingRef.current = true
     setSaving(true)
 
     try {
@@ -19170,6 +19088,7 @@ function DispositionForm({
       reportError(setNotice, error, "Failed to record disposition.")
     } finally {
       setSaving(false)
+      isSubmittingRef.current = false
     }
   }
 

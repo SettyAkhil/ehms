@@ -865,17 +865,10 @@ export default function RadiologyOperationsView({
 
     try {
       const targetQuery = (studyId || "").trim()
-      const allStudiesList = RadiologyWorkflowDb.getStudies()
+      // Exact study match only -- never fall back to whichever study is on screen.
       const foundStudy =
         RadiologyWorkflowDb.getStudyById(targetQuery) ||
-        allStudiesList.find(
-          (s) =>
-            (s.id && s.id.toLowerCase() === targetQuery.toLowerCase()) ||
-            (s.accessionNo && s.accessionNo.toLowerCase() === targetQuery.toLowerCase()) ||
-            (s.invoiceNo && s.invoiceNo.toLowerCase() === targetQuery.toLowerCase())
-        ) ||
-        (selectedStudy?.id?.toLowerCase() === targetQuery.toLowerCase() ? selectedStudy : null) ||
-        selectedStudy
+        (selectedStudy?.id?.toLowerCase() === targetQuery.toLowerCase() ? selectedStudy : null)
 
       if (!foundStudy) {
         throw new Error("Examination record not found in system.")

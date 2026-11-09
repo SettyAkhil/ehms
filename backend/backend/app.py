@@ -43,6 +43,7 @@ from core.auth import (
     check_username_exists,
     create_admin_route_auth_token,
     create_default_users,
+    seed_initial_access_roles,
     create_session,
     delete_session,
     get_session_user,
@@ -371,11 +372,12 @@ import sys
 
 if "pytest" not in sys.modules:
     init_database()
-    # Re-seeds (and re-activates, resetting the password) these 4 well-known
-    # demo accounts on EVERY startup, not just first-run -- fine for local/
-    # demo use, but a real credential-exposure risk left on for a public
-    # deployment. Set SEED_DEMO_USERS=true in .env to enable.
-    if os.getenv("SEED_DEMO_USERS", "").strip().lower() in ("true", "1", "yes"):
+    # Fixed role/specialty templates are idempotent. New templates are inserted
+    # automatically while existing permission customizations remain intact.
+    seed_initial_access_roles()
+    # Local bootstrap only: creates the one System Admin. It never creates
+    # demo staff, patients or clinical records.
+    if os.getenv("SEED_INITIAL_ADMIN", "").strip().lower() in ("true", "1", "yes"):
         create_default_users()
 
 
@@ -498,6 +500,10 @@ def build_reports_export_text(overview):
 
 
 # ==================== Audit ====================
+
+from modules.audit.routes import audit_bp
+
+app.register_blueprint(audit_bp)
 
 
 from modules.reports.routes import reports_bp

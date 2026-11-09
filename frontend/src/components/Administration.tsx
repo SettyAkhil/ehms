@@ -7,15 +7,13 @@ import {
   MasterDoctor,
   DoctorSection,
   availabilityOf,
-  DOCTOR_LOCAL_PASSWORD,
 } from "../services/doctorMaster"
 import {
-  RoleDatabase,
   AppRole,
   AppUser,
-  ALL_SYSTEM_MODULES,
-  PermissionAction,
+  RoleDatabase,
   getGrantedActionsForModule,
+  hasGranularPermission,
 } from "../services/roleDb"
 import { AuditDatabase, AuditLog, detectDevice } from "../services/auditDb"
 import { apiFetch } from "../lib/api"
@@ -26,101 +24,218 @@ import {
   RADIOLOGY_MODALITIES,
 } from "../services/diagnosticTariffDb"
 
-// System Module Categories for clean RBAC governance
+// Canonical module keys accepted by the backend RBAC layer.
 const MODULE_CATEGORIES = [
   {
     id: "clinical",
-    title: "Clinical Care & EMR",
-    description:
-      "Inpatient, Doctor, Nursing, ICU, ER, Triage & Surgery Workflows",
-    modules: [
-      "clinical",
-      "doctor_workflow",
-      "patients",
-      "chart",
-      "inpatient",
-      "nursing",
-      "icu",
-      "emergency",
-      "triage",
-      "surgery",
-      "discharge",
-      "readmission",
-      "admissions",
-    ],
+    title: "Clinical Operations",
+    description: "Patient administration, outpatient care, inpatient beds, ER, and doctor encounters",
+    modules: ["patients", "op", "beds", "er", "clinical", "surgery", "icu"],
   },
   {
     id: "diagnostics",
     title: "Diagnostics & Pharmacy",
-    description:
-      "Pharmacy dispensing, Laboratory tests, Radiology imaging & Reports",
-    modules: ["pharmacy", "laboratory", "radiology", "reports"],
+    description: "Medication inventory, prescriptions, pathology tests, and radiology PACS imaging",
+    modules: ["pharmacy", "laboratory", "radiology"],
   },
   {
-    id: "frontoffice",
-    title: "Front Desk & Revenue Cycle",
-    description:
-      "Patient Registration, Outpatient Queue, Scheduling, Billing, Payments & Insurance",
-    modules: [
-      "register",
-      "appointments",
-      "outpatient",
-      "queue",
-      "op_management",
-      "op_registration",
-      "op_workflow",
-      "scheduling",
-      "billing",
-      "payments",
-      "insurance",
-      "revenue_reports",
-    ],
-  },
-  {
-    id: "ai_intelligence",
-    title: "AI & Document Intelligence",
-    description:
-      "Keppler OCR, Medical Document Summaries, Clinical RAG & Symptom AI",
-    modules: [
-      "intelligence",
-      "ocr",
-      "dpi_ocr",
-      "symptom_ai",
-      "clinical_rag",
-      "clinical_summaries",
-      "bulk_ai",
-      "nl_filtering",
-    ],
+    id: "finance",
+    title: "Revenue, Billing & Insurance",
+    description: "Cashier billing, financial accounts ledger, and cashless TPA insurance claims",
+    modules: ["billing", "accounts", "insurance"],
   },
   {
     id: "workforce",
     title: "Staff & Workforce",
-    description: "Human Resource Management, Employee Directory & Experience",
-    modules: ["hrms", "employees", "patient_exp"],
+    description: "Human resources, duty rosters, payroll, staff directory, and patient experience",
+    modules: ["hrms", "employees", "patient_experience"],
   },
   {
     id: "platform",
-    title: "Platform & Infrastructure",
-    description: "Dashboard analytics, Bed management, System Administration",
-    modules: ["dashboard", "admin", "beds", "analytics"],
+    title: "Platform, Administration & Intelligence",
+    description: "Centralized administration, role security, command dashboard, and AI tools",
+    modules: ["admin", "dashboard", "symptom_ai"],
   },
 ]
 
-const ACTIONS_LIST: { key: PermissionAction ;label: string ;icon: string }[] = [
-  { key: "read", label: "Read", icon: "👁️" },
-  { key: "write", label: "Write", icon: "✍️" },
-  { key: "delete", label: "Delete", icon: "🗑️" },
-  { key: "export", label: "Export", icon: "📥" },
+export const ALL_ADMIN_ASSIGNABLE_MODULES: Array<{
+  key: string
+  label: string
+  category: string
+  icon: string
+}> = [
+  { key: "dashboard", label: "Executive Dashboard", category: "Core & Clinical", icon: "📊" },
+  { key: "doctor_portal", label: "Doctor Workspace", category: "Core & Clinical", icon: "🩺" },
+  { key: "patients", label: "Patient Reception & Registration", category: "Core & Clinical", icon: "👤" },
+  { key: "outpatient", label: "Outpatient Department (OPD)", category: "Core & Clinical", icon: "📋" },
+  { key: "clinical", label: "Clinical Encounters & Charting", category: "Core & Clinical", icon: "📑" },
+  { key: "emergency", label: "Emergency Care (ED / ER)", category: "Core & Clinical", icon: "🚨" },
+  { key: "inpatient", label: "Inpatient Care & Bed Board", category: "Core & Clinical", icon: "🛏️" },
+  { key: "icu", label: "Critical Care (ICU / NICU)", category: "Core & Clinical", icon: "💓" },
+  { key: "surgery", label: "Surgery & Operation Theatre", category: "Core & Clinical", icon: "🔪" },
+  { key: "laboratory", label: "Laboratory Diagnostics", category: "Diagnostics", icon: "🧪" },
+  { key: "radiology", label: "Radiology & Imaging", category: "Diagnostics", icon: "🩻" },
+  { key: "pharmacy", label: "Pharmacy & Dispensary", category: "Pharmacy", icon: "💊" },
+  { key: "billing", label: "Billing & Cash Counter", category: "Finance", icon: "💳" },
+  { key: "insurance", label: "Insurance & TPA Claims", category: "Finance", icon: "🛡️" },
+  { key: "accounts", label: "Accounts & General Ledger", category: "Finance", icon: "🏦" },
+  { key: "hrms", label: "Human Resources (HRMS)", category: "Management", icon: "👥" },
+  { key: "my_hr", label: "My HR (Employee Portal)", category: "Management", icon: "🧑‍💼" },
+  { key: "intelligence", label: "Hosp AI Clinical Intelligence", category: "Management", icon: "🤖" },
+  { key: "reports", label: "Reports & Hospital Analytics", category: "Management", icon: "📈" },
+  { key: "admin", label: "Administration & RBAC", category: "Management", icon: "⚙️" },
 ]
+
+const ACTIONS_LIST: Array<{ key: string; label: string; icon: string; description: string }> = [
+  { key: "view", label: "View", icon: "👁️", description: "View records, lists, and clinical details" },
+  { key: "create", label: "Create", icon: "➕", description: "Register new records and submit entries" },
+  { key: "edit", label: "Edit", icon: "✏️", description: "Modify and update existing information" },
+  { key: "delete", label: "Delete", icon: "🗑️", description: "Void, cancel, or remove records" },
+  { key: "approve", label: "Approve", icon: "✅", description: "Authorize clinical, financial, or administrative orders" },
+  { key: "export", label: "Export", icon: "🖨️", description: "Print documents, download PDF and CSV reports" },
+]
+
+const MODULE_METADATA: Record<string, { name: string; icon: string; description: string }> = {
+  patients: { name: "Patient Registration", icon: "👤", description: "Patient demographic intake, search, and MRN master records" },
+  op: { name: "Outpatient (OPD)", icon: "🩺", description: "Doctor consultations, appointment queues, and vitals recording" },
+  beds: { name: "Inpatient & Beds", icon: "🛏️", description: "Ward occupancy, bed transfers, admission and discharge management" },
+  er: { name: "Emergency / ER", icon: "🚨", description: "Emergency triage, resuscitation bays, trauma care, and rapid intake" },
+  clinical: { name: "Doctor Portal", icon: "📋", description: "Clinical notes, electronic prescriptions, diagnosis and encounter history" },
+  surgery: { name: "Surgery & OT", icon: "🔪", description: "Operation theatre bookings, surgical notes, and anesthesia records" },
+  icu: { name: "ICU Management", icon: "💓", description: "Critical care monitoring, ventilators, and bedside telemetry" },
+  pharmacy: { name: "Pharmacy", icon: "💊", description: "Medication inventory, prescription dispensing, returns, and stock batches" },
+  laboratory: { name: "Laboratory", icon: "🧪", description: "Specimen collection, hematology/biochemistry tests, and lab result sign-offs" },
+  radiology: { name: "Radiology & Imaging", icon: "🩻", description: "X-Ray, CT, MRI, Ultrasound imaging worklists and radiologist reports" },
+  billing: { name: "Billing & Cashier", icon: "💳", description: "OP/IP/ER invoices, cash desk receipts, lab payments, and refunds" },
+  accounts: { name: "Financial Accounts", icon: "📊", description: "General ledger, journal vouchers, accounts payable/receivable, and P&L" },
+  insurance: { name: "Insurance & TPA", icon: "🛡️", description: "Cashless pre-auth requests, claim document packs, query responses, settlements" },
+  admin: { name: "Administration", icon: "⚙️", description: "Centralized RBAC, user provisioning, clinical directory, tariff catalog" },
+  hrms: { name: "Human Resources", icon: "👥", description: "Staff attendance, duty rosters, payroll, leaves, and credentialing" },
+  employees: { name: "Staff Directory", icon: "📇", description: "Employee master directory, departmental assignments, and doctor registry" },
+  dashboard: { name: "Command Center", icon: "📈", description: "Hospital-wide operational KPIs, real-time census, and executive metrics" },
+  patient_experience: { name: "Patient Experience", icon: "⭐", description: "Feedback, patient satisfaction scores, and grievance handling" },
+  symptom_ai: { name: "AI Clinical Intelligence", icon: "🤖", description: "Symptom checker, diagnostic triage suggestions, and clinical NLP" },
+}
+
+interface SpecialtyOption {
+  id: number
+  specialty_name: string
+  department_name?: string
+  status?: string
+}
+
+type RoleCatalogueItem = {
+  id: string
+  name: string
+  description?: string
+  is_system?: boolean
+}
+
+const roleFromCatalogue = (role: RoleCatalogueItem): AppRole => ({
+  id: String(role.id),
+  name: String(role.name),
+  allowedModules: [],
+  status: "Active",
+  isSystem: Boolean(role.is_system),
+})
+
+/** Full / blanket module grant (e.g. `patients` or `*`) */
+const hasFullModuleAccess = (rules: string[], moduleKey: string) =>
+  Boolean(rules && (rules.includes("*") || rules.includes(moduleKey)))
+
+/** A saved role can grant the whole module (`patients`) or a specific
+ * granular action / sub-module (`patients:view`, `patients.clinical_records`).
+ * Treat both as active in the matrix so reloading never makes a persisted grant look lost.
+ */
+const hasSavedModuleAccess = (rules: string[], moduleKey: string) =>
+  Boolean(
+    rules &&
+      rules.some(
+        (rule) =>
+          rule === "*" ||
+          rule === moduleKey ||
+          rule.startsWith(`${moduleKey}.`) ||
+          rule.startsWith(`${moduleKey}:`),
+      ),
+  )
+
+const savedRulesForModule = (rules: string[], moduleKey: string) =>
+  (rules || []).filter(
+    (rule) =>
+      rule === moduleKey ||
+      rule.startsWith(`${moduleKey}.`) ||
+      rule.startsWith(`${moduleKey}:`),
+  )
+
+const formatPermissionRule = (rule: string) =>
+  rule
+    .replace(/[.:]/g, " › ")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+
+// This is the fixed hospital catalogue seeded by the backend.  It keeps the
+// administration screen useful from its first paint (and during a transient
+// gateway restart); the API result below supplies the saved permissions,
+// active state and any custom roles.  These are intentionally the same role
+// identifiers exposed by Login.
+const FIXED_HOSPITAL_ROLE_CATALOGUE: AppRole[] = [
+  ["ROLE_ADMIN", "System Administrator"],
+  ["ROLE_DOCTOR", "Doctor"],
+  ["ROLE_SURGEON", "Surgeon"],
+  ["ROLE_ANESTHETIST", "Anesthetist"],
+  ["ROLE_ER_PHYSICIAN", "Emergency Physician"],
+  ["ROLE_PATHOLOGIST", "Pathologist"],
+  ["ROLE_RADIOLOGIST", "Radiologist"],
+  ["ROLE_PHYSIOTHERAPIST", "Physiotherapist"],
+  ["ROLE_RECEPTIONIST", "Receptionist"],
+  ["ROLE_FRONT_OFFICE_MANAGER", "Front Office Manager"],
+  ["ROLE_NURSE", "Nurse"],
+  ["ROLE_NURSING_SUPERVISOR", "Nursing Supervisor"],
+  ["ROLE_PHARMACIST", "Pharmacist"],
+  ["ROLE_PHARMACY_MANAGER", "Pharmacy Manager"],
+  ["ROLE_LAB_TECHNICIAN", "Lab Technician"],
+  ["ROLE_RADIOLOGY_TECHNICIAN", "Radiology Technician"],
+  ["ROLE_HR_MANAGER", "HR Manager"],
+  ["ROLE_HR_EXECUTIVE", "HR Executive"],
+  ["ROLE_ACCOUNTANT", "Accountant"],
+  ["ROLE_FINANCE_MANAGER", "Finance Manager"],
+  ["ROLE_BILLING_EXECUTIVE", "Billing Executive"],
+  ["ROLE_INSURANCE_TPA_OFFICER", "Insurance / TPA Officer"],
+  ["ROLE_MEDICAL_RECORDS_OFFICER", "Medical Records Officer"],
+  ["ROLE_INVENTORY_MANAGER", "Inventory Manager"],
+  ["ROLE_FACILITY_MANAGER", "Facility Manager"],
+  ["ROLE_COMPLIANCE_OFFICER", "Compliance Officer"],
+  ["ROLE_IT_SUPPORT", "IT Support"],
+].map(([id, name]) => ({
+  id,
+  name,
+  allowedModules: [],
+  status: "Active",
+  isSystem: true,
+}))
 
 export default function Administration() {
   const [activeTab, setActiveTab] =
-    useState<"roles" | "users" | "doctors" | "audit" | "settings" | "tariffs">("doctors")
+    useState<"overview" | "roles" | "users" | "doctors" | "audit" | "settings" | "tariffs">("overview")
 
   // Database States
-  const [roles, setRoles] = useState<AppRole[]>([])
+  // The Login role catalogue is also the source for the administrator's
+  // assignment list.  Render the fixed catalogue immediately; live data
+  // enriches it with the saved permissions and custom roles.
+  const [roles, setRoles] = useState<AppRole[]>(() => {
+    try {
+      const stored = RoleDatabase.getRoles()
+      return stored && stored.length > 0 ? stored : FIXED_HOSPITAL_ROLE_CATALOGUE
+    } catch {
+      return FIXED_HOSPITAL_ROLE_CATALOGUE
+    }
+  })
   const [users, setUsers] = useState<AppUser[]>([])
   const [doctors, setDoctors] = useState<MasterDoctor[]>([])
+  const [specialties, setSpecialties] = useState<SpecialtyOption[]>([])
+  const [showSpecialtyModal, setShowSpecialtyModal] = useState(false)
+  const [newSpecialtyName, setNewSpecialtyName] = useState("")
+  const [specialtyNotice, setSpecialtyNotice] = useState("")
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [auditTotal, setAuditTotal] = useState(0)
   const [auditLoadingMore, setAuditLoadingMore] = useState(false)
@@ -128,26 +243,40 @@ export default function Administration() {
   // Roles Tab State
   const [selectedRoleId, setSelectedRoleId] = useState<string>("ROLE_ADMIN")
   const [roleSearch, setRoleSearch] = useState("")
+  const [moduleSearch, setModuleSearch] = useState("")
+  const [matrixViewMode, setMatrixViewMode] = useState<"grid" | "table">("grid")
   const [showCreateRoleModal, setShowCreateRoleModal] = useState(false)
   const [showCloneRoleModal, setShowCloneRoleModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState("")
   const [newRoleDescription, setNewRoleDescription] = useState("")
   const [cloneSourceRoleId, setCloneSourceRoleId] = useState("ROLE_ADMIN")
+  const [expandedGranularModule, setExpandedGranularModule] =
+    useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">(
     "idle",
   )
   const [roleNotice, setRoleNotice] = useState("")
-  const [expandedGranularModule, setExpandedGranularModule] =
-    useState<string | null>(null)
 
   // Users Tab State
   const [userSearch, setUserSearch] = useState("")
   const [userRoleFilter, setUserRoleFilter] = useState("all")
-  const [userStatusFilter, setUserStatusFilter] = useState("all")
+  const [userStatusFilter, setUserStatusFilter] = useState("Active")
   const [showUserModal, setShowUserModal] = useState(false)
   const [editingUser, setEditingUser] = useState<AppUser | null>(null)
+  const [userDoctorDetails, setUserDoctorDetails] = useState<{
+    specialty: string
+    qualification: string
+    room: string
+    consultationFee: number
+  }>({
+    specialty: "General Medicine",
+    qualification: "MBBS, MD",
+    room: "Room 101",
+    consultationFee: 500,
+  })
   const [resetPassUser, setResetPassUser] = useState<AppUser | null>(null)
-  const [newPassInput, setNewPassInput] = useState("password123")
+  const [newPassInput, setNewPassInput] = useState("")
+  const [userNotice, setUserNotice] = useState("")
 
   // Doctor Master Tab State
   const [doctorSearch, setDoctorSearch] = useState("")
@@ -228,9 +357,130 @@ export default function Administration() {
   })
   const [tariffNotice, setTariffNotice] = useState("")
 
+  const refreshAccessGovernance = async () => {
+    // Fetch the public catalogue separately from administration details.
+    // A delayed staff request must never make role templates disappear from
+    // the role-assignment screen.
+    const [catalogueResult, rolesResult, usersResult] = await Promise.allSettled([
+      apiFetch<{ roles: RoleCatalogueItem[] }>("/api/auth/login-roles"),
+      apiFetch<{ roles: any[] }>("/api/admin/roles"),
+      apiFetch<{ users: any[] }>("/api/admin/users/all"),
+    ])
+
+    const catalogueRoles = catalogueResult.status === "fulfilled"
+      ? (catalogueResult.value.roles || []).map(roleFromCatalogue)
+      : []
+    const serverRoles = rolesResult.status === "fulfilled"
+      ? (rolesResult.value.roles || []).map((role) => ({
+      id: String(role.id || role.role_key || ""),
+      name: String(role.name || role.role_name || role.id || "Unnamed role"),
+      allowedModules: Array.isArray(role.allowedModules)
+        ? role.allowedModules
+        : Array.isArray(role.allowed_modules)
+          ? role.allowed_modules
+          : [],
+      status: String(role.status || "active").toLowerCase() === "active" ? "Active" : "Inactive",
+      isSystem: Boolean(role.is_system),
+    }))
+      : []
+
+    let localRoles: AppRole[] = []
+    try {
+      localRoles = RoleDatabase.getRoles()
+    } catch {
+      localRoles = []
+    }
+
+    const mergedRoles = new Map<string, AppRole>()
+
+    // 1. Initial base catalogue
+    FIXED_HOSPITAL_ROLE_CATALOGUE.forEach((role) => {
+      mergedRoles.set(role.id, { ...role })
+    })
+
+    // 2. Local database roles (has saved customizations & defaults)
+    localRoles.forEach((role) => {
+      const existing = mergedRoles.get(role.id)
+      mergedRoles.set(role.id, {
+        ...existing,
+        ...role,
+        allowedModules: Array.isArray(role.allowedModules) ? role.allowedModules : (existing?.allowedModules || []),
+        status: (role.status || existing?.status || "Active") as "Active" | "Inactive",
+        isSystem: role.isSystem ?? existing?.isSystem ?? false,
+      })
+    })
+
+    // 3. Auth login-roles catalogue (enrich names/status without wiping allowedModules)
+    catalogueRoles.forEach((role) => {
+      const existing = mergedRoles.get(role.id)
+      if (existing) {
+        mergedRoles.set(role.id, {
+          ...existing,
+          name: role.name || existing.name,
+          isSystem: role.isSystem ?? existing.isSystem,
+        })
+      } else {
+        mergedRoles.set(role.id, { ...role })
+      }
+    })
+
+    // 4. Server roles from Admin API (has allowedModules)
+    serverRoles.forEach((role) => {
+      const existing = mergedRoles.get(role.id)
+      const allowed = Array.isArray(role.allowedModules)
+        ? role.allowedModules
+        : (existing?.allowedModules || [])
+      mergedRoles.set(role.id, {
+        id: role.id,
+        name: role.name || existing?.name || role.id,
+        allowedModules: allowed,
+        status: (role.status || existing?.status || "Active") as "Active" | "Inactive",
+        isSystem: role.isSystem ?? existing?.isSystem ?? false,
+      })
+    })
+
+    setRoles(Array.from(mergedRoles.values()).sort((a, b) => a.name.localeCompare(b.name)))
+
+    const serverUsers = usersResult.status === "fulfilled"
+      ? (usersResult.value.users || []).map((user) => ({
+      id: String(user.id),
+      username: String(user.username || ""),
+      roleId: String(user.roleId || `ROLE_${String(user.access_role || "STAFF").toUpperCase()}`),
+      name: String(user.name || user.full_name || user.username || ""),
+      staffId: String(user.staffId || user.employee_id || `STF-${user.id}`),
+      status: String(user.status || "active").toLowerCase() === "active" ? "Active" : "Inactive",
+    } as AppUser))
+      : []
+    setUsers(serverUsers)
+  }
+
+  const loadRoleCatalogueFallback = async () => {
+    const response = await apiFetch<{ roles: RoleCatalogueItem[] }>("/api/auth/login-roles")
+    const fallbackRoles = new Map(FIXED_HOSPITAL_ROLE_CATALOGUE.map((role) => [role.id, role]))
+    ;(response.roles || []).map(roleFromCatalogue).forEach((role) => {
+      fallbackRoles.set(role.id, { ...fallbackRoles.get(role.id), ...role })
+    })
+    setRoles(Array.from(fallbackRoles.values()).sort((a, b) => a.name.localeCompare(b.name)))
+  }
+
+  const refreshSpecialties = async () => {
+    let response: { specialties: SpecialtyOption[] }
+    try {
+      response = await apiFetch<{ specialties: SpecialtyOption[] }>("/api/admin/specialties")
+    } catch {
+      response = await apiFetch<{ specialties: SpecialtyOption[] }>("/api/auth/login-specialties")
+    }
+    setSpecialties((response.specialties || []).filter((specialty) =>
+      String(specialty.status || "active").toLowerCase() === "active",
+    ))
+  }
+
   const refreshData = () => {
-    setRoles(RoleDatabase.getRoles())
-    setUsers(RoleDatabase.getUsers())
+    void refreshAccessGovernance().catch((error) => {
+      void loadRoleCatalogueFallback()
+        .then(() => setRoleNotice("Role templates loaded. Sign in again if you need to edit permissions or assign staff."))
+        .catch(() => setRoleNotice(error instanceof Error ? error.message : "Unable to load access governance records."))
+    })
     setDoctors(getDoctorMaster())
     setAuditLogs(AuditDatabase.getLogs())
     setTariffs(DiagnosticTariffDatabase.getTariffs())
@@ -238,20 +488,38 @@ export default function Administration() {
 
   useEffect(() => {
     refreshData()
+    void refreshSpecialties().catch(() => {
+      setSpecialtyNotice("Unable to load the Specialty Master.")
+    })
 
     const handleDoctorUpdate = () => refreshData()
-    const handleUserUpdate = () => refreshData()
     const handleTariffUpdate = () => refreshData()
 
     window.addEventListener("doctor_master_updated", handleDoctorUpdate)
-    window.addEventListener("rbac_users_updated", handleUserUpdate)
     window.addEventListener("diagnostic_tariffs_updated", handleTariffUpdate)
     return () => {
       window.removeEventListener("doctor_master_updated", handleDoctorUpdate)
-      window.removeEventListener("rbac_users_updated", handleUserUpdate)
       window.removeEventListener("diagnostic_tariffs_updated", handleTariffUpdate)
     }
   }, [])
+
+  const handleCreateSpecialty = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const specialtyName = newSpecialtyName.trim()
+    if (!specialtyName) return
+    try {
+      await apiFetch("/api/admin/specialties", {
+        method: "POST",
+        body: JSON.stringify({ specialty_name: specialtyName, department_name: specialtyName }),
+      })
+      await refreshSpecialties()
+      setNewSpecialtyName("")
+      setShowSpecialtyModal(false)
+      setSpecialtyNotice(`Specialty "${specialtyName}" added.`)
+    } catch (error) {
+      setSpecialtyNotice(error instanceof Error ? error.message : "Unable to add specialty.")
+    }
+  }
 
   const AUDIT_PAGE_SIZE = 50
 
@@ -300,9 +568,35 @@ export default function Administration() {
 
   const selectedRole =
     roles.find((r) => r.id === selectedRoleId) || roles[0] || null
+  const assignableRoles = roles.filter(
+    (role) => !role.id.includes("ADMIN") && role.status !== "Inactive",
+  )
+  const selectedRoleIsProtected = Boolean(selectedRole?.id.includes("ADMIN"))
+
+  const openNewUser = (preferredRoleId?: string) => {
+    if (!assignableRoles.length) {
+      setRoleNotice("Create an access role first, then assign it to staff members.")
+      setActiveTab("roles")
+      return
+    }
+    const selectedAssignableRole = assignableRoles.find(
+      (role) => role.id === preferredRoleId,
+    ) || assignableRoles[0]
+    setEditingUser({
+      id: "U_" + Date.now(),
+      username: "",
+      password: "",
+      roleId: selectedAssignableRole.id,
+      name: "",
+      staffId: "EMP-" + Math.floor(100 + Math.random() * 900),
+      status: "Active",
+    })
+    setShowUserModal(true)
+    setActiveTab("users")
+  }
 
   // Role Operations
-  const handleCreateRole = (e: React.FormEvent) => {
+  const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newRoleName.trim()) return
 
@@ -321,29 +615,25 @@ export default function Administration() {
     const newRole: AppRole = {
       id: roleId,
       name: newRoleName.trim(),
-      allowedModules: ["dashboard", "patients:read"],
+      allowedModules: [],
     }
-
-    const updated = [...roles, newRole]
-    RoleDatabase.saveRoles(updated)
-
-    AuditDatabase.logEvent(
-      "Role Created",
-      "Role Management",
-      `Created custom role '${newRoleName}' (${roleId})`,
-      "Success",
-    )
-
-    setRoles(updated)
-    setSelectedRoleId(newRole.id)
-    setShowCreateRoleModal(false)
-    setNewRoleName("")
-    setNewRoleDescription("")
-    setRoleNotice(`Role "${newRole.name}" created successfully.`)
-    setTimeout(() => setRoleNotice(""), 3000)
+    try {
+      await apiFetch("/api/admin/roles", {
+        method: "POST",
+        body: JSON.stringify({ ...newRole, description: newRoleDescription }),
+      })
+      await refreshAccessGovernance()
+      setSelectedRoleId(newRole.id)
+      setShowCreateRoleModal(false)
+      setNewRoleName("")
+      setNewRoleDescription("")
+      setRoleNotice(`Role "${newRole.name}" created successfully.`)
+    } catch (error) {
+      setRoleNotice(error instanceof Error ? error.message : "Unable to create role.")
+    }
   }
 
-  const handleCloneRole = (e: React.FormEvent) => {
+  const handleCloneRole = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newRoleName.trim()) return
 
@@ -364,188 +654,408 @@ export default function Administration() {
       allowedModules: sourceModules,
     }
 
-    const updated = [...roles, newRole]
-    RoleDatabase.saveRoles(updated)
-
-    AuditDatabase.logEvent(
-      "Role Cloned",
-      "Role Management",
-      `Cloned role '${newRoleName}' from '${sourceRole?.name || cloneSourceRoleId}'`,
-      "Success",
-    )
-
-    setRoles(updated)
-    setSelectedRoleId(newRole.id)
-    setShowCloneRoleModal(false)
-    setNewRoleName("")
-    setRoleNotice(
-      `Cloned role "${newRole.name}" created with ${sourceModules.length} permission rules.`,
-    )
-    setTimeout(() => setRoleNotice(""), 3000)
+    try {
+      await apiFetch("/api/admin/roles", {
+        method: "POST",
+        body: JSON.stringify({ ...newRole, description: newRoleDescription }),
+      })
+      await refreshAccessGovernance()
+      setSelectedRoleId(newRole.id)
+      setShowCloneRoleModal(false)
+      setNewRoleName("")
+      setRoleNotice(`Cloned role "${newRole.name}" created with ${sourceModules.length} module grants.`)
+    } catch (error) {
+      setRoleNotice(error instanceof Error ? error.message : "Unable to clone role.")
+    }
   }
 
-  const handleSaveRoleModules = () => {
+  const handleSaveRoleModules = async () => {
     if (!selectedRole) return
-    const updated = roles.map((r) =>
-      r.id === selectedRole.id ? selectedRole : r,
-    )
-    RoleDatabase.saveRoles(updated)
     setSaveStatus("saving")
+    setRoleNotice("")
+    try {
+      // 1. Immediately persist to local RoleDatabase
+      RoleDatabase.upsertRole(selectedRole)
 
-    AuditDatabase.logEvent(
-      "Role Permissions Updated",
-      "Role Management",
-      `Updated module permission matrix for role '${selectedRole.name}' (${selectedRole.allowedModules.length} active rules)`,
-      "Success",
-    )
+      // 2. Dispatch update to API
+      const result = await apiFetch<{
+        success: boolean
+        role?: { allowedModules?: string[]; allowed_modules?: string[] }
+      }>(`/api/admin/roles/${encodeURIComponent(selectedRole.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          allowedModules: selectedRole.allowedModules,
+          name: selectedRole.name,
+          status: selectedRole.status,
+        }),
+      })
 
-    setTimeout(() => {
+      if (!result.success) throw new Error("The database did not confirm the permission update.")
+
+      const finalAllowed = Array.isArray(result.role?.allowedModules)
+        ? result.role.allowedModules
+        : Array.isArray(result.role?.allowed_modules)
+          ? result.role.allowed_modules
+          : selectedRole.allowedModules
+
+      const savedRole: AppRole = { ...selectedRole, allowedModules: finalAllowed }
+      RoleDatabase.upsertRole(savedRole)
+
+      // Ensure React state maintains the updated role and allowedModules
+      setRoles((prev) => prev.map((r) => (r.id === selectedRole.id ? savedRole : r)))
+
       setSaveStatus("saved")
-      setTimeout(() => setSaveStatus("idle"), 2500)
-    }, 400)
+      setRoleNotice(
+        `${selectedRole.name} access saved to database (${savedRole.allowedModules.length} permission rules).`,
+      )
+      setTimeout(() => setSaveStatus("idle"), 3500)
+    } catch (error) {
+      setSaveStatus("idle")
+      setRoleNotice(error instanceof Error ? error.message : "Unable to save role permissions.")
+    }
+  }
+
+  const handleToggleRoleStatus = async () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const nextStatus = selectedRole.status === "Inactive" ? "active" : "inactive"
+    try {
+      await apiFetch(`/api/admin/roles/${encodeURIComponent(selectedRole.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      await refreshAccessGovernance()
+      setRoleNotice(`${selectedRole.name} is now ${nextStatus}.`)
+    } catch (error) {
+      setRoleNotice(error instanceof Error ? error.message : "Unable to update role status.")
+    }
   }
 
   const toggleModuleForSelectedRole = (moduleKey: string) => {
-    if (!selectedRole) return
+    if (!selectedRole || selectedRoleIsProtected) return
     const currentModules = selectedRole.allowedModules
-    const isCurrentlyActive =
-      currentModules.includes(moduleKey) ||
-      currentModules.includes("*") ||
-      getGrantedActionsForModule(currentModules, moduleKey).length > 0
+    const isCurrentlyFull = hasFullModuleAccess(currentModules, moduleKey)
 
     let newModules: string[]
-    if (isCurrentlyActive) {
+    if (isCurrentlyFull) {
       newModules = currentModules.filter(
-        (m) => m !== moduleKey && !m.startsWith(`${moduleKey}:`),
+        (m) =>
+          m !== moduleKey &&
+          m !== "*" &&
+          !m.startsWith(`${moduleKey}.`) &&
+          !m.startsWith(`${moduleKey}:`),
       )
     } else {
-      newModules = [...currentModules, moduleKey]
+      newModules = [
+        ...currentModules.filter(
+          (m) =>
+            m !== moduleKey &&
+            !m.startsWith(`${moduleKey}.`) &&
+            !m.startsWith(`${moduleKey}:`),
+        ),
+        moduleKey,
+      ]
     }
 
     const updatedRole = { ...selectedRole, allowedModules: newModules }
+    RoleDatabase.upsertRole(updatedRole)
     setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
   }
 
-  const toggleActionForSelectedRole = (
-    moduleKey: string,
-    action: PermissionAction,
-  ) => {
-    if (!selectedRole) return
-    let currentModules = [...selectedRole.allowedModules]
+  const isActionGranted = (rules: string[], moduleKey: string, actionKey: string): boolean => {
+    if (!rules || !Array.isArray(rules)) return false
+    if (rules.includes("*") || rules.includes(moduleKey)) return true
+    if (actionKey === "view" && (rules.includes(`${moduleKey}:read`) || rules.includes(`${moduleKey}.read`))) return true
+    if ((actionKey === "create" || actionKey === "edit") && (rules.includes(`${moduleKey}:write`) || rules.includes(`${moduleKey}.write`))) return true
+    return rules.includes(`${moduleKey}:${actionKey}`) || rules.includes(`${moduleKey}.${actionKey}`)
+  }
 
-    // If top-level module permission exists, expand it into 4 granular actions first
-    if (currentModules.includes(moduleKey)) {
-      currentModules = currentModules.filter((m) => m !== moduleKey)
-      ACTIONS_LIST.forEach((act) => {
-        const key = `${moduleKey}:${act.key}`
-        if (!currentModules.includes(key)) {
-          currentModules.push(key)
-        }
-      })
-    }
+  const toggleActionForSelectedRole = (moduleKey: string, actionKey: string) => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const currentRules = selectedRole.allowedModules
+    const hasFull = currentRules.includes(moduleKey) || currentRules.includes("*")
+    const specificRule = `${moduleKey}:${actionKey}`
+    const isGranted = isActionGranted(currentRules, moduleKey, actionKey)
 
-    const targetKey = `${moduleKey}:${action}`
-    let newModules: string[]
-
-    if (currentModules.includes(targetKey)) {
-      newModules = currentModules.filter((m) => m !== targetKey)
+    let newRules: string[]
+    if (hasFull) {
+      // Decompose blanket access: keep all 5 other actions, disable only the clicked action
+      const allActionKeys = ["view", "create", "edit", "delete", "approve", "export"]
+      const remaining = allActionKeys.filter((a) => a !== actionKey)
+      newRules = currentRules.filter(
+        (r) => r !== moduleKey && r !== "*" && !r.startsWith(`${moduleKey}:`) && !r.startsWith(`${moduleKey}.`),
+      )
+      remaining.forEach((a) => newRules.push(`${moduleKey}:${a}`))
+    } else if (isGranted) {
+      newRules = currentRules.filter(
+        (r) =>
+          r !== specificRule &&
+          r !== `${moduleKey}.${actionKey}` &&
+          !(actionKey === "view" && (r === `${moduleKey}:read` || r === `${moduleKey}.read`)) &&
+          !((actionKey === "create" || actionKey === "edit") && (r === `${moduleKey}:write` || r === `${moduleKey}.write`)),
+      )
     } else {
-      newModules = [...currentModules, targetKey]
+      newRules = [...currentRules, specificRule]
     }
 
-    const updatedRole = { ...selectedRole, allowedModules: newModules }
+    const updatedRole = { ...selectedRole, allowedModules: newRules }
+    RoleDatabase.upsertRole(updatedRole)
     setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
   }
 
   const selectAllCategoryModules = (categoryModules: string[]) => {
-    if (!selectedRole) return
+    if (!selectedRole || selectedRoleIsProtected) return
     const combined = Array.from(
       new Set([...selectedRole.allowedModules, ...categoryModules]),
     )
+    const updatedRole = { ...selectedRole, allowedModules: combined }
+    RoleDatabase.upsertRole(updatedRole)
     setRoles(
       roles.map((r) =>
-        r.id === selectedRole.id
-          ? { ...selectedRole, allowedModules: combined }
-          : r,
+        r.id === selectedRole.id ? updatedRole : r,
       ),
     )
   }
 
   const clearCategoryModules = (categoryModules: string[]) => {
-    if (!selectedRole) return
+    if (!selectedRole || selectedRoleIsProtected) return
     const updated = selectedRole.allowedModules.filter((m) => {
-      const baseMod = m.includes(":") ? m.split(":")[0] : m
+      const baseMod = m.split(/[.:]/, 1)[0]
       return !categoryModules.includes(baseMod)
     })
+    const updatedRole = { ...selectedRole, allowedModules: updated }
+    RoleDatabase.upsertRole(updatedRole)
     setRoles(
       roles.map((r) =>
-        r.id === selectedRole.id
-          ? { ...selectedRole, allowedModules: updated }
-          : r,
+        r.id === selectedRole.id ? updatedRole : r,
       ),
     )
   }
 
+  // Preset Role Permissions
+  const applyPresetFullAccess = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const allModulesList = MODULE_CATEGORIES.flatMap((c) => c.modules)
+    const updatedRole = { ...selectedRole, allowedModules: Array.from(new Set([...allModulesList, "*"])) }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Applied Full Administrator Access preset.")
+  }
+
+  const applyPresetClinical = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const clinicalMods = ["patients", "op", "beds", "er", "clinical", "surgery", "icu"]
+    const clinicalRules = clinicalMods.flatMap((m) => [`${m}:view`, `${m}:create`, `${m}:edit`, `${m}:export`])
+    const updatedRole = { ...selectedRole, allowedModules: clinicalRules }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Applied Clinical Standard Care preset.")
+  }
+
+  const applyPresetDiagnostics = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const diagMods = ["pharmacy", "laboratory", "radiology"]
+    const diagRules = diagMods.flatMap((m) => [`${m}:view`, `${m}:create`, `${m}:edit`, `${m}:approve`, `${m}:export`])
+    const updatedRole = { ...selectedRole, allowedModules: diagRules }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Applied Diagnostic & Pharmacy Suite preset.")
+  }
+
+  const applyPresetFinance = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const finMods = ["billing", "accounts", "insurance"]
+    const finRules = finMods.flatMap((m) => [`${m}:view`, `${m}:create`, `${m}:edit`, `${m}:approve`, `${m}:export`])
+    const updatedRole = { ...selectedRole, allowedModules: finRules }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Applied Finance, Billing & TPA preset.")
+  }
+
+  const applyPresetReadOnly = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const allMods = MODULE_CATEGORIES.flatMap((c) => c.modules)
+    const readRules = allMods.map((m) => `${m}:view`)
+    const updatedRole = { ...selectedRole, allowedModules: readRules }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Applied View-Only Auditor preset across all modules.")
+  }
+
+  const applyPresetRevokeAll = () => {
+    if (!selectedRole || selectedRoleIsProtected) return
+    const updatedRole = { ...selectedRole, allowedModules: [] }
+    setRoles(roles.map((r) => (r.id === selectedRole.id ? updatedRole : r)))
+    setRoleNotice("Revoked all permissions for this role.")
+  }
+
+  const handleDeleteRole = async (role: AppRole) => {
+    if (role.id === "ROLE_ADMIN" || role.id === "ROLE_SUPERADMIN") {
+      alert("System Administrator roles cannot be deleted.")
+      return
+    }
+    if (role.isSystem) {
+      alert("Built-in system role templates cannot be deleted. You can deactivate this role instead.")
+      return
+    }
+    const assignedUsers = users.filter((u) => u.roleId === role.id)
+    if (assignedUsers.length > 0) {
+      alert(
+        `Cannot delete role "${role.name}" because ${assignedUsers.length} staff member(s) are currently assigned to it. Please reassign those staff members first.`,
+      )
+      return
+    }
+    if (!confirm(`Are you sure you want to permanently delete the role "${role.name}" (${role.id})?`)) {
+      return
+    }
+    try {
+      await apiFetch(`/api/admin/roles/${encodeURIComponent(role.id)}`, {
+        method: "DELETE",
+      })
+      await refreshAccessGovernance()
+      const remaining = roles.filter((r) => r.id !== role.id)
+      if (selectedRoleId === role.id) {
+        setSelectedRoleId(remaining[0]?.id || "ROLE_ADMIN")
+      }
+      setRoleNotice(`Role "${role.name}" has been deleted.`)
+    } catch {
+      RoleDatabase.deleteRole(role.id)
+      await refreshAccessGovernance()
+      setRoleNotice(`Role "${role.name}" deleted.`)
+    }
+  }
+
+  // Quick 1-click User Status Toggle
+  const handleQuickToggleUserStatus = async (user: AppUser) => {
+    const nextStatus = (user.status || "Active") === "Active" ? "Inactive" : "Active"
+    const updated = { ...user, status: nextStatus as "Active" | "Inactive" }
+    RoleDatabase.upsertUser(updated)
+    try {
+      await apiFetch(`/api/admin/users/${encodeURIComponent(user.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: nextStatus }),
+      })
+    } catch {}
+    await refreshAccessGovernance()
+    setUserNotice(`User @${user.username} is now ${nextStatus}.`)
+  }
+
   // User Accounts Operations
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editingUser) return
 
     const isNew = !users.some((u) => u.id === editingUser.id)
-    const updatedUsers = RoleDatabase.upsertUser(editingUser)
-    setUsers(updatedUsers)
+    const role = roles.find((item) => item.id === editingUser.roleId)
+    const effectiveAllowed =
+      Array.isArray(editingUser.customModules) && editingUser.customModules.length > 0
+        ? editingUser.customModules
+        : role?.allowedModules || []
 
-    AuditDatabase.logEvent(
-      isNew ? "User Created" : "User Updated",
-      "User Management",
-      `${
-        isNew ? "Created new" : "Updated"
-      } user account for '${editingUser.name}' (@${editingUser.username}) assigned to role ${editingUser.roleId}`,
-      "Success",
-    )
-
-    setShowUserModal(false)
-    setEditingUser(null)
-  }
-
-  const handleResetPassword = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!resetPassUser || !newPassInput) return
-
-    const updatedUser: AppUser = {
-      ...resetPassUser,
-      password: newPassInput,
+    const payload = {
+      username: editingUser.username.trim().toLowerCase(),
+      password: editingUser.password,
+      name: editingUser.name,
+      staffId: editingUser.staffId,
+      roleId: editingUser.roleId,
+      status: editingUser.status || "Active",
+      department: editingUser.department,
+      allowedModules: effectiveAllowed,
+      customModules: editingUser.customModules || null,
     }
 
-    const updatedUsers = RoleDatabase.upsertUser(updatedUser)
-    setUsers(updatedUsers)
+    // Sync with RoleDatabase
+    RoleDatabase.upsertUser({
+      id: editingUser.id,
+      name: editingUser.name,
+      username: editingUser.username.trim().toLowerCase(),
+      password: editingUser.password,
+      staffId: editingUser.staffId,
+      roleId: editingUser.roleId,
+      status: editingUser.status || "Active",
+      department: editingUser.department,
+      allowedModules: effectiveAllowed,
+      customModules: editingUser.customModules || undefined,
+    })
 
-    AuditDatabase.logEvent(
-      "Password Reset",
-      "User Management",
-      `Reset password for user account '${resetPassUser.name}' (@${resetPassUser.username})`,
-      "Success",
-    )
+    // If assigned role is a doctor, automatically sync to doctor master
+    const isDoctor = editingUser.roleId === "ROLE_DOCTOR" || editingUser.roleId.toLowerCase().includes("doctor") || editingUser.roleId.toLowerCase().includes("surgeon")
+    if (isDoctor) {
+      try {
+        const masterDocs = getDoctorMaster()
+        const existingDoc = masterDocs.find(
+          (d) => d.id === editingUser.id || (d.username && d.username.toLowerCase() === editingUser.username.toLowerCase())
+        )
+        if (existingDoc) {
+          updateDoctorMaster({
+            ...existingDoc,
+            name: editingUser.name,
+            specialty: userDoctorDetails.specialty,
+            qualification: userDoctorDetails.qualification,
+            room: userDoctorDetails.room,
+            consultationFee: userDoctorDetails.consultationFee,
+          })
+        } else {
+          addDoctorMaster({
+            id: editingUser.id,
+            name: editingUser.name,
+            username: editingUser.username,
+            staffId: editingUser.staffId,
+            specialty: userDoctorDetails.specialty,
+            qualification: userDoctorDetails.qualification,
+            room: userDoctorDetails.room,
+            consultationFee: userDoctorDetails.consultationFee,
+            section: "Main",
+            verified: true,
+          })
+        }
+      } catch (err) {
+        console.warn("Could not sync doctor master:", err)
+      }
+    }
 
-    setResetPassUser(null)
-    setNewPassInput("password123")
+    try {
+      await apiFetch(
+        isNew ? "/api/admin/users/create" : `/api/admin/users/${encodeURIComponent(editingUser.id)}`,
+        {
+          method: isNew ? "POST" : "PUT",
+          body: JSON.stringify(payload),
+        },
+      )
+      await refreshAccessGovernance()
+      setShowUserModal(false)
+      setEditingUser(null)
+      setUserNotice(isNew ? "User account created and access assigned." : "User account and access updated.")
+    } catch (error) {
+      setUserNotice(error instanceof Error ? error.message : "Unable to save user account.")
+    }
   }
 
-  const handleDeleteUser = (user: AppUser) => {
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!resetPassUser || !newPassInput) return
+    try {
+      await apiFetch(`/api/admin/users/${encodeURIComponent(resetPassUser.id)}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ password: newPassInput }),
+      })
+      setResetPassUser(null)
+      setNewPassInput("")
+      setUserNotice("Password reset and active sessions revoked.")
+    } catch (error) {
+      setUserNotice(error instanceof Error ? error.message : "Unable to reset password.")
+    }
+  }
+
+  const handleDeleteUser = async (user: AppUser) => {
     if (
       !confirm(
-        `Are you sure you want to delete account @${user.username} (${user.name})?`,
+        `Deactivate access for @${user.username} (${user.name})? They will be signed out immediately and can no longer log in. The account stays in the inactive list for audit history.`,
       )
     )
       return
-    const updated = RoleDatabase.deleteUser(user.id)
-    setUsers(updated)
-    AuditDatabase.logEvent(
-      "User Deleted",
-      "User Management",
-      `Deleted user account @${user.username} (${user.name})`,
-      "Success",
-    )
+    try {
+      await apiFetch(`/api/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" })
+      await refreshAccessGovernance()
+      setUserStatusFilter("Active")
+      setUserNotice("User account deactivated and active sessions revoked.")
+    } catch (error) {
+      setUserNotice(error instanceof Error ? error.message : "Unable to deactivate user account.")
+    }
   }
 
   // ── Doctor Master Operations ─────────────────────────────────────────────
@@ -602,18 +1112,8 @@ export default function Administration() {
     }
     setDoctors(updatedDocs)
 
-    // Sync credentials to RoleDatabase if verified
-    if (finalDoc.verified && finalDoc.username) {
-      RoleDatabase.upsertUser({
-        id: `U_${finalDoc.id}`,
-        username: finalDoc.username,
-        password: DOCTOR_LOCAL_PASSWORD,
-        roleId: roles.find((r) => r.id === "ROLE_DOCTOR")?.id || roles[0]?.id || "ROLE_ADMIN",
-        name: finalDoc.name,
-        staffId: finalDoc.staffId,
-        status: "Active",
-      })
-    }
+    // A clinician profile never creates login credentials automatically.
+    // The System Administrator explicitly grants a role from the Users tab.
 
     AuditDatabase.logEvent(
       isNew ? "Doctor Added" : "Doctor Fee/Profile Updated",
@@ -639,7 +1139,6 @@ export default function Administration() {
       return
     const updated = deleteDoctorMaster(doc.id)
     setDoctors(updated)
-    RoleDatabase.deleteUser(`U_${doc.id}`)
 
     AuditDatabase.logEvent(
       "Doctor Deleted",
@@ -666,8 +1165,8 @@ export default function Administration() {
           .toLowerCase()
           .replace(/dr\.?\s*/, "")
           .replace(/[^a-z0-9]/g, ""),
-      password: existingUser?.password || DOCTOR_LOCAL_PASSWORD,
-      roleId: existingUser?.roleId || roles.find((r) => r.id === "ROLE_DOCTOR")?.id || roles[0]?.id || "ROLE_ADMIN",
+      password: existingUser?.password || "",
+      roleId: existingUser?.roleId || roles.find((r) => !r.id.includes("ADMIN"))?.id || "",
       staffId: doc.staffId || doc.id,
       status: existingUser?.status as any || "Active",
       doctorId: doc.id,
@@ -675,20 +1174,33 @@ export default function Administration() {
     setShowCredentialsModal(true)
   }
 
-  const handleSaveCredentials = (e: React.FormEvent) => {
+  const handleSaveCredentials = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!credentialsForm) return
 
-    // Save to RoleDatabase
-    RoleDatabase.upsertUser({
-      id: credentialsForm.id,
-      username: credentialsForm.username.trim().toLowerCase(),
-      password: credentialsForm.password || DOCTOR_LOCAL_PASSWORD,
-      roleId: credentialsForm.roleId,
-      name: credentialsForm.name,
-      staffId: credentialsForm.staffId,
-      status: credentialsForm.status,
-    })
+    const isNew = !users.some((user) => user.id === credentialsForm.id)
+    const role = roles.find((item) => item.id === credentialsForm.roleId)
+    try {
+      await apiFetch(
+        isNew ? "/api/admin/users/create" : `/api/admin/users/${encodeURIComponent(credentialsForm.id)}`,
+        {
+          method: isNew ? "POST" : "PUT",
+          body: JSON.stringify({
+            username: credentialsForm.username.trim().toLowerCase(),
+            password: credentialsForm.password,
+            roleId: credentialsForm.roleId,
+            name: credentialsForm.name,
+            staffId: credentialsForm.staffId,
+            status: credentialsForm.status,
+            allowedModules: role?.allowedModules || [],
+          }),
+        },
+      )
+      await refreshAccessGovernance()
+    } catch (error) {
+      setDoctorNotice(error instanceof Error ? error.message : "Unable to save credentials.")
+      return
+    }
 
     // Also update DoctorMaster username & staffId if this was linked to a doctor
     if (credentialsForm.doctorId) {
@@ -702,13 +1214,6 @@ export default function Administration() {
         setDoctors(getDoctorMaster())
       }
     }
-
-    AuditDatabase.logEvent(
-      "Credentials Updated",
-      "User & Credential Governance",
-      `Updated login credentials and role assignment for '${credentialsForm.name}' (@${credentialsForm.username})`,
-      "Success",
-    )
 
     setShowCredentialsModal(false)
     setCredentialsForm(null)
@@ -989,8 +1494,7 @@ export default function Administration() {
               </span>
             </div>
             <p className="text-[13px] text-[#64748B] mt-1">
-              Manage doctor roster, staff credentials, RBAC module permissions,
-              audit logging & hospital security policies.
+              A guided control centre for hospital setup, workforce access, governance and compliance.
             </p>
           </div>
 
@@ -1005,19 +1509,7 @@ export default function Administration() {
               <span>+</span> Add Doctor
             </button>
             <button
-              onClick={() => {
-                setEditingUser({
-                  id: "U_" + Date.now(),
-                  username: "",
-                  password: "password123",
-                  roleId: roles[0]?.id || "ROLE_ADMIN",
-                  name: "",
-                  staffId: "EMP-" + Math.floor(100 + Math.random() * 900),
-                  status: "Active",
-                })
-                setShowUserModal(true)
-                setActiveTab("users")
-              }}
+              onClick={() => openNewUser()}
               className="bg-white hover:bg-gray-50 text-[#0F172A] font-semibold text-[12.5px] px-3.5 py-1.5 transition-colors border border-[#CBD5E1] cursor-pointer shadow-2xs"
             >
               + Add User
@@ -1025,31 +1517,32 @@ export default function Administration() {
           </div>
         </div>
 
-        {/* Clean Underline Tabs */}
-        <div className="flex items-center gap-8 text-[13px] font-semibold border-t border-[#F1F5F9] pt-1">
+        {/* Guided workflow navigation */}
+        <div className="flex items-center gap-6 overflow-x-auto text-[12.5px] font-semibold border-t border-[#F1F5F9] pt-1">
           {[
+            { id: "overview", label: "Control Centre" },
             {
               id: "doctors",
-              label: "Doctor Master & Roster",
+              label: "1. Clinical Directory",
               count: doctors.length,
             },
             {
               id: "tariffs",
-              label: "Diagnostic Tariffs & Price Master",
+              label: "2. Service Catalogue",
               count: tariffs.length,
             },
             {
-              id: "users",
-              label: "User Accounts & Credentials",
-              count: users.length,
-            },
-            {
               id: "roles",
-              label: "Roles & Permissions Matrix",
+              label: "3. Roles & Access",
               count: roles.length,
             },
-            { id: "audit", label: "Audit Logs", count: auditLogs.length },
-            { id: "settings", label: "System Settings" },
+            {
+              id: "users",
+              label: "4. Assign Staff Access",
+              count: users.length,
+            },
+            { id: "audit", label: "5. Review Activity", count: auditLogs.length },
+            { id: "settings", label: "6. Configure" },
           ].map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -1082,6 +1575,55 @@ export default function Administration() {
 
       {/* ── Main Tab Content Container ─────────────────────────────────── */}
       <div className="px-8 py-6 flex-1 flex flex-col min-h-0 bg-[#F4F7FB]">
+        {activeTab === "overview" && (
+          <div className="space-y-5 max-w-7xl">
+            <div className="rounded-xl border border-blue-100 bg-gradient-to-r from-[#0C2461] via-[#1447A6] to-[#2563D9] px-6 py-5 text-white shadow-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-blue-200">Administration workflow</p>
+                  <h2 className="mt-1 text-xl font-bold">Set up people and access in the right order</h2>
+                  <p className="mt-1 max-w-2xl text-[12.5px] leading-5 text-blue-100">Start with a fixed hospital role template, customize its department access, then assign that role to staff. Add a custom role only when the templates do not fit.</p>
+                </div>
+                <button onClick={() => setActiveTab("roles")} className="rounded-lg bg-white px-4 py-2 text-[12px] font-bold text-[#1740B4] shadow-sm transition hover:bg-blue-50">Start role setup →</button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: "Doctor directory", value: doctors.length, detail: "Clinical profiles ready", tone: "bg-blue-50 text-blue-700", target: "doctors" },
+                { label: "User accounts", value: users.length, detail: "Identities provisioned", tone: "bg-violet-50 text-violet-700", target: "users" },
+                { label: "Access roles", value: roles.length, detail: "Permission templates", tone: "bg-emerald-50 text-emerald-700", target: "roles" },
+                { label: "Activity records", value: auditLogs.length, detail: "Recent governance events", tone: "bg-amber-50 text-amber-700", target: "audit" },
+              ].map((metric) => (
+                <button key={metric.label} onClick={() => setActiveTab(metric.target as typeof activeTab)} className="rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md">
+                  <div className="flex items-start justify-between gap-3"><span className="text-[12px] font-semibold text-slate-600">{metric.label}</span><span className={`rounded-md px-2 py-1 text-[11px] font-bold ${metric.tone}`}>View</span></div>
+                  <div className="mt-3 text-2xl font-bold text-slate-900">{metric.value}</div>
+                  <p className="mt-1 text-[11px] text-slate-500">{metric.detail}</p>
+                </button>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-5 py-4"><h3 className="text-[14px] font-bold text-slate-900">Operating workflow</h3><p className="mt-0.5 text-[12px] text-slate-500">Follow the sequence to avoid orphan profiles, unscoped access, or unreviewed changes.</p></div>
+              <div className="grid divide-y divide-slate-100 md:grid-cols-2 md:divide-x md:divide-y-0 xl:grid-cols-4">
+                {[
+                  { step: "01", title: "Choose a role template", description: "Start with Doctor, Receptionist, Nurse, Pharmacy, Lab, HR, Accounts or Billing.", action: "Open roles", target: "roles" },
+                  { step: "02", title: "Customize access", description: "Choose the hospital modules and workflows the selected role may use.", action: "Set permissions", target: "roles" },
+                  { step: "03", title: "Assign staff or doctors", description: "Create each person’s individual account and attach the prepared role.", action: "Assign people", target: "users" },
+                  { step: "04", title: "Role-based sign in", description: "Staff choose their role, select their identity, and use their own credentials.", action: "Review activity", target: "audit" },
+                ].map((step) => (
+                  <div key={step.step} className="p-5"><span className="text-[11px] font-extrabold tracking-wider text-blue-600">STEP {step.step}</span><h4 className="mt-2 text-[14px] font-bold text-slate-900">{step.title}</h4><p className="mt-1 min-h-10 text-[12px] leading-5 text-slate-500">{step.description}</p><button onClick={() => setActiveTab(step.target as typeof activeTab)} className="mt-3 text-[12px] font-bold text-[#1B4FD8] hover:text-[#1740B4]">{step.action} →</button></div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+              <div><p className="text-[12px] font-bold">Governance checkpoint</p><p className="mt-0.5 text-[12px] text-amber-800">Review the activity log after granting access and revisit system controls regularly.</p></div>
+              <div className="flex gap-2"><button onClick={() => setActiveTab("audit")} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[12px] font-bold text-amber-900 hover:bg-amber-100">Review activity</button><button onClick={() => setActiveTab("settings")} className="rounded-lg bg-amber-700 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-amber-800">System controls</button></div>
+            </div>
+          </div>
+        )}
+
         {/* ── TAB: DIAGNOSTIC TARIFFS & PRICE MASTER ─────────────────────── */}
         {activeTab === "tariffs" && (
           <div className="space-y-4">
@@ -1482,6 +2024,12 @@ export default function Administration() {
                 </button>
               </div>
             )}
+            {specialtyNotice && (
+              <div className="flex items-center justify-between border border-blue-200 bg-blue-50 p-3 text-[12.5px] font-semibold text-blue-800">
+                <span>{specialtyNotice}</span>
+                <button onClick={() => setSpecialtyNotice("")} className="text-blue-700 hover:text-blue-950">×</button>
+              </div>
+            )}
 
             <div className="bg-white border border-[#DDE2EC] shadow-2xs">
               {/* Doctor Toolbar */}
@@ -1523,6 +2071,16 @@ export default function Administration() {
                     <option value="active">Active & Verified</option>
                     <option value="unverified">Needs Verification</option>
                   </select>
+
+                  <button
+                    onClick={() => {
+                      setNewSpecialtyName("")
+                      setShowSpecialtyModal(true)
+                    }}
+                    className="bg-white hover:bg-gray-50 text-[#334155] text-[12.5px] font-semibold px-3.5 py-1.5 border border-[#CBD5E1] transition-colors cursor-pointer"
+                  >
+                    + Specialty
+                  </button>
 
                   <button
                     onClick={handleOpenAddDoctorModal}
@@ -1658,7 +2216,7 @@ export default function Administration() {
 
                                 <button
                                   onClick={() => handleDeleteDoctor(d)}
-                                  title="Delete Doctor"
+                                title="Deactivate access"
                                   className="bg-white hover:bg-red-50 text-red-600 border border-red-200 px-2 py-1 text-[11.5px] cursor-pointer"
                                 >
                                   🗑️
@@ -1679,22 +2237,108 @@ export default function Administration() {
         {/* ── TAB 2: USER ACCOUNTS & CREDENTIALS ─────────────────────────── */}
         {activeTab === "users" && (
           <div className="bg-white border border-[#DDE2EC] flex flex-col flex-1 overflow-hidden shadow-sm">
+            {/* Header Banner */}
+            <div className="flex flex-col gap-3 border-b border-blue-100 bg-blue-50 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-[14px] font-bold text-slate-900">Hospital Staff Identity & User Access Governance</p>
+                <p className="mt-0.5 text-[12px] text-slate-600">
+                  Provision employee accounts, assign role-based hospital access, set secure credentials, and control active login status.
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveTab("roles")}
+                className="shrink-0 text-[12.5px] font-bold text-[#1B4FD8] hover:text-[#1740B4] flex items-center gap-1"
+              >
+                {assignableRoles.length ? "Configure Access Roles & Permissions" : "1. Create an access role first"} →
+              </button>
+            </div>
+
+            {/* Metric Summary Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+              <div className="bg-white border border-[#E2E8F0] p-4 rounded-xs shadow-2xs">
+                <div className="flex items-center justify-between text-[#64748B] text-[12px] font-semibold">
+                  <span>Total User Accounts</span>
+                  <span className="text-base">👥</span>
+                </div>
+                <div className="text-2xl font-bold text-[#0F172A] mt-1">{users.length}</div>
+                <div className="text-[11px] text-[#64748B] mt-0.5">Provisioned staff accounts</div>
+              </div>
+
+              <div className="bg-white border border-emerald-200 p-4 rounded-xs shadow-2xs">
+                <div className="flex items-center justify-between text-emerald-700 text-[12px] font-semibold">
+                  <span>Active Logins</span>
+                  <span className="text-base">🟢</span>
+                </div>
+                <div className="text-2xl font-bold text-emerald-700 mt-1">
+                  {users.filter((u) => (u.status || "Active") === "Active").length}
+                </div>
+                <div className="text-[11px] text-emerald-600 mt-0.5">Permitted to sign in</div>
+              </div>
+
+              <div className="bg-white border border-amber-200 p-4 rounded-xs shadow-2xs">
+                <div className="flex items-center justify-between text-amber-700 text-[12px] font-semibold">
+                  <span>Inactive / Suspended</span>
+                  <span className="text-base">⏸️</span>
+                </div>
+                <div className="text-2xl font-bold text-amber-700 mt-1">
+                  {users.filter((u) => u.status === "Inactive").length}
+                </div>
+                <div className="text-[11px] text-amber-600 mt-0.5">Access disabled</div>
+              </div>
+
+              <div className="bg-white border border-blue-200 p-4 rounded-xs shadow-2xs">
+                <div className="flex items-center justify-between text-blue-700 text-[12px] font-semibold">
+                  <span>Doctors & Specialists</span>
+                  <span className="text-base">🩺</span>
+                </div>
+                <div className="text-2xl font-bold text-blue-700 mt-1">
+                  {
+                    users.filter(
+                      (u) =>
+                        u.roleId === "ROLE_DOCTOR" ||
+                        u.roleId.toLowerCase().includes("doctor") ||
+                        u.roleId.toLowerCase().includes("surgeon"),
+                    ).length
+                  }
+                </div>
+                <div className="text-[11px] text-blue-600 mt-0.5">Clinical providers</div>
+              </div>
+            </div>
+
+            {userNotice && (
+              <div className="mx-5 mt-4 flex items-center justify-between gap-3 rounded-xs border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-[12.5px] font-semibold text-emerald-900 shadow-2xs">
+                <span className="flex items-center gap-2">
+                  <span>✓</span>
+                  <span>{userNotice}</span>
+                </span>
+                <button
+                  onClick={() => setUserNotice("")}
+                  className="text-emerald-700 hover:text-emerald-950 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* User Search & Filter Toolbar */}
-            <div className="p-4 border-b border-[#DDE2EC] bg-[#F8FAFC] flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="p-4 border-b border-[#DDE2EC] bg-white flex flex-col md:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3 w-full md:w-auto flex-wrap">
-                <input
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search user name, username, or staff ID..."
-                  className="w-full md:w-80 bg-white border border-[#DDE2EC] px-3.5 py-1.5 text-[13px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#1B4FD8]"
-                />
+                <div className="relative w-full md:w-80">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-[#94A3B8]">🔍</span>
+                  <input
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search name, username, or staff ID..."
+                    className="w-full bg-[#F8FAFC] border border-[#CBD5E1] pl-9 pr-3.5 py-1.5 text-[13px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#1B4FD8] focus:bg-white"
+                  />
+                </div>
 
                 <select
                   value={userRoleFilter}
                   onChange={(e) => setUserRoleFilter(e.target.value)}
-                  className="bg-white border border-[#DDE2EC] px-3 py-1.5 text-[12.5px] text-[#334155] font-semibold focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
+                  className="bg-[#F8FAFC] border border-[#CBD5E1] px-3 py-1.5 text-[12.5px] text-[#334155] font-semibold focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
                 >
-                  <option value="all">All Roles</option>
+                  <option value="all">All Roles ({roles.length})</option>
                   {roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -1705,31 +2349,21 @@ export default function Administration() {
                 <select
                   value={userStatusFilter}
                   onChange={(e) => setUserStatusFilter(e.target.value)}
-                  className="bg-white border border-[#DDE2EC] px-3 py-1.5 text-[12.5px] text-[#334155] font-semibold focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
+                  className="bg-[#F8FAFC] border border-[#CBD5E1] px-3 py-1.5 text-[12.5px] text-[#334155] font-semibold focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
                 >
                   <option value="all">All Statuses</option>
-                  <option value="Active">Active Users</option>
+                  <option value="Active">Active Accounts</option>
                   <option value="Inactive">Inactive / Suspended</option>
                 </select>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    setEditingUser({
-                      id: "U_" + Date.now(),
-                      username: "",
-                      password: "password123",
-                      roleId: roles[0]?.id || "ROLE_ADMIN",
-                      name: "",
-                      staffId: "EMP-" + Math.floor(100 + Math.random() * 900),
-                      status: "Active",
-                    })
-                    setShowUserModal(true)
-                  }}
-                  className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12.5px] font-semibold px-3.5 py-1.5 border border-blue-600 transition-colors shadow-2xs cursor-pointer"
+                  onClick={() => openNewUser()}
+                  className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[13px] font-semibold px-4 py-2 border border-blue-600 transition-colors shadow-2xs cursor-pointer flex items-center gap-1.5"
                 >
-                  + Add User Account
+                  <span>➕</span>
+                  <span>Add Staff Account</span>
                 </button>
               </div>
             </div>
@@ -1738,92 +2372,137 @@ export default function Administration() {
             <div className="flex-1 overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-[#F1F5F9] border-b border-[#DDE2EC] text-[11.5px] text-[#475569] uppercase font-mono tracking-wider">
-                    <th className="px-6 py-3">Staff Member Name</th>
-                    <th className="px-6 py-3">Username</th>
-                    <th className="px-6 py-3">Staff ID</th>
-                    <th className="px-6 py-3">Assigned Role</th>
-                    <th className="px-6 py-3">Password</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3 text-right">Actions</th>
+                  <tr className="bg-[#F1F5F9] border-b border-[#DDE2EC] text-[11px] text-[#475569] uppercase font-mono tracking-wider">
+                    <th className="px-6 py-3.5">Staff Member</th>
+                    <th className="px-6 py-3.5">Username</th>
+                    <th className="px-6 py-3.5">Staff ID</th>
+                    <th className="px-6 py-3.5">Assigned System Role</th>
+                    <th className="px-6 py-3.5 text-center">Account Status</th>
+                    <th className="px-6 py-3.5 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F1F5F9] text-[13px] text-[#334155]">
                   {filteredUsers.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={7}
-                        className="px-6 py-12 text-center text-[#64748B]"
-                      >
+                      <td colSpan={6} className="px-6 py-12 text-center text-[#64748B]">
                         No user accounts match the current filter criteria.
                       </td>
                     </tr>
                   ) : (
                     filteredUsers.map((u) => {
                       const userRole = roles.find((r) => r.id === u.roleId)
+                      const isDoc =
+                        u.roleId === "ROLE_DOCTOR" ||
+                        u.roleId.toLowerCase().includes("doctor") ||
+                        u.roleId.toLowerCase().includes("surgeon")
+                      const isAdmin = u.roleId === "ROLE_ADMIN" || u.roleId === "ROLE_SUPERADMIN"
+                      const isNurse = u.roleId.toLowerCase().includes("nurse")
+                      const isPharmacy = u.roleId.toLowerCase().includes("pharm")
+
+                      const avatarBg = isAdmin
+                        ? "bg-purple-100 text-purple-700 border-purple-200"
+                        : isDoc
+                          ? "bg-blue-100 text-blue-700 border-blue-200"
+                          : isNurse
+                            ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                            : isPharmacy
+                              ? "bg-amber-100 text-amber-700 border-amber-200"
+                              : "bg-slate-100 text-slate-700 border-slate-200"
+
+                      const initials = (u.name || "U")
+                        .split(" ")
+                        .filter(Boolean)
+                        .map((w) => w[0])
+                        .join("")
+                        .slice(0, 2)
+                        .toUpperCase()
+
                       return (
-                        <tr
-                          key={u.id}
-                          className="hover:bg-[#F8FAFC] transition-colors"
-                        >
-                          <td className="px-6 py-3 font-bold text-[#0F172A]">
-                            {u.name}
+                        <tr key={u.id} className="hover:bg-[#F8FAFC] transition-colors">
+                          <td className="px-6 py-3.5 font-bold text-[#0F172A]">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-8 h-8 rounded-full border flex items-center justify-center font-bold text-[12px] shrink-0 ${avatarBg}`}
+                              >
+                                {initials}
+                              </div>
+                              <div>
+                                <div className="font-bold text-[#0F172A]">{u.name}</div>
+                                <div className="text-[11px] text-[#64748B] font-normal">
+                                  {isDoc ? "Clinical Specialist" : isAdmin ? "Administrator" : "Hospital Staff"}
+                                </div>
+                              </div>
+                            </div>
                           </td>
 
-                          <td className="px-6 py-3 font-mono text-[#1B4FD8]">
+                          <td className="px-6 py-3.5 font-mono text-[#1B4FD8] font-medium">
                             @{u.username}
                           </td>
 
-                          <td className="px-6 py-3 font-mono text-[12px] text-[#64748B]">
+                          <td className="px-6 py-3.5 font-mono text-[12px] text-[#64748B]">
                             {u.staffId}
                           </td>
 
-                          <td className="px-6 py-3">
-                            <span className="text-[11.5px] bg-blue-50 text-[#1B4FD8] px-2.5 py-0.5 border border-blue-200 font-semibold">
-                              {userRole?.name || u.roleId}
-                            </span>
+                          <td className="px-6 py-3.5">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className="text-[11.5px] bg-blue-50 text-[#1B4FD8] px-2.5 py-1 border border-blue-200 font-semibold rounded-xs">
+                                {userRole?.name || u.roleId}
+                              </span>
+                              {u.customModules && u.customModules.length > 0 ? (
+                                <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-300 px-1.5 py-0.5 font-bold rounded flex items-center gap-1" title={u.customModules.join(", ")}>
+                                  <span>⚡ Custom:</span>
+                                  <span>{u.customModules.length} depts</span>
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[#64748B]">
+                                  Role Default ({userRole?.allowedModules?.length || 0} depts)
+                                </span>
+                              )}
+                            </div>
                           </td>
 
-                          <td className="px-6 py-3 font-mono text-[#475569]">
-                            {u.password || "••••••••"}
-                          </td>
-
-                          <td className="px-6 py-3">
-                            <span
-                              className={`text-[11px] font-bold px-2 py-0.5 border ${
+                          <td className="px-6 py-3.5 text-center">
+                            <button
+                              onClick={() => handleQuickToggleUserStatus(u)}
+                              title="Click to toggle account status"
+                              className={`text-[11px] font-bold px-2.5 py-1 border rounded-xs cursor-pointer transition-all ${
                                 (u.status || "Active") === "Active"
-                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                  : "bg-red-50 text-red-700 border-red-200"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                                  : "bg-red-50 text-red-700 border-red-300 hover:bg-red-100"
                               }`}
                             >
-                              {u.status || "Active"}
-                            </span>
+                              {(u.status || "Active") === "Active" ? "● Active" : "○ Inactive"}
+                            </button>
                           </td>
 
-                          <td className="px-6 py-3 text-right">
+                          <td className="px-6 py-3.5 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 onClick={() => {
-                                  setEditingUser({ ...u })
+                                  setEditingUser({
+                                    ...u,
+                                    customModules: u.customModules || (u.allowedModules && u.allowedModules.length > 0 ? u.allowedModules : undefined),
+                                  })
                                   setShowUserModal(true)
                                 }}
                                 className="text-[12px] bg-white hover:bg-gray-100 text-[#334155] border border-[#CBD5E1] px-2.5 py-1 font-semibold cursor-pointer"
                               >
-                                Edit User
+                                ✏️ Edit
                               </button>
 
                               <button
                                 onClick={() => {
                                   setResetPassUser(u)
-                                  setNewPassInput("password123")
+                                  setNewPassInput("")
                                 }}
                                 className="text-[12px] bg-white hover:bg-amber-50 text-amber-700 border border-amber-300 px-2.5 py-1 font-semibold cursor-pointer"
                               >
-                                Reset Pass
+                                🔑 Reset Pass
                               </button>
 
                               <button
                                 onClick={() => handleDeleteUser(u)}
+                                title="Deactivate user access"
                                 className="text-[12px] bg-white hover:bg-red-50 text-red-600 border border-red-200 px-2 py-1 cursor-pointer"
                               >
                                 🗑️
@@ -1844,13 +2523,33 @@ export default function Administration() {
         {activeTab === "roles" && (
           <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-[600px]">
             {/* Left Column: Roles Sidebar */}
-            <div className="w-full lg:w-80 bg-white border border-[#DDE2EC] flex flex-col overflow-hidden shadow-sm">
+            <div className="w-full lg:w-84 bg-white border border-[#DDE2EC] flex flex-col overflow-hidden shadow-sm">
               <div className="p-4 border-b border-[#DDE2EC] bg-[#F8FAFC]">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-[13px] font-bold text-[#0F172A] tracking-wider uppercase">
-                    System Roles
-                  </h3>
+                  <div>
+                    <h3 className="text-[13px] font-bold text-[#0F172A] tracking-wider uppercase">
+                      Access Roles ({filteredRoles.length})
+                    </h3>
+                    <p className="text-[11px] text-[#64748B]">Central RBAC profiles</p>
+                  </div>
                   <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        void refreshAccessGovernance().catch((error) => {
+                          void loadRoleCatalogueFallback()
+                            .then(() => setRoleNotice("Role templates reloaded."))
+                            .catch(() =>
+                              setRoleNotice(
+                                error instanceof Error ? error.message : "Unable to reload roles.",
+                              ),
+                            )
+                        })
+                      }}
+                      title="Reload role templates and staff assignments"
+                      className="text-[11px] bg-white hover:bg-gray-50 text-[#334155] px-2 py-1 border border-[#CBD5E1] font-semibold cursor-pointer"
+                    >
+                      Reload
+                    </button>
                     <button
                       onClick={() => setShowCloneRoleModal(true)}
                       title="Clone selected role"
@@ -1871,12 +2570,17 @@ export default function Administration() {
                   </div>
                 </div>
 
-                <input
-                  value={roleSearch}
-                  onChange={(e) => setRoleSearch(e.target.value)}
-                  placeholder="Search roles..."
-                  className="w-full bg-white border border-[#DDE2EC] px-3 py-2 text-[12.5px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#1B4FD8]"
-                />
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-[#94A3B8] text-[12px]">
+                    🔍
+                  </span>
+                  <input
+                    value={roleSearch}
+                    onChange={(e) => setRoleSearch(e.target.value)}
+                    placeholder="Search roles..."
+                    className="w-full bg-white border border-[#DDE2EC] pl-8 pr-3 py-1.5 text-[12.5px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#1B4FD8]"
+                  />
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-2 divide-y divide-[#F1F5F9]">
@@ -1888,11 +2592,19 @@ export default function Administration() {
                   const isProtected =
                     role.id === "ROLE_SUPERADMIN" || role.id === "ROLE_ADMIN"
 
+                  const roleAbbr = role.name
+                    .split(" ")
+                    .filter(Boolean)
+                    .map((w) => w[0])
+                    .join("")
+                    .slice(0, 3)
+                    .toUpperCase()
+
                   return (
                     <div
                       key={role.id}
                       onClick={() => setSelectedRoleId(role.id)}
-                      className={`p-3 cursor-pointer transition-all flex items-start justify-between ${
+                      className={`p-3 cursor-pointer transition-all flex items-start justify-between group ${
                         isSelected
                           ? "bg-[#EFF6FF] border-l-4 border-[#1B4FD8] text-[#1B4FD8]"
                           : "hover:bg-gray-50 text-[#334155]"
@@ -1901,22 +2613,70 @@ export default function Administration() {
                       <div className="min-w-0 flex-1 pr-2">
                         <div className="flex items-center gap-2 mb-1">
                           <span
+                            className={`w-6 h-6 rounded flex items-center justify-center font-bold text-[10px] shrink-0 ${
+                              isProtected
+                                ? "bg-purple-100 text-purple-700 border border-purple-200"
+                                : isSelected
+                                  ? "bg-[#1B4FD8] text-white"
+                                  : "bg-slate-100 text-slate-700 border border-slate-200"
+                            }`}
+                          >
+                            {roleAbbr}
+                          </span>
+                          <span
                             className={`text-[13px] font-bold truncate ${
                               isSelected ? "text-[#1B4FD8]" : "text-[#0F172A]"
                             }`}
                           >
                             {role.name}
                           </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap ml-8">
                           {isProtected && (
-                            <span className="text-[9.5px] bg-gray-100 text-gray-600 px-1.5 py-0.2 border border-gray-200 font-mono">
+                            <span className="text-[9.5px] bg-purple-50 text-purple-700 px-1.5 py-0.2 border border-purple-200 font-mono font-bold">
                               SYSTEM
                             </span>
                           )}
+                          {role.isSystem && !isProtected && (
+                            <span className="text-[9.5px] bg-blue-50 text-blue-700 px-1.5 py-0.2 border border-blue-200 font-mono">
+                              TEMPLATE
+                            </span>
+                          )}
+                          {role.status === "Inactive" && (
+                            <span className="text-[9.5px] bg-amber-50 text-amber-700 px-1.5 py-0.2 border border-amber-200 font-mono">
+                              INACTIVE
+                            </span>
+                          )}
+                          <span className="text-[11.5px] text-[#64748B] font-mono">
+                            {assignedCount} staff
+                          </span>
                         </div>
-                        <div className="text-[11.5px] text-[#64748B] flex items-center gap-3 font-mono">
-                          <span>{role.id}</span>
-                          <span>• {assignedCount} users</span>
-                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setCloneSourceRoleId(role.id)
+                            setShowCloneRoleModal(true)
+                          }}
+                          title="Clone this role"
+                          className="text-[11px] text-slate-400 hover:text-blue-600 p-1"
+                        >
+                          📋
+                        </button>
+                        {!isProtected && !role.isSystem && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteRole(role)
+                            }}
+                            title="Delete custom role"
+                            className="text-[11px] text-slate-400 hover:text-red-600 p-1"
+                          >
+                            🗑️
+                          </button>
+                        )}
                       </div>
                     </div>
                   )
@@ -1928,165 +2688,440 @@ export default function Administration() {
             <div className="flex-1 bg-white border border-[#DDE2EC] flex flex-col overflow-hidden shadow-sm">
               {selectedRole ? (
                 <>
+                  {/* Top Role Header */}
                   <div className="p-4 border-b border-[#DDE2EC] bg-[#F8FAFC] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-3">
-                        <h2 className="text-base font-bold text-[#0F172A]">
-                          {selectedRole.name}
+                        <h2 className="text-lg font-bold text-[#0F172A] flex items-center gap-2">
+                          <span>🛡️</span>
+                          <span>{selectedRole.name}</span>
                         </h2>
                         <span className="text-[11px] font-mono text-[#64748B] bg-white px-2 py-0.5 border border-[#DDE2EC]">
                           {selectedRole.id}
                         </span>
+                        <span
+                          className={`text-[10.5px] font-bold px-2 py-0.5 border rounded-xs ${
+                            (selectedRole.status || "Active") === "Active"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
+                          }`}
+                        >
+                          {selectedRole.status || "Active"}
+                        </span>
                       </div>
                       <p className="text-[12px] text-[#64748B] mt-0.5">
-                        Configure module access rules and granular CRUD
-                        permissions for this role.
+                        {selectedRoleIsProtected
+                          ? "This protected System Administrator role maintains unrestricted access across all hospital suites."
+                          : "Configure granular action-level permissions (View, Create, Edit, Delete, Approve, Export) for this role."}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5 flex-wrap">
                       {roleNotice && (
-                        <span className="text-[12px] text-emerald-700 font-semibold bg-emerald-50 px-2.5 py-1 border border-emerald-200">
+                        <span className="text-[12px] text-emerald-700 font-semibold bg-emerald-50 px-2.5 py-1 border border-emerald-200 shadow-2xs">
                           ✓ {roleNotice}
                         </span>
                       )}
 
+                      {!selectedRoleIsProtected && (
+                        <button
+                          onClick={handleToggleRoleStatus}
+                          className="border border-[#CBD5E1] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#334155] hover:bg-slate-50 cursor-pointer"
+                        >
+                          {selectedRole.status === "Inactive" ? "Activate Role" : "Deactivate Role"}
+                        </button>
+                      )}
+
                       <button
                         onClick={handleSaveRoleModules}
-                        disabled={saveStatus === "saving"}
-                        className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white font-semibold text-[13px] px-4 py-1.5 transition-colors border border-blue-600 shadow-sm cursor-pointer disabled:opacity-50"
+                        disabled={saveStatus === "saving" || selectedRoleIsProtected}
+                        className="bg-[#1B4FD8] hover:bg-[#1740B4] text-white font-semibold text-[13px] px-4 py-1.5 transition-colors border border-blue-600 shadow-sm cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                       >
-                        {saveStatus === "saving"
-                          ? "Saving..."
-                          : saveStatus === "saved"
-                            ? "✓ Saved!"
-                            : "Save Permission Matrix"}
+                        <span>💾</span>
+                        <span>
+                          {saveStatus === "saving"
+                            ? "Saving..."
+                            : saveStatus === "saved"
+                              ? "✓ Saved Matrix!"
+                              : "Save Permission Matrix"}
+                        </span>
                       </button>
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {MODULE_CATEGORIES.map((cat) => (
-                      <div
-                        key={cat.id}
-                        className="border border-[#E2E8F0] p-4 bg-[#FAFCFF]"
+                  {/* Preset Action Toolbar */}
+                  <div className="px-5 py-2.5 bg-[#EFF6FF] border-b border-blue-200 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[11px] font-bold text-blue-900 uppercase tracking-wide">
+                        Quick Presets:
+                      </span>
+                      <button
+                        onClick={applyPresetFullAccess}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-blue-700 hover:bg-blue-50 px-2.5 py-1 border border-blue-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
                       >
-                        <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] mb-4">
-                          <div>
-                            <h4 className="text-[14px] font-bold text-[#0F172A]">
-                              {cat.title}
-                            </h4>
-                            <p className="text-[11.5px] text-[#64748B]">
-                              {cat.description}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() =>
-                                selectAllCategoryModules(cat.modules)
-                              }
-                              className="text-[11px] text-[#1B4FD8] hover:underline font-semibold"
-                            >
-                              Select All
-                            </button>
-                            <span className="text-gray-300">|</span>
-                            <button
-                              onClick={() => clearCategoryModules(cat.modules)}
-                              className="text-[11px] text-[#64748B] hover:underline"
-                            >
-                              Clear All
-                            </button>
-                          </div>
-                        </div>
+                        ⚡ Full Access
+                      </button>
+                      <button
+                        onClick={applyPresetClinical}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-blue-700 hover:bg-blue-50 px-2.5 py-1 border border-blue-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
+                      >
+                        🩺 Clinical Standard
+                      </button>
+                      <button
+                        onClick={applyPresetDiagnostics}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-blue-700 hover:bg-blue-50 px-2.5 py-1 border border-blue-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
+                      >
+                        🧪 Diagnostics Suite
+                      </button>
+                      <button
+                        onClick={applyPresetFinance}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-blue-700 hover:bg-blue-50 px-2.5 py-1 border border-blue-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
+                      >
+                        💳 Billing & Finance
+                      </button>
+                      <button
+                        onClick={applyPresetReadOnly}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-slate-700 hover:bg-slate-50 px-2.5 py-1 border border-slate-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
+                      >
+                        👁️ Read Only All
+                      </button>
+                      <button
+                        onClick={applyPresetRevokeAll}
+                        disabled={selectedRoleIsProtected}
+                        className="text-[11px] bg-white text-red-700 hover:bg-red-50 px-2.5 py-1 border border-red-300 font-semibold rounded-xs cursor-pointer shadow-2xs disabled:opacity-50"
+                      >
+                        🚫 Revoke All
+                      </button>
+                    </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                          {cat.modules.map((modKey) => {
-                            const isModuleEnabled =
-                              selectedRole.allowedModules.includes(modKey) ||
-                              selectedRole.allowedModules.includes("*")
-                            const grantedActions = getGrantedActionsForModule(
-                              selectedRole.allowedModules,
-                              modKey,
-                            )
-                            const isExpanded = expandedGranularModule === modKey
+                    {/* View Switcher & Module Search */}
+                    <div className="flex items-center gap-3">
+                      <div className="relative w-48">
+                        <input
+                          value={moduleSearch}
+                          onChange={(e) => setModuleSearch(e.target.value)}
+                          placeholder="Filter modules..."
+                          className="w-full bg-white border border-blue-300 px-2.5 py-1 text-[11.5px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#1B4FD8]"
+                        />
+                      </div>
 
+                      <div className="inline-flex border border-blue-300 rounded-xs bg-white p-0.5 shadow-2xs">
+                        <button
+                          onClick={() => setMatrixViewMode("grid")}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-xs cursor-pointer transition-colors ${
+                            matrixViewMode === "grid"
+                              ? "bg-[#1B4FD8] text-white"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          🔲 Card Grid
+                        </button>
+                        <button
+                          onClick={() => setMatrixViewMode("table")}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-xs cursor-pointer transition-colors ${
+                            matrixViewMode === "table"
+                              ? "bg-[#1B4FD8] text-white"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          📑 Spreadsheet Matrix
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Matrix Content Area */}
+                  <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                    {/* View Mode 1: SPREADSHEET MATRIX TABLE */}
+                    {matrixViewMode === "table" ? (
+                      <div className="border border-[#CBD5E1] bg-white overflow-x-auto shadow-2xs">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="bg-[#0F172A] text-white text-[11px] uppercase font-mono tracking-wider">
+                              <th className="px-4 py-3">Hospital Module / Service</th>
+                              <th className="px-3 py-3 text-center">Master Access</th>
+                              {ACTIONS_LIST.map((act) => (
+                                <th key={act.key} className="px-3 py-3 text-center">
+                                  <span className="mr-1">{act.icon}</span>
+                                  <span>{act.label}</span>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#E2E8F0] text-[12.5px]">
+                            {MODULE_CATEGORIES.map((cat) => {
+                              const matchingModules = cat.modules.filter((m) => {
+                                if (!moduleSearch) return true
+                                const meta = MODULE_METADATA[m]
+                                const term = moduleSearch.toLowerCase()
+                                return (
+                                  m.toLowerCase().includes(term) ||
+                                  meta?.name.toLowerCase().includes(term) ||
+                                  cat.title.toLowerCase().includes(term)
+                                )
+                              })
+
+                              if (matchingModules.length === 0) return null
+
+                              return (
+                                <React.Fragment key={cat.id}>
+                                  {/* Category Header Row */}
+                                  <tr className="bg-[#F1F5F9] font-bold text-[#0F172A] border-y border-[#CBD5E1]">
+                                    <td colSpan={8} className="px-4 py-2 text-[12px] bg-slate-100">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[#1B4FD8]">●</span>
+                                          <span>{cat.title}</span>
+                                          <span className="text-[11px] font-normal text-slate-500">
+                                            ({cat.description})
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            onClick={() => selectAllCategoryModules(cat.modules)}
+                                            disabled={selectedRoleIsProtected}
+                                            className="text-[10.5px] text-[#1B4FD8] hover:underline cursor-pointer"
+                                          >
+                                            Select Category
+                                          </button>
+                                          <span className="text-slate-300">|</span>
+                                          <button
+                                            onClick={() => clearCategoryModules(cat.modules)}
+                                            disabled={selectedRoleIsProtected}
+                                            className="text-[10.5px] text-slate-500 hover:underline cursor-pointer"
+                                          >
+                                            Clear Category
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+
+                                  {/* Module Rows */}
+                                  {matchingModules.map((modKey) => {
+                                    const meta = MODULE_METADATA[modKey]
+                                    const isFullMaster = hasFullModuleAccess(
+                                      selectedRole.allowedModules,
+                                      modKey,
+                                    )
+                                    const hasAny = hasSavedModuleAccess(
+                                      selectedRole.allowedModules,
+                                      modKey,
+                                    )
+
+                                    return (
+                                      <tr
+                                        key={modKey}
+                                        className={`hover:bg-[#F8FAFC] transition-colors ${
+                                          isFullMaster ? "bg-blue-50/40" : hasAny ? "bg-blue-50/15" : ""
+                                        }`}
+                                      >
+                                        <td className="px-4 py-3 font-semibold text-[#0F172A]">
+                                          <div className="flex items-center gap-2.5">
+                                            <span className="text-base">{meta?.icon || "📦"}</span>
+                                            <div>
+                                              <div className="font-bold text-[#0F172A] flex items-center gap-2">
+                                                <span>{meta?.name || modKey}</span>
+                                                {hasAny && !isFullMaster && (
+                                                  <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                                    Customized
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="text-[11px] text-slate-500 font-normal">
+                                                {meta?.description || modKey}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </td>
+
+                                        {/* Master Access Checkbox */}
+                                        <td className="px-3 py-3 text-center">
+                                          <input
+                                            type="checkbox"
+                                            checked={isFullMaster}
+                                            disabled={selectedRoleIsProtected}
+                                            onChange={() => toggleModuleForSelectedRole(modKey)}
+                                            className="w-4 h-4 text-[#1B4FD8] rounded border-gray-300 focus:ring-[#1B4FD8] cursor-pointer"
+                                            title={isFullMaster ? "Revoke full module access" : "Grant full module access"}
+                                          />
+                                        </td>
+
+                                        {/* 6 Action Checkboxes */}
+                                        {ACTIONS_LIST.map((act) => {
+                                          const granted = isActionGranted(
+                                            selectedRole.allowedModules,
+                                            modKey,
+                                            act.key,
+                                          )
+                                          return (
+                                            <td key={act.key} className="px-3 py-3 text-center">
+                                              <input
+                                                type="checkbox"
+                                                checked={granted}
+                                                disabled={selectedRoleIsProtected}
+                                                onChange={() =>
+                                                  toggleActionForSelectedRole(modKey, act.key)
+                                                }
+                                                className="w-4 h-4 text-[#1B4FD8] rounded border-gray-300 focus:ring-[#1B4FD8] cursor-pointer"
+                                              />
+                                            </td>
+                                          )
+                                        })}
+                                      </tr>
+                                    )
+                                  })}
+                                </React.Fragment>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      /* View Mode 2: CARD GRID VIEW */
+                      <div className="space-y-6">
+                        {MODULE_CATEGORIES.map((cat) => {
+                          const matchingModules = cat.modules.filter((m) => {
+                            if (!moduleSearch) return true
+                            const meta = MODULE_METADATA[m]
+                            const term = moduleSearch.toLowerCase()
                             return (
-                              <div
-                                key={modKey}
-                                className={`p-3 border transition-colors ${
-                                  isModuleEnabled
-                                    ? "bg-white border-[#1B4FD8]/40 shadow-2xs"
-                                    : "bg-gray-50/50 border-gray-200"
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <label className="flex items-center gap-2.5 cursor-pointer font-semibold text-[13px] text-[#0F172A]">
-                                    <input
-                                      type="checkbox"
-                                      checked={isModuleEnabled}
-                                      onChange={() =>
-                                        toggleModuleForSelectedRole(modKey)
-                                      }
-                                      className="w-4 h-4 text-[#1B4FD8] rounded border-gray-300 focus:ring-[#1B4FD8]"
-                                    />
-                                    <span className="capitalize">
-                                      {modKey.replace(/_/g, " ")}
-                                    </span>
-                                  </label>
+                              m.toLowerCase().includes(term) ||
+                              meta?.name.toLowerCase().includes(term) ||
+                              cat.title.toLowerCase().includes(term)
+                            )
+                          })
 
+                          if (matchingModules.length === 0) return null
+
+                          return (
+                            <div key={cat.id} className="border border-[#CBD5E1] bg-[#FAFCFF] p-4.5 rounded-xs shadow-2xs">
+                              {/* Category Header */}
+                              <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] mb-4">
+                                <div>
+                                  <h4 className="text-[14px] font-bold text-[#0F172A] flex items-center gap-2">
+                                    <span className="text-[#1B4FD8]">●</span>
+                                    <span>{cat.title}</span>
+                                  </h4>
+                                  <p className="text-[11.5px] text-[#64748B] mt-0.5">
+                                    {cat.description}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
                                   <button
-                                    onClick={() =>
-                                      setExpandedGranularModule(
-                                        isExpanded ? null : modKey,
-                                      )
-                                    }
-                                    className="text-[11px] text-[#64748B] hover:text-[#1B4FD8] px-1.5 py-0.5 border border-gray-200 bg-white"
+                                    onClick={() => selectAllCategoryModules(cat.modules)}
+                                    disabled={selectedRoleIsProtected}
+                                    className="text-[11.5px] text-[#1B4FD8] hover:underline font-semibold cursor-pointer"
                                   >
-                                    {isExpanded ? "▲ Hide CRUD" : "▼ Granular"}
+                                    Select All
+                                  </button>
+                                  <span className="text-gray-300">|</span>
+                                  <button
+                                    onClick={() => clearCategoryModules(cat.modules)}
+                                    disabled={selectedRoleIsProtected}
+                                    className="text-[11.5px] text-[#64748B] hover:underline cursor-pointer"
+                                  >
+                                    Clear All
                                   </button>
                                 </div>
-
-                                {isExpanded && (
-                                  <div className="mt-3 pt-2.5 border-t border-slate-200 grid grid-cols-2 gap-2 bg-slate-50/80 p-2.5 rounded-xs">
-                                    {ACTIONS_LIST.map((act) => {
-                                      const hasAction = grantedActions.includes(
-                                        act.key,
-                                      )
-                                      return (
-                                        <button
-                                          key={act.key}
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            toggleActionForSelectedRole(
-                                              modKey,
-                                              act.key,
-                                            )
-                                          }}
-                                          className={`px-2.5 py-1.5 flex items-center justify-between text-[11.5px] font-bold border transition-all cursor-pointer rounded-xs shadow-2xs ${
-                                            hasAction
-                                              ? "bg-[#1B4FD8] text-white border-blue-700 shadow-xs"
-                                              : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100 hover:text-slate-900"
-                                          }`}
-                                        >
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="text-[12px]">{act.icon}</span>
-                                            <span>{act.label}</span>
-                                          </div>
-                                          <span className={`text-[10px] px-1 py-0.2 rounded font-mono ${hasAction ? "bg-blue-700 text-white" : "bg-slate-100 text-slate-400"}`}>
-                                            {hasAction ? "ON" : "OFF"}
-                                          </span>
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                )}
                               </div>
-                            )
-                          })}
-                        </div>
+
+                              {/* Module Cards Grid */}
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                                {matchingModules.map((modKey) => {
+                                  const meta = MODULE_METADATA[modKey]
+                                  const isModuleEnabled = hasSavedModuleAccess(
+                                    selectedRole.allowedModules,
+                                    modKey,
+                                  )
+                                  const isFullMaster = hasFullModuleAccess(
+                                    selectedRole.allowedModules,
+                                    modKey,
+                                  )
+
+                                  return (
+                                    <div
+                                      key={modKey}
+                                      className={`p-3.5 border transition-all rounded-xs shadow-2xs ${
+                                        isFullMaster
+                                          ? "bg-white border-[#1B4FD8] ring-1 ring-[#1B4FD8]/30 shadow-xs"
+                                          : isModuleEnabled
+                                            ? "bg-blue-50/20 border-blue-300"
+                                            : "bg-white/80 border-slate-200"
+                                      }`}
+                                    >
+                                      {/* Module Title & Master Toggle */}
+                                      <div className="flex items-start justify-between gap-2 mb-2">
+                                        <label className="flex items-start gap-2.5 cursor-pointer font-bold text-[13px] text-[#0F172A]">
+                                          <input
+                                            type="checkbox"
+                                            checked={isFullMaster}
+                                            disabled={selectedRoleIsProtected}
+                                            onChange={() => toggleModuleForSelectedRole(modKey)}
+                                            className="w-4 h-4 mt-0.5 text-[#1B4FD8] rounded border-gray-300 focus:ring-[#1B4FD8] cursor-pointer"
+                                            title={isFullMaster ? "Revoke full module access" : "Grant full module access"}
+                                          />
+                                          <div>
+                                            <div className="flex items-center gap-1.5">
+                                              <span>{meta?.icon || "📦"}</span>
+                                              <span>{meta?.name || modKey}</span>
+                                              {isModuleEnabled && !isFullMaster && (
+                                                <span className="text-[10px] font-semibold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                                  Customized
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="text-[11px] text-[#64748B] font-normal leading-4 mt-0.5">
+                                              {meta?.description || modKey}
+                                            </div>
+                                          </div>
+                                        </label>
+                                      </div>
+
+                                      {/* Granular Action Pills */}
+                                      <div className="mt-3 pt-2.5 border-t border-slate-100 grid grid-cols-3 gap-1.5">
+                                        {ACTIONS_LIST.map((act) => {
+                                          const hasAction = isActionGranted(
+                                            selectedRole.allowedModules,
+                                            modKey,
+                                            act.key,
+                                          )
+                                          return (
+                                            <button
+                                              key={act.key}
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation()
+                                                toggleActionForSelectedRole(modKey, act.key)
+                                              }}
+                                              disabled={selectedRoleIsProtected}
+                                              title={`${act.description} for ${meta?.name || modKey}`}
+                                              className={`px-2 py-1 flex items-center justify-center gap-1 text-[11px] font-semibold border transition-all cursor-pointer rounded-xs ${
+                                                hasAction
+                                                  ? "bg-[#1B4FD8] text-white border-blue-700 shadow-2xs font-bold"
+                                                  : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                                              }`}
+                                            >
+                                              <span>{act.icon}</span>
+                                              <span>{act.label}</span>
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </>
               ) : (
@@ -2421,6 +3456,37 @@ export default function Administration() {
 
       {/* ── MODALS ─────────────────────────────────────────────────────── */}
 
+      {showSpecialtyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/50 p-4">
+          <div className="w-full max-w-md border border-[#DDE2EC] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#DDE2EC] bg-[#F8FAFC] px-6 py-4">
+              <div>
+                <h3 className="text-base font-bold text-[#0F172A]">Add Specialty</h3>
+                <p className="mt-0.5 text-[11.5px] text-[#64748B]">Doctors can then be assigned to this specialty.</p>
+              </div>
+              <button onClick={() => setShowSpecialtyModal(false)} className="text-[#64748B] hover:text-black">×</button>
+            </div>
+            <form onSubmit={handleCreateSpecialty} className="space-y-4 p-6">
+              <div>
+                <label className="mb-1.5 block text-[12px] font-bold text-[#334155]">Specialty Name</label>
+                <input
+                  required
+                  autoFocus
+                  value={newSpecialtyName}
+                  onChange={(event) => setNewSpecialtyName(event.target.value)}
+                  placeholder="e.g. Nephrology"
+                  className="w-full border border-[#DDE2EC] bg-white px-3.5 py-2 text-[13px] text-[#0F172A] focus:border-[#1B4FD8] focus:outline-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+                <button type="button" onClick={() => setShowSpecialtyModal(false)} className="border border-[#CBD5E1] bg-white px-4 py-2 text-[13px] font-semibold text-[#334155]">Cancel</button>
+                <button type="submit" className="border border-blue-600 bg-[#1B4FD8] px-5 py-2 text-[13px] font-semibold text-white hover:bg-[#1740B4]">Add Specialty</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* 1. Add / Edit Doctor Modal */}
       {showDoctorModal && editingDoctor && (
         <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4">
@@ -2478,7 +3544,7 @@ export default function Administration() {
                   <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
                     Specialty / Department
                   </label>
-                  <input
+                  <select
                     required
                     value={editingDoctor.specialty || ""}
                     onChange={(e) =>
@@ -2487,9 +3553,18 @@ export default function Administration() {
                         specialty: e.target.value,
                       })
                     }
-                    placeholder="e.g. Cardiology"
                     className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8]"
-                  />
+                  >
+                    <option value="">Select Specialty</option>
+                    {specialties.map((specialty) => (
+                      <option key={specialty.id} value={specialty.specialty_name}>
+                        {specialty.specialty_name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[11px] text-[#64748B]">
+                    Add a new option from <span className="font-semibold">+ Specialty</span> before creating the doctor.
+                  </p>
                 </div>
               </div>
 
@@ -2684,14 +3759,14 @@ export default function Administration() {
                 <input
                   required
                   type="text"
-                  value={credentialsForm.password || "password123"}
+                  value={credentialsForm.password || ""}
                   onChange={(e) =>
                     setCredentialsForm({
                       ...credentialsForm,
                       password: e.target.value,
                     })
                   }
-                  placeholder="password123"
+                  placeholder="Set a strong initial password"
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
@@ -2711,12 +3786,15 @@ export default function Administration() {
                     }
                     className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-semibold cursor-pointer"
                   >
-                    {roles.map((r) => (
+                    {assignableRoles.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1.5 text-[11px] leading-4 text-slate-500">
+                    This staff member will receive the department access saved for the selected role.
+                  </p>
                 </div>
 
                 <div>
@@ -2908,24 +3986,29 @@ export default function Administration() {
       {/* 5. Create / Edit User Account Modal */}
       {showUserModal && editingUser && (
         <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-[#DDE2EC] shadow-xl w-full max-w-lg overflow-hidden">
-            <div className="px-6 py-4 bg-[#F8FAFC] border-b border-[#DDE2EC] flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#0F172A]">
-                {users.some((u) => u.id === editingUser.id)
-                  ? "Edit Staff User Account"
-                  : "Create New Staff Account"}
+          <div className="bg-white border border-[#DDE2EC] shadow-xl w-full max-w-xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 bg-[#F8FAFC] border-b border-[#DDE2EC] flex items-center justify-between shrink-0">
+              <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
+                <span>👤</span>
+                <span>
+                  {users.some((u) => u.id === editingUser.id)
+                    ? "Edit Staff User Account"
+                    : "Create New Staff Account"}
+                </span>
               </h3>
               <button
                 onClick={() => setShowUserModal(false)}
-                className="text-[#64748B] hover:text-black"
+                className="text-[#64748B] hover:text-black font-bold"
               >
                 ✕
               </button>
             </div>
-            <form onSubmit={handleSaveUser} className="p-6 space-y-4">
+
+            <form onSubmit={handleSaveUser} className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Full Name */}
               <div>
                 <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  Full Name
+                  Full Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   required
@@ -2938,10 +4021,11 @@ export default function Administration() {
                 />
               </div>
 
+              {/* Username & Staff ID */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                    Username ID
+                    Username ID <span className="text-red-500">*</span>
                   </label>
                   <input
                     required
@@ -2953,14 +4037,30 @@ export default function Administration() {
                       })
                     }
                     placeholder="e.g. rmiller"
-                    className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8]"
+                    className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                    Staff Employee ID
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[12px] font-bold text-[#334155]">
+                      Staff Employee ID <span className="text-red-500">*</span>
+                    </label>
+                    {!editingUser.staffId && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingUser({
+                            ...editingUser,
+                            staffId: `STF-${Math.floor(100 + Math.random() * 900)}`,
+                          })
+                        }
+                        className="text-[11px] text-[#1B4FD8] hover:underline"
+                      >
+                        Auto ID
+                      </button>
+                    )}
+                  </div>
                   <input
                     required
                     value={editingUser.staffId}
@@ -2976,10 +4076,11 @@ export default function Administration() {
                 </div>
               </div>
 
+              {/* Role & Status */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                    Assigned System Role
+                    Assigned System Role <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={editingUser.roleId}
@@ -2988,7 +4089,7 @@ export default function Administration() {
                     }
                     className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-semibold cursor-pointer"
                   >
-                    {roles.map((r) => (
+                    {assignableRoles.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
                       </option>
@@ -3010,28 +4111,288 @@ export default function Administration() {
                     }
                     className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-semibold cursor-pointer"
                   >
-                    <option value="Active">Active</option>
-                    <option value="Inactive">Inactive</option>
+                    <option value="Active">Active (Can Login)</option>
+                    <option value="Inactive">Inactive / Suspended</option>
                   </select>
                 </div>
               </div>
 
+              {/* Password with Generator Button */}
               <div>
-                <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  Initial Account Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[12px] font-bold text-[#334155]">
+                    Account Login Password <span className="text-red-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingUser({
+                        ...editingUser,
+                        password: `Hosp@${Math.floor(1000 + Math.random() * 9000)}`,
+                      })
+                    }
+                    className="text-[11px] font-bold text-[#1B4FD8] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>🎲</span>
+                    <span>Generate Strong Password</span>
+                  </button>
+                </div>
                 <input
                   required
                   type="text"
-                  value={editingUser.password || "password123"}
+                  value={editingUser.password || ""}
                   onChange={(e) =>
                     setEditingUser({ ...editingUser, password: e.target.value })
                   }
+                  placeholder="Enter secure initial password..."
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
+              {/* Doctor-Specific Professional Details (Shown if Doctor role selected) */}
+              {(editingUser.roleId === "ROLE_DOCTOR" ||
+                editingUser.roleId.toLowerCase().includes("doctor") ||
+                editingUser.roleId.toLowerCase().includes("surgeon")) && (
+                <div className="p-3.5 bg-blue-50/60 border border-blue-200 rounded-xs space-y-3">
+                  <div className="text-[12px] font-bold text-blue-900 flex items-center gap-1.5">
+                    <span>🩺</span>
+                    <span>Clinical Profile & Doctor Roster Settings</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#334155] mb-1">
+                        Medical Specialty
+                      </label>
+                      <select
+                        value={userDoctorDetails.specialty}
+                        onChange={(e) =>
+                          setUserDoctorDetails({
+                            ...userDoctorDetails,
+                            specialty: e.target.value,
+                          })
+                        }
+                        className="w-full bg-white border border-blue-200 px-3 py-1.5 text-[12px] text-[#0F172A] font-semibold"
+                      >
+                        <option value="General Medicine">General Medicine</option>
+                        <option value="Cardiology">Cardiology</option>
+                        <option value="Orthopedics">Orthopedics</option>
+                        <option value="Pediatrics">Pediatrics</option>
+                        <option value="Obstetrics & Gynecology">Obstetrics & Gynecology</option>
+                        <option value="Neurology">Neurology</option>
+                        <option value="General Surgery">General Surgery</option>
+                        <option value="Emergency Medicine">Emergency Medicine</option>
+                        <option value="Pathology">Pathology</option>
+                        <option value="Radiology">Radiology</option>
+                        <option value="Dermatology">Dermatology</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#334155] mb-1">
+                        Qualification
+                      </label>
+                      <input
+                        value={userDoctorDetails.qualification}
+                        onChange={(e) =>
+                          setUserDoctorDetails({
+                            ...userDoctorDetails,
+                            qualification: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. MBBS, MD, DM"
+                        className="w-full bg-white border border-blue-200 px-3 py-1.5 text-[12px] text-[#0F172A]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#334155] mb-1">
+                        OPD Cabin / Room No
+                      </label>
+                      <input
+                        value={userDoctorDetails.room}
+                        onChange={(e) =>
+                          setUserDoctorDetails({
+                            ...userDoctorDetails,
+                            room: e.target.value,
+                          })
+                        }
+                        placeholder="e.g. Room 102"
+                        className="w-full bg-white border border-blue-200 px-3 py-1.5 text-[12px] text-[#0F172A]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-[#334155] mb-1">
+                        Consultation Fee (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="50"
+                        value={userDoctorDetails.consultationFee}
+                        onChange={(e) =>
+                          setUserDoctorDetails({
+                            ...userDoctorDetails,
+                            consultationFee: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        className="w-full bg-white border border-blue-200 px-3 py-1.5 text-[12px] text-[#0F172A]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Individual User Module Access (Custom Department Permissions) */}
+              <div className="p-4 bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🛡️</span>
+                    <div>
+                      <div className="text-[13px] font-bold text-[#0F172A]">
+                        Individual Department & Module Permissions
+                      </div>
+                      <div className="text-[11px] text-[#64748B]">
+                        Customize specific department access for this user or inherit from role
+                      </div>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 border border-slate-300 rounded shadow-xs">
+                    <input
+                      type="checkbox"
+                      checked={Array.isArray(editingUser.customModules) && editingUser.customModules.length > 0}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const baseRole = roles.find((r) => r.id === editingUser.roleId)
+                          const initialModules = baseRole?.allowedModules?.length
+                            ? [...baseRole.allowedModules]
+                            : ["dashboard"]
+                          setEditingUser({ ...editingUser, customModules: initialModules })
+                        } else {
+                          setEditingUser({ ...editingUser, customModules: undefined })
+                        }
+                      }}
+                      className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                    />
+                    <span className="text-[12px] font-bold text-[#0F172A]">
+                      Enable Custom Overrides
+                    </span>
+                  </label>
+                </div>
+
+                {/* If custom overrides are OFF: show role default info */}
+                {(!editingUser.customModules || editingUser.customModules.length === 0) ? (
+                  <div className="bg-blue-50/60 border border-blue-200 p-3 text-[12px] text-blue-900 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-blue-600 font-bold">ℹ️</span>
+                      <span>
+                        Inheriting <strong>{roles.find((r) => r.id === editingUser.roleId)?.name || "Assigned Role"}</strong> defaults:
+                        {" "}<span className="font-semibold">{roles.find((r) => r.id === editingUser.roleId)?.allowedModules.length || 0} module(s) granted</span>.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const baseRole = roles.find((r) => r.id === editingUser.roleId)
+                        setEditingUser({
+                          ...editingUser,
+                          customModules: baseRole?.allowedModules ? [...baseRole.allowedModules] : ["dashboard"],
+                        })
+                      }}
+                      className="text-[11.5px] font-bold text-[#1B4FD8] hover:underline cursor-pointer"
+                    >
+                      Customize Permissions →
+                    </button>
+                  </div>
+                ) : (
+                  /* If custom overrides are ON: show quick actions and module checkboxes */
+                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="font-bold text-[#334155]">
+                        Granted: <span className="text-[#1B4FD8] font-bold">{editingUser.customModules.length}</span> department(s)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allKeys = ALL_ADMIN_ASSIGNABLE_MODULES.map((m) => m.key)
+                            setEditingUser({ ...editingUser, customModules: allKeys })
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-slate-100 text-[#0F172A] border border-slate-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const baseRole = roles.find((r) => r.id === editingUser.roleId)
+                            setEditingUser({
+                              ...editingUser,
+                              customModules: baseRole?.allowedModules ? [...baseRole.allowedModules] : ["dashboard"],
+                            })
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-slate-100 text-[#1B4FD8] border border-slate-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          Role Defaults
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingUser({ ...editingUser, customModules: [] })
+                          }}
+                          className="px-2 py-1 bg-white hover:bg-slate-100 text-red-600 border border-slate-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Categorized module checkboxes */}
+                    <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto p-2 bg-white border border-slate-200">
+                      {ALL_ADMIN_ASSIGNABLE_MODULES.map((mod) => {
+                        const isChecked = editingUser.customModules?.includes(mod.key)
+                        return (
+                          <label
+                            key={mod.key}
+                            className={`flex items-center gap-2 p-1.5 border rounded cursor-pointer transition-colors ${
+                              isChecked
+                                ? "bg-blue-50/70 border-blue-300 text-blue-950 font-semibold"
+                                : "hover:bg-slate-50 border-slate-200 text-slate-700"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(isChecked)}
+                              onChange={(e) => {
+                                const current = editingUser.customModules || []
+                                if (e.target.checked) {
+                                  setEditingUser({
+                                    ...editingUser,
+                                    customModules: [...current, mod.key],
+                                  })
+                                } else {
+                                  setEditingUser({
+                                    ...editingUser,
+                                    customModules: current.filter((k) => k !== mod.key),
+                                  })
+                                }
+                              }}
+                              className="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer"
+                            />
+                            <span className="text-[14px]">{mod.icon}</span>
+                            <span className="text-[12px] truncate">{mod.label}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-[#E2E8F0]">
                 <button
                   type="button"
                   onClick={() => setShowUserModal(false)}
@@ -3056,12 +4417,13 @@ export default function Administration() {
         <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#DDE2EC] shadow-xl w-full max-w-sm overflow-hidden">
             <div className="px-6 py-4 bg-[#F8FAFC] border-b border-[#DDE2EC] flex items-center justify-between">
-              <h3 className="text-base font-bold text-[#0F172A]">
-                Reset Account Password
+              <h3 className="text-base font-bold text-[#0F172A] flex items-center gap-2">
+                <span>🔑</span>
+                <span>Reset Staff Password</span>
               </h3>
               <button
                 onClick={() => setResetPassUser(null)}
-                className="text-[#64748B] hover:text-black"
+                className="text-[#64748B] hover:text-black font-bold"
               >
                 ✕
               </button>
@@ -3074,17 +4436,42 @@ export default function Administration() {
               </div>
 
               <div>
-                <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  New Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-[12px] font-bold text-[#334155]">
+                    New Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewPassInput(`Hosp@${Math.floor(1000 + Math.random() * 9000)}`)
+                    }
+                    className="text-[11px] font-bold text-[#1B4FD8] hover:underline cursor-pointer"
+                  >
+                    🎲 Generate
+                  </button>
+                </div>
                 <input
                   required
                   type="text"
                   value={newPassInput}
                   onChange={(e) => setNewPassInput(e.target.value)}
+                  placeholder="Enter new password..."
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
+
+              {newPassInput && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(newPassInput)
+                    setUserNotice("Password copied to clipboard!")
+                  }}
+                  className="w-full text-center text-[11.5px] text-blue-700 bg-blue-50 border border-blue-200 py-1 font-semibold rounded-xs cursor-pointer hover:bg-blue-100"
+                >
+                  📋 Copy Password to Clipboard
+                </button>
+              )}
 
               <div className="flex justify-end gap-3 pt-3 border-t border-[#E2E8F0]">
                 <button

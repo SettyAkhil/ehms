@@ -26,7 +26,11 @@ import {
 
 import { Icon, type IconProps } from "./components/icons"
 
-import Login from "./components/Login"
+import Login, {
+  loginUserFromAuthenticated,
+  type AuthenticatedUser,
+  type LoginUserData,
+} from "./components/Login"
 
 import Dashboard from "./components/Dashboard"
 
@@ -43,6 +47,7 @@ import NursingPortal from "./components/nursing/NursingPortal"
 import type { Notice } from "./types"
 
 import { apiFetch } from "./lib/api"
+import { setAppSessionAuthenticated } from "./lib/authState"
 
 import Laboratory from "./components/Laboratory"
 import LaboratoryManagementSuite from "./components/laboratory/LaboratoryManagementSuite"
@@ -146,6 +151,7 @@ import PaymentCollection from "./components/PaymentCollection"
 import RevenueReports from "./components/RevenueReports"
 
 import Administration from "./components/Administration"
+import DepartmentAccessDenied from "./components/DepartmentAccessDenied"
 
 import OpReportsPage from "./components/reports/OpReportsPage"
 
@@ -162,15 +168,13 @@ import { useMediaQuery } from "./hooks/useMediaQuery"
 import PageErrorBoundary from "./components/PageErrorBoundary"
 import HelpModal from "./components/HelpModal"
 
-import { AuditDatabase } from "./services/auditDb"
-
-import { ALL_SYSTEM_MODULES, RoleDatabase } from "./services/roleDb"
-
 import {
   DoctorAccount,
   DoctorPortalDatabase,
   resolveDoctorAccount,
 } from "./services/doctorPortalDb"
+
+import { ALL_SYSTEM_MODULES } from "./services/roleDb"
 
 import { LabOrderDatabase } from "./services/labOrdersDb"
 import { LabInventoryDatabase } from "./services/labInventoryDb"
@@ -181,7 +185,6 @@ import { db } from "./services/db"
 import { getDischargedIcuPatients } from "./components/icu/IcuDischargeModal"
 import { RadiologyWorkflowDb } from "./services/radiologyWorkflowDb"
 import { UniversalRadiologyDb } from "./services/universalRadiologyDb"
-import { freeLocalStorageQuota } from "./utils/storageQuotaManager"
 
 /** Insurance sub-modules and legacy key mappings */
 const insuranceModule = (m: string): string =>
@@ -1165,6 +1168,7 @@ export default function App() {
     "General Reports",
   ])
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>([])
+  const [showAllDepartments, setShowAllDepartments] = useState<boolean>(true)
   const [radiologyStudyId, setRadiologyStudyId] = useState<string | null>(() => {
     try {
       return localStorage.getItem("hospai_active_radiology_study_id")
@@ -1179,10 +1183,6 @@ export default function App() {
   // sidebar counts move without waiting for the next navigation.
 
   const [badgeTick, setBadgeTick] = useState(0)
-
-  useEffect(() => {
-    freeLocalStorageQuota()
-  }, [])
 
   useEffect(
     () => DoctorPortalDatabase.subscribe(() => setBadgeTick((t) => t + 1)),
@@ -1368,115 +1368,73 @@ export default function App() {
     userPermissions.includes("doctor_portal")
 
   // Check route access
-
   useEffect(() => {
-    if (
-      loggedIn &&
-      module !== "dashboard" &&
-      !userPermissions.includes(module)
-    ) {
-      // Check if it matches laboratory or radiology sub-modules
-      if (module.startsWith("lab_") && userPermissions.includes("laboratory")) {
-        return
-      }
-      if (module.startsWith("radiology_") && userPermissions.includes("radiology")) {
-        return
-      }
+    if (!loggedIn) return
+    const isSuperAdmin =
+      userRole === "ROLE_ADMIN" ||
+      userRole === "ROLE_SUPERADMIN" ||
+      userRole === "admin" ||
+      activeStaff?.id === "ADM-001" ||
+      activeStaff?.role === "ROLE_ADMIN" ||
+      userPermissions.includes("*") ||
+      userPermissions.includes("admin")
+    if (isSuperAdmin) return
 
-      // Check if it matches a child module
-      const parentMatch = NAV.find((n) =>
-        n.children?.some((c) => c.key === module),
-      )
+    const hasDirectAccess =
+      userPermissions.includes(module) ||
+      userPermissions.some((p) => p.startsWith(module + ":") || p.startsWith(module + "."))
 
-      if (!parentMatch || !userPermissions.includes(parentMatch.key)) {
-        setModule("dashboard")
-      }
+    if (hasDirectAccess) return
+
+    // Check if it matches laboratory, radiology or pharmacy sub-modules
+    if (module.startsWith("lab_") && (userPermissions.includes("laboratory") || userPermissions.some((p) => p.startsWith("laboratory:")))) {
+      return
     }
-  }, [module, loggedIn, userPermissions])
+    if (module.startsWith("radiology_") && (userPermissions.includes("radiology") || userPermissions.some((p) => p.startsWith("radiology:")))) {
+      return
+    }
+    if (module.startsWith("pharmacy_") && (userPermissions.includes("pharmacy") || userPermissions.some((p) => p.startsWith("pharmacy:")))) {
+      return
+    }
 
-  const handleLogout = () => {
+    // Check if it matches a child module of an allowed parent
+    const parentMatch = NAV.find((n) =>
+      n.children?.some((c) => c.key === module),
+    )
+
+    if (parentMatch && (userPermissions.includes(parentMatch.key) || userPermissions.some((p) => p.startsWith(parentMatch.key + ":")))) {
+      return
+    }
+
+    // Unauthorized route: redirect to first allowed module
+    const fallback =
+      userPermissions.find((p) => p !== "intelligence" && p !== "analytics" && p !== "dashboard") ||
+      (userPermissions.includes("dashboard") ? "dashboard" : userPermissions[0]) ||
+      "dashboard"
+
+    if (fallback && fallback !== module) {
+      setModule(fallback as Module)
+    }
+  }, [module, loggedIn, userPermissions, userRole])
+
+  const handleLogout = async () => {
     try {
-      let curUsername = activeStaff.name
-      try {
-        const curData = localStorage.getItem("hospai_current_user")
-        if (curData) {
-          const u = JSON.parse(curData)
-          if (u && u.user) curUsername = u.user
-        }
-      } catch { }
-
-      try {
-        AuditDatabase.logEvent(
-          "Logout",
-          "Authentication",
-          `User ${activeStaff.name} logged out.`,
-          "Success",
-          activeStaff.id,
-          curUsername,
-        )
-      } catch { }
-
-      try {
-        localStorage.removeItem("hospai_current_user")
-      } catch { }
+      await apiFetch("/api/auth/logout", { method: "POST" })
+    } catch (error) {
+      // Clear the local UI state even if the session has already expired. The
+      // server remains the source of truth and will reject the old cookie.
+      console.warn("Logout request failed", error)
     } finally {
       setRoleMenuOpen(false)
+      setActiveDoctor(null)
+      setAppSessionAuthenticated(false)
       setLoggedIn(false)
     }
   }
 
-  const switchRole = (
-    targetRole: string,
-    targetUsername: string,
-    permissions: string[],
-  ) => {
-    setUserRole(targetRole)
+  const handleLogin = (userData: LoginUserData) => {
 
-    setUserPermissions(permissions)
-
-    setActiveStaff(getRoleProfile(targetRole, targetUsername))
-
-    const doctor =
-      targetRole === "ROLE_DOCTOR"
-        ? resolveDoctorAccount({ username: targetUsername })
-        : null
-
-    setActiveDoctor(doctor)
-
-    setModule(doctor ? "doctor_portal" : "dashboard")
-
-    setRoleMenuOpen(false)
-
-    try {
-      localStorage.setItem(
-        "hospai_current_user",
-        JSON.stringify({ user: targetUsername, staffId: targetRole }),
-      )
-    } catch { }
-  }
-
-  const handleLogin = (userData: {
-    user: string
-    role: string
-    staffId: string
-    staffName?: string
-    staffTitle?: string
-    staffDepartment?: string
-    permissions: string[]
-    doctorId?: string
-  }) => {
-    try {
-      localStorage.setItem(
-        "hospai_current_user",
-        JSON.stringify({
-          user: userData.user,
-          staffId: userData.staffId,
-          role: userData.role,
-          name: userData.staffName,
-        }),
-      )
-    } catch { }
-
+    setAppSessionAuthenticated(true)
     setUserRole(userData.role)
     setUserPermissions(userData.permissions)
 
@@ -1521,24 +1479,47 @@ export default function App() {
 
     let defaultModule: Module = "dashboard"
     const userRoleKey = userData.user.trim().toLowerCase()
-    if (doctor) {
+    const roleIdUpper = (userData.role || "").toUpperCase()
+
+    const isSuperAdminAccount =
+      roleIdUpper === "ROLE_ADMIN" ||
+      roleIdUpper === "ROLE_SUPERADMIN" ||
+      userRoleKey === "admin" ||
+      userRoleKey.includes("admin") ||
+      userData.staffId === "ADM-001" ||
+      userData.permissions.includes("admin") ||
+      userData.permissions.includes("*")
+
+    if (isSuperAdminAccount) {
+      defaultModule = "admin"
+    } else if (doctor || roleIdUpper.includes("DOCTOR") || roleIdUpper.includes("PHYSICIAN")) {
       defaultModule = "doctor_portal"
-    } else if (userData.role === "ROLE_NURSE" || userRoleKey === "nurse") {
+    } else if (roleIdUpper.includes("NURSE") || userRoleKey === "nurse") {
       defaultModule = "nursing"
-    } else if (userData.role === "ROLE_PHARMACY" || userRoleKey === "pharmacy") {
+    } else if (roleIdUpper.includes("PHARMAC") || userRoleKey === "pharmacy") {
       defaultModule = "pharmacy"
-    } else if (userData.role === "ROLE_LAB" || userRoleKey === "lab") {
+    } else if (roleIdUpper.includes("LAB") || userRoleKey === "lab") {
       defaultModule = "laboratory"
-    } else if (userData.role === "ROLE_RECEPTION" || userRoleKey === "reception") {
+    } else if (roleIdUpper.includes("RECEPT") || userRoleKey === "reception" || roleIdUpper.includes("FRONT_DESK")) {
       defaultModule = "op_management"
-    } else if (userData.role === "ROLE_BILLING" || userRoleKey === "billing") {
+    } else if (roleIdUpper.includes("BILLING") || userRoleKey === "billing") {
       defaultModule = "billing"
-    } else if (userData.role === "ROLE_INSURANCE" || userRoleKey === "insurance") {
+    } else if (roleIdUpper.includes("INSURANCE") || userRoleKey === "insurance") {
       defaultModule = "insurance"
-    } else if (userData.role === "ROLE_FINANCE" || userRoleKey === "finance" || userRoleKey === "accountant") {
+    } else if (roleIdUpper.includes("FINANCE") || roleIdUpper.includes("ACCOUNT") || userRoleKey === "finance" || userRoleKey === "accountant") {
       defaultModule = "accounts"
-    } else if (userData.role === "ROLE_HR" || userRoleKey === "hr") {
+    } else if (roleIdUpper.includes("HR") || userRoleKey === "hr") {
       defaultModule = "hrms"
+    } else if (roleIdUpper.includes("RADIOL")) {
+      defaultModule = "radiology"
+    }
+
+    // If the default module is not in the granted permissions, fallback to the first allowed module
+    if (!isSuperAdminAccount && !userData.permissions.includes(defaultModule) && userData.permissions.length > 0) {
+      const firstAllowed = userData.permissions.find((p) => p !== "intelligence" && p !== "analytics") || userData.permissions[0]
+      if (firstAllowed) {
+        defaultModule = firstAllowed as Module
+      }
     }
 
     setLoggedIn(true)
@@ -1553,6 +1534,30 @@ export default function App() {
       }
     } catch { }
   }
+
+  // A browser cache must never be sufficient to restore a signed-in user.
+  // Ask the server to validate the HttpOnly session cookie on every app load.
+  useEffect(() => {
+    let cancelled = false
+    const restoreSession = async () => {
+      try {
+        const response = await apiFetch<{ user: AuthenticatedUser | null }>(
+          "/api/auth/session",
+        )
+        if (!cancelled && response.user) {
+          handleLogin(loginUserFromAuthenticated(response.user))
+        }
+      } catch (error) {
+        // Network and expired-session failures both leave the user at Login;
+        // apiFetch deliberately has no local-auth fallback.
+        console.warn("Unable to restore authenticated session", error)
+      }
+    }
+    void restoreSession()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -2152,18 +2157,16 @@ export default function App() {
                 {roleMenuOpen && (
                   <div className="absolute right-0 top-full mt-1.5 w-64 max-w-[calc(100vw-1rem)] max-h-[calc(100dvh-4rem)] overflow-y-auto bg-white border border-[#CBD5E1] shadow-2xl rounded-none z-50 p-2 text-[12px] space-y-1">
                     <div className="px-2 py-1 text-[10px] font-bold text-[#64748B] uppercase tracking-wider border-b border-[#E2E8F0]">
-                      Switch Active Portal / Role
+                      Assigned access
                     </div>
-                    {RoleDatabase.getRoles().map((r) => {
+                    {[{ id: userRole, name: activeStaff.title || "Assigned role", allowedModules: ALL_SYSTEM_MODULES }].map((r) => {
                       const permissions = r.allowedModules || ALL_SYSTEM_MODULES
 
                       return (
                         <button
                           key={r.id}
                           type="button"
-                          onClick={() =>
-                            switchRole(r.id, "admin", permissions)
-                          }
+                          onClick={() => setRoleMenuOpen(false)}
                           className={`w-full text-left px-2.5 py-1.5 rounded flex items-center justify-between transition-colors cursor-pointer ${userRole === r.id
                             ? "bg-[#EFF6FF] text-[#1B4FD8] font-bold"
                             : "hover:bg-[#F8FAFC] text-[#334155]"
@@ -2182,6 +2185,19 @@ export default function App() {
                       )
                     })}
                     <div className="border-t border-[#E2E8F0] pt-1 mt-1">
+                      {(userRole === "ROLE_ADMIN" || userRole === "admin" || activeStaff?.id === "ADM-001" || userPermissions.includes("admin") || userPermissions.includes("*")) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoleMenuOpen(false)
+                            setModule("admin")
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 text-[11px] text-[#1B4FD8] hover:bg-blue-50 font-bold rounded transition-colors flex items-center gap-2 cursor-pointer mb-1"
+                        >
+                          <span>⚙️</span>
+                          <span>Administration &amp; RBAC</span>
+                        </button>
+                      )}
                       {/* The header's help button is hidden on phones. */}
                       <button
                         type="button"
@@ -2263,29 +2279,64 @@ export default function App() {
               <div
                 className={`flex-1 py-2 ${railCollapsed ? "px-1" : "px-2"}`}
               >
+                {!railCollapsed && (
+                  <div className="flex items-center justify-between px-2.5 py-1 mb-1.5 text-[11px] font-semibold text-slate-400 border-b border-[#1E2D42]/60 select-none">
+                    <span className="uppercase tracking-wider text-[10px] text-slate-400">Departments</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowAllDepartments((prev) => !prev)}
+                      className={`px-2 py-0.5 rounded text-[10.5px] font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                        showAllDepartments
+                          ? "bg-blue-600/30 text-blue-300 border border-blue-500/40 hover:bg-blue-600/40"
+                          : "bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700"
+                      }`}
+                      title={showAllDepartments ? "Showing all hospital departments. Click to show only your assigned workspaces." : "Showing assigned workspaces only. Click to show all hospital departments."}
+                    >
+                      <span>{showAllDepartments ? "All Depts" : "Assigned"}</span>
+                      <span className="text-[10px]">{showAllDepartments ? "👁️" : "🔒"}</span>
+                    </button>
+                  </div>
+                )}
                 {NAV.map((item) => {
                   // Module-based Access Control Filtering
+                  const isSuperAdmin =
+                    userRole === "ROLE_ADMIN" ||
+                    userRole === "ROLE_SUPERADMIN" ||
+                    userRole === "admin" ||
+                    activeStaff?.id === "ADM-001" ||
+                    activeStaff?.role === "ROLE_ADMIN" ||
+                    userPermissions.includes("*") ||
+                    userPermissions.includes("admin")
                   const hasAccess =
+                    isSuperAdmin ||
                     userPermissions.includes(item.key) ||
-                    item.children?.some((c) => userPermissions.includes(c.key))
+                    userPermissions.some((p) => p.startsWith(item.key + ":") || p.startsWith(item.key + ".")) ||
+                    item.children?.some(
+                      (c) =>
+                        userPermissions.includes(c.key) ||
+                        userPermissions.some((p) => p.startsWith(c.key + ":") || p.startsWith(c.key + "."))
+                    )
 
-                  if (!hasAccess) return null
+                  if (!hasAccess && !showAllDepartments) return null
 
                   // Sub-items inherit the parent's access unless the role actually enumerates
                   // sub-module keys -- otherwise a role granted only "pharmacy" would collapse
                   // the whole Pharmacy tree down to its Dashboard entry.
                   const subModulesGranted = item.children?.some(
                     (c) =>
-                      c.key !== item.key && userPermissions.includes(c.key),
+                      c.key !== item.key &&
+                      (userPermissions.includes(c.key) ||
+                        userPermissions.some((p) => p.startsWith(c.key + ":") || p.startsWith(c.key + "."))),
                   )
 
                   const filteredChildren = item.children?.filter((c) => {
+                    if (isSuperAdmin) return true
                     // Strictly isolate HRMS from regular staff
                     if (item.key === "hrms") {
                       return (
                         userPermissions.includes("hrms") ||
-                        userPermissions.includes("ROLE_ADMIN") ||
-                        userPermissions.includes(c.key)
+                        userPermissions.includes(c.key) ||
+                        userPermissions.some((p) => p.startsWith("hrms:") || p.startsWith(c.key + ":"))
                       )
                     }
                     return (
@@ -2294,23 +2345,25 @@ export default function App() {
                         (userPermissions.includes("pharmacy") ||
                           userPermissions.includes("pharmacy_rx") ||
                           userPermissions.includes("pharmacy_dispensing") ||
+                          userPermissions.some((p) => p.startsWith("pharmacy:") || p.startsWith("pharmacy.")) ||
                           userPermissions.includes("ROLE_DOCTOR") ||
                           userPermissions.includes("ROLE_PHARMACIST") ||
                           userPermissions.includes("ROLE_PHARMACY"))) ||
                       (item.key === "reports" &&
-                        userPermissions.includes("reports")) ||
+                        (userPermissions.includes("reports") || userPermissions.some((p) => p.startsWith("reports:")))) ||
                       (item.key === "insurance" &&
-                        userPermissions.includes("insurance")) ||
+                        (userPermissions.includes("insurance") || userPermissions.some((p) => p.startsWith("insurance:")))) ||
                       (item.key === "laboratory" &&
-                        userPermissions.includes("laboratory")) ||
+                        (userPermissions.includes("laboratory") || userPermissions.some((p) => p.startsWith("laboratory:")))) ||
                       (item.key === "radiology" &&
-                        userPermissions.includes("radiology")) ||
+                        (userPermissions.includes("radiology") || userPermissions.some((p) => p.startsWith("radiology:")))) ||
                       (c.key === "pharmacy_write_off" &&
                         (userPermissions.includes("pharmacy") ||
                           userPermissions.includes("pharmacy_ledger") ||
                           userPermissions.includes("pharmacy_expiry"))) ||
                       !subModulesGranted ||
-                      userPermissions.includes(c.key)
+                      userPermissions.includes(c.key) ||
+                      userPermissions.some((p) => p.startsWith(c.key + ":") || p.startsWith(c.key + "."))
                     )
                   })
 
@@ -2346,6 +2399,12 @@ export default function App() {
                             : `nav-item ${isActive ? "active" : ""}`
                         }
                         onClick={() => {
+                          if (!hasAccess) {
+                            setInsuranceCaseId(undefined)
+                            setModule(item.key)
+                            closeMobileNav()
+                            return
+                          }
                           if (filteredChildren && filteredChildren.length > 0) {
                             if (railCollapsed) {
                               if (item.key === "intelligence") {
@@ -2378,7 +2437,7 @@ export default function App() {
                           className={`${railCollapsed
                             ? "w-5 h-5 flex-shrink-0"
                             : "w-4.5 h-4.5 mr-3 flex-shrink-0"
-                            } nav-icon ${isActive ? "text-white" : "text-[#94A3B8] group-hover:text-white"}`}
+                            } nav-icon ${isActive ? "text-white" : !hasAccess ? "text-[#64748B] group-hover:text-slate-300" : "text-[#94A3B8] group-hover:text-white"}`}
                         />
 
                         {/* Collapsed Badge Dot */}
@@ -2390,6 +2449,11 @@ export default function App() {
                         {railCollapsed && !sidebarHovered && (
                           <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#0F172A] text-white text-[12px] font-semibold rounded-lg shadow-2xl border border-white/10 whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 flex items-center gap-2">
                             <span>{item.label}</span>
+                            {!hasAccess && (
+                              <span className="bg-amber-500/20 text-amber-300 text-[10px] font-semibold px-1.5 py-0.2 rounded border border-amber-500/30">
+                                🔒 Restricted
+                              </span>
+                            )}
                             {navBadge && (
                               <span className="bg-[#DC2626] text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
                                 {navBadge}
@@ -2400,25 +2464,34 @@ export default function App() {
 
                         {!railCollapsed && (
                           <div className="flex-1 min-w-0 flex items-center justify-between sidebar-fade-in">
-                            <span className="flex-1 truncate">
+                            <span className={`flex-1 truncate ${!hasAccess ? "text-slate-400 group-hover:text-slate-200" : ""}`}>
                               {item.label}
                             </span>
-                            {Boolean(navBadge) && (
-                              <span
-                                className={`badge ${isActive ? "bg-white/20 text-white" : "bg-[#DC2626] text-white"} ml-1`}
-                              >
-                                {navBadge}
+                            {!hasAccess ? (
+                              <span className="text-[10px] bg-amber-500/15 text-amber-300/90 border border-amber-500/30 px-1.5 py-0.2 rounded flex items-center gap-1 font-normal ml-1 shrink-0">
+                                <span>🔒</span>
+                                <span>Restricted</span>
                               </span>
+                            ) : (
+                              <>
+                                {Boolean(navBadge) && (
+                                  <span
+                                    className={`badge ${isActive ? "bg-white/20 text-white" : "bg-[#DC2626] text-white"} ml-1`}
+                                  >
+                                    {navBadge}
+                                  </span>
+                                )}
+                                {filteredChildren &&
+                                  filteredChildren.length > 0 && (
+                                    <span
+                                      className={`transition-transform duration-200 ml-1 ${isExpanded ? "rotate-90" : ""
+                                        }`}
+                                    >
+                                      <Icon.ChevronRight />
+                                    </span>
+                                  )}
+                              </>
                             )}
-                            {filteredChildren &&
-                              filteredChildren.length > 0 && (
-                                <span
-                                  className={`transition-transform duration-200 ml-1 ${isExpanded ? "rotate-90" : ""
-                                    }`}
-                                >
-                                  <Icon.ChevronRight />
-                                </span>
-                              )}
                           </div>
                         )}
                       </div>
@@ -2689,16 +2762,174 @@ export default function App() {
                 ))}
               </div>
 
-              {/* Module Content */}
-              <PageErrorBoundary resetKey={module}>
-              {module === "dashboard" && (
-                <Dashboard
-                  navigate={navigate}
-                  userRole={userRole}
-                  activeStaff={activeStaff}
-                  switchRole={switchRole}
-                />
-              )}
+              {(() => {
+                const isSuperAdminUser =
+                  userRole === "ROLE_ADMIN" ||
+                  userRole === "ROLE_SUPERADMIN" ||
+                  userRole === "admin" ||
+                  activeStaff?.id === "ADM-001" ||
+                  activeStaff?.role === "ROLE_ADMIN" ||
+                  userPermissions.includes("*") ||
+                  userPermissions.includes("admin")
+
+                const currentModuleHasAccess = (() => {
+                  if (isSuperAdminUser) return true
+                  if (module === "my_hr") return true
+
+                  // Direct match or wildcard
+                  if (userPermissions.includes(module) || userPermissions.includes("*")) return true
+                  if (userPermissions.some((p) => p.startsWith(module + ":") || p.startsWith(module + "."))) return true
+
+                  // Doctor portal and clinical records
+                  if (
+                    (module === "doctor_portal" || module === "doctors_overview" || module === "doctor_scheduling") &&
+                    (userPermissions.includes("clinical") || userPermissions.includes("patients") || userRole === "ROLE_DOCTOR" || userRole?.includes("DOCTOR"))
+                  ) return true
+
+                  // Reception and patient care
+                  if (
+                    (module === "patients" || module === "register" || module === "op_registration" || module === "appointments" || module === "patient_messages" || module === "patient_experience") &&
+                    (userPermissions.includes("patients") || userPermissions.includes("reception"))
+                  ) return true
+
+                  // OP Department
+                  if (
+                    (module === "outpatient" || module === "op_management" || module === "queue" || module === "op_nurse" || module === "opd_procedures" || module === "journey_scan" || module === "op_workflow") &&
+                    (userPermissions.includes("outpatient") || userPermissions.includes("op") || userPermissions.includes("clinical"))
+                  ) return true
+
+                  // Clinical & Charting
+                  if (
+                    (module === "clinical" || module === "chart") &&
+                    (userPermissions.includes("clinical") || userPermissions.includes("patients"))
+                  ) return true
+
+                  // Emergency
+                  if (
+                    (module === "emergency" || module === "emergency_ui" || module === "triage") &&
+                    userPermissions.includes("emergency")
+                  ) return true
+
+                  // Inpatient & Beds
+                  if (
+                    (module === "inpatient" || module === "beds" || module === "admissions" || module === "readmission" || module === "discharge") &&
+                    userPermissions.includes("inpatient")
+                  ) return true
+
+                  // Critical Care ICU
+                  if (module === "icu" || module.startsWith("icu_")) {
+                    if (userPermissions.includes("icu")) return true
+                  }
+
+                  // Laboratory Diagnostics
+                  if (module === "laboratory" || module.startsWith("lab_")) {
+                    if (userPermissions.includes("laboratory")) return true
+                  }
+
+                  // Radiology & Imaging
+                  if (module === "radiology" || module.startsWith("radiology_")) {
+                    if (userPermissions.includes("radiology")) return true
+                  }
+
+                  // Pharmacy
+                  if (module === "pharmacy" || module.startsWith("pharmacy_")) {
+                    if (
+                      userPermissions.includes("pharmacy") ||
+                      userPermissions.includes("ROLE_PHARMACIST") ||
+                      userPermissions.includes("ROLE_PHARMACY") ||
+                      userPermissions.includes(module)
+                    ) return true
+                  }
+
+                  // Surgery
+                  if (module === "surgery" && userPermissions.includes("surgery")) return true
+
+                  // Billing
+                  if (
+                    (module === "billing" || module.startsWith("billing_") || module === "payments" || module === "lab_billing") &&
+                    userPermissions.includes("billing")
+                  ) return true
+                  if (module === "lab_billing" && userPermissions.includes("laboratory")) return true
+
+                  // Insurance
+                  if (
+                    (module === "insurance" || module.startsWith("insurance_")) &&
+                    userPermissions.includes("insurance")
+                  ) return true
+
+                  // Accounts & Finance
+                  if (
+                    (module === "accounts" || module.startsWith("accounts_")) &&
+                    userPermissions.includes("accounts")
+                  ) return true
+
+                  // HRMS
+                  if (
+                    (module === "hrms" || module === "employees" || module === "scheduling" || module.startsWith("hr_")) &&
+                    (userPermissions.includes("hrms") || userPermissions.some((p) => p.startsWith("hrms:") || p.startsWith("hr_")))
+                  ) return true
+
+                  // Hosp AI Intelligence
+                  if (
+                    (module === "intelligence" || module === "dpi_ocr" || module === "smart_ocr" || module === "symptom_ai" || module === "clinical_rag" || module === "clinical_summaries" || module === "bulk_ai" || module === "nl_filtering") &&
+                    (userPermissions.includes("intelligence") || userPermissions.includes("clinical"))
+                  ) return true
+
+                  // Reports
+                  if (
+                    (module === "reports" || module.startsWith("reports_") || module === "revenue_reports") &&
+                    (userPermissions.includes("reports") || userPermissions.some((p) => p.startsWith("reports:")))
+                  ) return true
+
+                  // Administration
+                  if (module === "admin") {
+                    return isSuperAdminUser
+                  }
+
+                  // Check parent nav item as a catch-all
+                  const parentNav = NAV.find(
+                    (n) => n.key === module || n.children?.some((c) => c.key === module)
+                  )
+                  if (parentNav && parentNav.key !== "hrms" && parentNav.key !== "admin") {
+                    if (
+                      userPermissions.includes(parentNav.key) ||
+                      userPermissions.some((p) => p.startsWith(parentNav.key + ":") || p.startsWith(parentNav.key + "."))
+                    ) {
+                      return true
+                    }
+                  }
+
+                  return false
+                })()
+
+                return (
+                  <PageErrorBoundary resetKey={module}>
+                    {!currentModuleHasAccess ? (
+                      <DepartmentAccessDenied
+                        moduleKey={module}
+                        activeStaff={activeStaff}
+                        userRole={userRole}
+                        userPermissions={userPermissions}
+                        onNavigateHome={() => {
+                          const firstAllowed = NAV.find((n) =>
+                            userPermissions.includes(n.key) ||
+                            userPermissions.some((p) => p.startsWith(n.key + ":") || p.startsWith(n.key + ".")) ||
+                            n.children?.some((c) => userPermissions.includes(c.key) || userPermissions.some((p) => p.startsWith(c.key + ":")))
+                          )?.key || "dashboard"
+                          setModule(firstAllowed as Module)
+                        }}
+                        onOpenAdmin={isSuperAdminUser ? () => setModule("admin") : undefined}
+                        onNavigateToModule={(mod) => setModule(mod as Module)}
+                      />
+                    ) : (
+                      <>
+                      {module === "dashboard" && (
+                        <Dashboard
+                          navigate={navigate}
+                          userRole={userRole}
+                          activeStaff={activeStaff}
+                        />
+                      )}
               {module === "patients" && (
                 <PatientSearch
                   onSelect={(p) => {
@@ -3263,7 +3494,11 @@ export default function App() {
               {module === "intelligence" && (
                 <IntelligenceHub navigate={navigate} />
               )}
-              </PageErrorBoundary>
+                      </>
+                    )}
+                  </PageErrorBoundary>
+                )
+              })()}
             </main>
           </div>
 

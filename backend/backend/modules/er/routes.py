@@ -32,6 +32,7 @@ from utils.database import (
     list_patient_consents,
     attach_consent_document,
     get_consent_document,
+    update_er_visit_status,
 )
 
 # Real-world consent capture is often paper-first: a receptionist may tick
@@ -287,6 +288,34 @@ def er_visit_add_note(visit_id):
     return jsonify({"id": note_id}), 201
 
 
+def _set_er_status(visit_id, new_status, note):
+    hospital_id = current_hospital_id()
+    try:
+        update_er_visit_status(hospital_id, visit_id, new_status)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 409
+    if note:
+        add_er_clinical_note(hospital_id, visit_id, new_status, note, author=_current_username())
+    log_audit_event(new_status, "er_visits", str(visit_id), {"note": note} if note else None)
+    return jsonify({"status": new_status})
+
+
+@er_bp.post("/api/er/visits/<int:visit_id>/stabilized")
+@require_permissions("er.treatment.write")
+def er_visit_mark_stabilized(visit_id):
+    payload = request.get_json(silent=True) or {}
+    return _set_er_status(visit_id, "stabilized", (payload.get("notes") or "").strip())
+
+
+@er_bp.post("/api/er/visits/<int:visit_id>/transfer-complete")
+@require_permissions("er.disposition.write")
+def er_visit_transfer_complete(visit_id):
+    """Confirms the patient physically left the ER for the bed Bed Management
+    allocated. Only legal from 'bed_allocated' (enforced by the state machine)."""
+    payload = request.get_json(silent=True) or {}
+    return _set_er_status(visit_id, "transferred", (payload.get("notes") or "").strip())
+
+
 @er_bp.post("/api/er/visits/<int:visit_id>/disposition")
 @require_permissions("er.disposition.write")
 def er_visit_disposition(visit_id):
@@ -394,6 +423,11 @@ def er_bed_request_allocate(request_id):
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        message = str(exc).lower()
+        if "unique" in message or "duplicate key" in message:
+            return jsonify({"error": "This bed or patient was just assigned by another user. Refresh and try again."}), 409
+        raise
     if result is None:
         return jsonify({"error": "Bed request not found, already allocated, or bed unavailable"}), 404
 

@@ -3,11 +3,7 @@ import ReactDOM from "react-dom/client"
 import App from "./App"
 import PatientRecordPage from "./components/patientRecord/PatientRecordPage"
 import { cardTokenFromHash, patientCodeFromHash } from "./components/patientRecord/patientRecord"
-import { purgeAllLegacySeedData } from "./services/legacySeedPurge"
 import "./index.css"
-
-// Ensure all legacy mock data is purged so the application starts completely blank
-purgeAllLegacySeedData()
 
 // `#/patient/<code>` is the page a scanned OP card opens in its own tab (staff,
 // signed in): the patient's complete record, outside the app shell.

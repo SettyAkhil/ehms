@@ -575,7 +575,7 @@ export function cleanupStorageQuota(): void {
     }
 
     // 1. Remove obvious bloated temporary, OCR, preview, or legacy keys
-    allKeys.forEach(({ key, size }) => {
+    allKeys.forEach(({ key }) => {
       const isLegacy =
         (key.startsWith("hospai_pharm_") ||
           key.startsWith("pharm_") ||
@@ -596,10 +596,9 @@ export function cleanupStorageQuota(): void {
         key.startsWith("scan_cache_") ||
         key.includes("base64")
 
-      // Non-critical keys larger than 50KB
-      const isOversizedNonCritical = !CRITICAL_KEYS.has(key) && size > 50000
-
-      if (isLegacy || isBloatedTransient || isOversizedNonCritical) {
+      // Never delete a key just because it is large: that silently destroyed the
+      // stock ledger, returns, audit log and other modules' operational stores.
+      if ((isLegacy || isBloatedTransient) && !CRITICAL_KEYS.has(key)) {
         try {
           window.localStorage.removeItem(key)
         } catch {}
@@ -626,28 +625,8 @@ export function cleanupStorageQuota(): void {
       }
     } catch {}
 
-    // 3. Trim non-critical logs and transactions
-    try {
-      const logsRaw = window.localStorage.getItem(AUDIT_LOGS_KEY)
-      if (logsRaw) {
-        const logs = JSON.parse(logsRaw)
-        if (Array.isArray(logs) && logs.length > 20) {
-          window.localStorage.setItem(AUDIT_LOGS_KEY, JSON.stringify(logs.slice(-20)))
-        }
-      }
-    } catch {}
-
-    try {
-      const txsRaw = window.localStorage.getItem(STOCK_TXS_KEY)
-      if (txsRaw) {
-        const txs = JSON.parse(txsRaw)
-        if (Array.isArray(txs) && txs.length > 100) {
-          window.localStorage.setItem(STOCK_TXS_KEY, JSON.stringify(txs.slice(-100)))
-        }
-      }
-    } catch {}
-
-    // 4. Always trim notifications
+    // 3. Notifications are the only operational-adjacent data safe to drop.
+    //    The audit log and stock ledger are never trimmed here.
     try {
       window.localStorage.removeItem(NOTIFICATIONS_KEY)
       window.localStorage.removeItem(DISMISSED_NOTIFICATIONS_KEY)
@@ -776,19 +755,9 @@ export function safeStorageSetItem(key: string, value: string): void {
     notifyPharmacySubscribers(key)
     return
   } catch (secondErr) {
-    // Aggressive prune: purge audit logs and older bills/txs
-    try {
-      window.localStorage.removeItem(AUDIT_LOGS_KEY)
-      window.localStorage.removeItem(STOCK_TXS_KEY)
-      window.localStorage.setItem(key, value)
-      delete unpersistedKeys[key]
-      notifyPharmacySubscribers(key)
-      return
-    } catch (thirdErr) {
-      unpersistedKeys[key] = true
-      console.warn(`[PharmacyDb] Persisted "${key}" in memory & sessionStorage fallback.`)
-      notifyPharmacySubscribers(key)
-    }
+    unpersistedKeys[key] = true
+    console.error(`[PharmacyDb] Storage full: "${key}" is held in memory only and will be lost on reload.`)
+    notifyPharmacySubscribers(key)
   }
 }
 
@@ -1281,102 +1250,10 @@ export function purgeSampleData(): boolean {
   }
 }
 
-/**
- * Resets all Pharmacy records to an empty state for a clean real-world start.
- */
-export function clearAllPharmacyData(): void {
-  if (typeof window === "undefined") return
-  try {
-    // Clear in-memory fallback cache
-    Object.keys(memoryStorageFallback).forEach((k) => delete memoryStorageFallback[k])
-
-    // Scan and remove any existing pharmacy keys across all versions from both localStorage and sessionStorage
-    const toRemove: string[] = []
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const k = window.localStorage.key(i)
-      if (
-        k &&
-        k !== "varma_clean_slate_v6_active" &&
-        k !== "hospai_pharmacy_upi_id" &&
-        (k.startsWith("hospai_pharm_") ||
-          k.startsWith("pharm_") ||
-          k.startsWith("pharmacy_") ||
-          k.startsWith("_v2_pharmacy_") ||
-          k.includes("pharmacy"))
-      ) {
-        toRemove.push(k)
-      }
-    }
-    toRemove.forEach((k) => {
-      window.localStorage.removeItem(k)
-      try {
-        window.sessionStorage.removeItem(k)
-      } catch {}
-    })
-
-    // Explicitly initialize all stores to empty lists across memory, session, and local storage
-    const allKeys = [
-      CATEGORIES_KEY,
-      SUPPLIERS_KEY,
-      MEDICINES_KEY,
-      BATCHES_KEY,
-      POS_KEY,
-      GRNS_KEY,
-      STOCK_TXS_KEY,
-      PRESCRIPTIONS_KEY,
-      BILLS_KEY,
-      RETURNS_KEY,
-      TRANSFERS_KEY,
-      SUPPLIER_RETURNS_KEY,
-      ADJUSTMENTS_KEY,
-      CLARIFICATIONS_KEY,
-      WRITE_OFFS_KEY,
-      NOTIFICATIONS_KEY,
-      AUDIT_LOGS_KEY,
-      USERS_KEY,
-    ]
-    allKeys.forEach((key) => {
-      safeStorageSetItem(key, "[]")
-    })
-
-    // Baseline categories and clean empty suppliers
-    safeStorageSetItem(CATEGORIES_KEY, "[]")
-    safeStorageSetItem(SUPPLIERS_KEY, "[]")
-
-    window.localStorage.removeItem("_v2_pharmacy_dispense_rx")
-    window.localStorage.setItem("varma_clean_slate_v6_active", "true")
-    window.localStorage.setItem("hospai_pharm_fresh_clean_slate_v2026_ready", "true")
-    window.localStorage.setItem("hospai_pharm_scratch_clean_slate_v3_applied", "true")
-    window.localStorage.setItem("hospai_pharm_fresh_demo_purged_v10", "true")
-    window.localStorage.setItem("hospai_pharm_clean_slate_active", "true")
-
-    window.dispatchEvent(new Event("storage"))
-    window.dispatchEvent(new CustomEvent("hospai_pharmacy_updated"))
-  } catch (e) {
-    console.error("Failed to clear pharmacy data:", e)
-  }
-}
-
-// One-time initialization to guarantee 100% clean formulary and clean storage quota in all browsers (Chrome & Edge)
+// Keep destructive maintenance operations out of the browser global scope.
+// Production retention actions belong to an authenticated backend workflow.
 if (typeof window !== "undefined") {
   try {
-    const CLEAN_SLATE_STAMP = "varma_storage_clean_v8_active"
-    if (window.localStorage.getItem(CLEAN_SLATE_STAMP) !== "true") {
-      cleanupStorageQuota()
-      clearAllPharmacyData()
-      try {
-        window.localStorage.setItem(CLEAN_SLATE_STAMP, "true")
-        window.localStorage.setItem("hospai_pharm_fresh_demo_purged_v10", "true")
-      } catch {}
-    }
-  } catch {}
-}
-
-// Expose utility globally for manual testing if needed
-if (typeof window !== "undefined") {
-  try {
-    ;(window as any).clearAllPharmacyData = clearAllPharmacyData
-    ;(window as any).purgeSamplePharmacyData = purgeSampleData
     ;(window as any).seedPharmacyHospitalData = seedPharmacyHospitalData
     ;(window as any).ensurePharmacyDataSeeded = ensurePharmacyDataSeeded
   } catch (e) {
@@ -1390,7 +1267,6 @@ export class PharmacyDatabase {
   static subscribe = subscribePharmacy
   static notify = notifyPharmacySubscribers
   static purgeSampleData = purgeSampleData
-  static clearAllPharmacyData = clearAllPharmacyData
   static seedHospitalTestData = seedPharmacyHospitalData
   static seedTestPrescriptionForSelling = seedTestPrescriptionForSelling
   static seedThreeScenarioPrescriptions = seedThreeScenarioPrescriptions

@@ -15,9 +15,11 @@ app = create_service_app(__name__)
 # every other service skips init_database() to avoid concurrent migration races.
 if "pytest" not in sys.modules:
     from utils.database import init_database
+    from core.auth import seed_initial_access_roles
 
     init_database()
-    if os.getenv("SEED_DEMO_USERS", "").strip().lower() in ("true", "1", "yes"):
+    seed_initial_access_roles()
+    if os.getenv("SEED_INITIAL_ADMIN", "").strip().lower() in ("true", "1", "yes"):
         from core.auth import create_default_users
 
         create_default_users()

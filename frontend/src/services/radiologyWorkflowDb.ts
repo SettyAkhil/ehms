@@ -13,7 +13,7 @@
  * 7. PDF Report Generation, Preview, Print, and Download
  */
 
-import { BillingDatabase, RadiologyStudyRecord, INITIAL_RAD_STUDIES } from "./billingDb"
+import { BillingDatabase, RadiologyStudyRecord } from "./billingDb"
 import { db } from "./db"
 import { AuditDatabase } from "./auditDb"
 import { LabOrderDatabase } from "./labOrdersDb"
@@ -1589,65 +1589,26 @@ export class RadiologyWorkflowDb {
   }
 
   /**
-   * Retrieves a single study by its stable identifier (ID, Accession #, or Invoice #).
+   * Retrieves a single study by its unique study ID or accession number only.
+   * UMR/MRN and invoice numbers are deliberately not matched: a patient or an
+   * invoice can have several studies, so they would return the wrong one.
    */
   static getStudyById(studyId?: string | null): ExtendedRadiologyRecord | undefined {
     if (!studyId) return undefined
     const target = studyId.trim().toLowerCase()
-    let studies = this.getStudies()
-    let found = studies.find(
-      (s) =>
-        (s.id && s.id.toLowerCase() === target) ||
-        (s.accessionNo && s.accessionNo.toLowerCase() === target) ||
-        (s.invoiceNo && s.invoiceNo.toLowerCase() === target) ||
-        (s.umr && s.umr.toLowerCase() === target) ||
-        (s.mrn && s.mrn.toLowerCase() === target)
-    )
+    const matches = (s: { id?: string; accessionNo?: string }) =>
+      (!!s.id && s.id.toLowerCase() === target) ||
+      (!!s.accessionNo && s.accessionNo.toLowerCase() === target)
+
+    const found = this.getStudies().find(matches)
     if (found) return found
 
-    // Cache miss or newly updated: clear cache and re-query
     this.invalidateCache()
-    studies = this.getStudies()
-    found = studies.find(
-      (s) =>
-        (s.id && s.id.toLowerCase() === target) ||
-        (s.accessionNo && s.accessionNo.toLowerCase() === target) ||
-        (s.invoiceNo && s.invoiceNo.toLowerCase() === target) ||
-        (s.umr && s.umr.toLowerCase() === target) ||
-        (s.mrn && s.mrn.toLowerCase() === target)
-    )
-    if (found) return found
+    const refreshed = this.getStudies().find(matches)
+    if (refreshed) return refreshed
 
-    // Fallback: search BillingDatabase studies directly
-    const bStudies = BillingDatabase.getRadiologyStudies()
-    const bFound = bStudies.find(
-      (s) =>
-        (s.id && s.id.toLowerCase() === target) ||
-        (s.accessionNo && s.accessionNo.toLowerCase() === target) ||
-        (s.invoiceNo && s.invoiceNo.toLowerCase() === target) ||
-        (s.umr && s.umr.toLowerCase() === target) ||
-        (s.mrn && s.mrn.toLowerCase() === target)
-    )
-    if (bFound) {
-      return bFound as ExtendedRadiologyRecord
-    }
-
-    // Fallback: check initial seed catalog to guarantee records are always found
-    const initMatch = INITIAL_RAD_STUDIES.find(
-      (s) =>
-        (s.id && s.id.toLowerCase() === target) ||
-        (s.accessionNo && s.accessionNo.toLowerCase() === target) ||
-        (s.invoiceNo && s.invoiceNo.toLowerCase() === target) ||
-        (s.umr && s.umr.toLowerCase() === target) ||
-        (s.mrn && s.mrn.toLowerCase() === target)
-    )
-    if (initMatch) {
-      BillingDatabase.updateRadiologyStudy(initMatch.id, initMatch)
-      this.invalidateCache()
-      return (this.getStudies().find((s) => s.id && s.id.toLowerCase() === target) || initMatch) as ExtendedRadiologyRecord
-    }
-
-    return undefined
+    const billed = BillingDatabase.getRadiologyStudies().find(matches)
+    return billed ? (billed as ExtendedRadiologyRecord) : undefined
   }
 
   /**

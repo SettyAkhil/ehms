@@ -9,17 +9,17 @@
 
 export type SeedFingerprint = readonly [id: string, name: string]
 
-const norm = (v: unknown) => String(v ?? "").trim().toLowerCase()
-
 /** Rows of `rows` that are not legacy sample records. */
 export function dropLegacySeeds<T>(
   rows: T[],
-  prints: readonly SeedFingerprint[],
-  idOf: (row: T) => unknown,
-  nameOf: (row: T) => unknown,
+  _prints: readonly SeedFingerprint[],
+  _idOf: (row: T) => unknown,
+  _nameOf: (row: T) => unknown,
 ): T[] {
-  const set = new Set(prints.map(([id, name]) => `${norm(id)}|${norm(name)}`))
-  return rows.filter((r) => !set.has(`${norm(idOf(r))}|${norm(nameOf(r))}`))
+  // Never remove records during application load. A seed-like identifier or
+  // patient name is not proof that the operational record is disposable.
+  // Any historical-data migration must be a deliberate, backed-up admin job.
+  return rows
 }
 
 // -- OP desk (services/db.ts) --------------------------------------------------
@@ -225,10 +225,3 @@ export function purgeAllLegacySeedData(): void {
   localStorage.setItem(PURGE_FLAG, "true")
 }
 
-// Expose on window for easy developer/admin on-demand reset
-if (typeof window !== "undefined") {
-  ;(window as any).purgeAllSeedData = () => {
-    localStorage.clear()
-    window.location.reload()
-  }
-}

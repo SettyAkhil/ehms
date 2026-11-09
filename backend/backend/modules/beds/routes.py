@@ -21,6 +21,11 @@ from utils.database import (
 
 beds_bp = Blueprint("beds", __name__)
 
+
+def _is_unique_violation(exc):
+    message = str(exc).lower()
+    return "unique" in message or "duplicate key" in message
+
 BED_TYPES = ("General", "ICU", "Private", "Semi-Private")
 # Sane ceiling on a single bulk-add call -- a real room-sized batch (even a
 # large 40-60 bed general ward) fits well under this; anything bigger is
@@ -260,6 +265,10 @@ def beds_assign(bed_id):
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        if _is_unique_violation(exc):
+            return jsonify({"error": "This bed or patient was just assigned by another user. Refresh and try again."}), 409
+        raise
     if result is None:
         return jsonify({"error": "Bed not found"}), 404
 
@@ -295,6 +304,10 @@ def beds_transfer(bed_id):
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 409
+    except Exception as exc:
+        if _is_unique_violation(exc):
+            return jsonify({"error": "The destination bed was just taken by another user. Refresh and try again."}), 409
+        raise
 
     log_audit_event(
         "transfer", "bed_allocations", str(result["allocation_id"]),
