@@ -16,8 +16,11 @@ import {
   Trash2,
   Clock,
   RefreshCw,
+  Sparkles,
+  AlertCircle,
 } from "lucide-react"
 import { PharmacyDatabase } from "../../../services/pharmacyDb"
+import { findMatchingMedicine } from "../../../utils/medicineMatcher"
 
 import PageHeader from "../components/PageHeader"
 import StatusBadge from "../components/StatusBadge"
@@ -37,24 +40,8 @@ interface PrescriptionQueueProps {
 
 function checkItemStock(item: any, medicinesList: any[], batchesList: any[]) {
   if (!item || typeof item !== "object") return false
-  const itemName = typeof item.medicineName === "string" ? item.medicineName.toLowerCase().trim() : ""
-  const itemGeneric = typeof item.genericName === "string" ? item.genericName.toLowerCase().trim() : ""
-
-  const med = (medicinesList || []).find((m: any) => {
-    if (!m || typeof m !== "object") return false
-    if (item.medicineId && m.id === item.medicineId) return true
-    const mName = typeof m.name === "string" ? m.name.toLowerCase().trim() : ""
-    if (itemName && mName && mName === itemName) return true
-    const mGeneric = typeof m.generic === "string" ? m.generic.toLowerCase().trim() : ""
-    if (itemGeneric && mGeneric && mGeneric === itemGeneric) return true
-    if (itemName && mName && (itemName.includes(mName) || mName.includes(itemName))) return true
-    return false
-  })
-  if (!med) return false
-  const activeBatches = (batchesList || []).filter(
-    (b: any) => b && b.medicineId === med.id && (b.availableQuantity ?? b.quantity ?? 0) > 0
-  )
-  return activeBatches.length > 0 || (Number(med.stock) > 0)
+  const match = findMatchingMedicine(item, medicinesList, batchesList)
+  return match.hasStock
 }
 
 function getPrescriptionStockStatus(rawItems: any[], medicinesList: any[], batchesList: any[]) {
@@ -69,9 +56,15 @@ function getPrescriptionStockStatus(rawItems: any[], medicinesList: any[], batch
   }
 
   let inStockCount = 0
+  let inCatalogCount = 0
+
   rawItems.forEach((item) => {
-    if (checkItemStock(item, medicinesList, batchesList)) {
+    const match = findMatchingMedicine(item, medicinesList, batchesList)
+    if (match.hasStock) {
       inStockCount++
+    }
+    if (match.matchedMedicine) {
+      inCatalogCount++
     }
   })
 
@@ -82,9 +75,27 @@ function getPrescriptionStockStatus(rawItems: any[], medicinesList: any[], batch
       subLabel: "100% In-Stock",
       badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-200",
       dotClass: "bg-emerald-500",
-      desc: "All medicines are in active hospital inventory (FEFO ready)",
+      desc: "All medicines are available in active hospital inventory (FEFO ready)",
     }
-  } else if (inStockCount === 0) {
+  } else if (inStockCount > 0) {
+    return {
+      type: "mixed",
+      label: "Semi-Inventory",
+      subLabel: `${inStockCount}/${rawItems.length} In-Stock`,
+      badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+      dotClass: "bg-amber-500",
+      desc: `Partial stock: ${inStockCount} of ${rawItems.length} medicines available in inventory`,
+    }
+  } else if (inCatalogCount > 0) {
+    return {
+      type: "out_of_stock",
+      label: "Out of Stock",
+      subLabel: "In Catalog (0 Stock)",
+      badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+      dotClass: "bg-amber-500",
+      desc: "Medicines are recognized in hospital formulary but have 0 stock",
+    }
+  } else {
     return {
       type: "non_inventory",
       label: "Non-Inventory",
@@ -92,15 +103,6 @@ function getPrescriptionStockStatus(rawItems: any[], medicinesList: any[], batch
       badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
       dotClass: "bg-rose-500",
       desc: "Non-inventory medicines (requires external purchase/PO)",
-    }
-  } else {
-    return {
-      type: "mixed",
-      label: "Semi-Inventory",
-      subLabel: `${inStockCount}/${rawItems.length} In-Stock`,
-      badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
-      dotClass: "bg-amber-500",
-      desc: "Semi-inventory: contains both inventory & non-inventory medicines",
     }
   }
 }
@@ -373,35 +375,78 @@ export default function PrescriptionQueue({
               </div>
               <div className="space-y-2">
                 {selected.rawItems?.map((m: any, i: number) => {
-                  const isStocked = checkItemStock(m, medicines, batches)
+                  const match = findMatchingMedicine(m, medicines, batches)
+                  const isStocked = match.hasStock
+                  const matchedMed = match.matchedMedicine
+                  const rawName = m.medicineName || m.name || "Medicine"
+
                   return (
                     <div
                       key={i}
                       className={`p-3 rounded-lg border transition-all ${
                         isStocked
                           ? "border-emerald-200 bg-emerald-50/40"
+                          : matchedMed
+                          ? "border-amber-200 bg-amber-50/40"
                           : "border-rose-200 bg-rose-50/40"
                       }`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-[13px] font-semibold text-[#0F1624]">
-                          {m.medicineName}
-                        </p>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13px] font-semibold text-[#0F1624]">
+                            {rawName}
+                          </p>
+                          {matchedMed && (
+                            <div className="text-[11px] text-[#0F766E] font-medium flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="font-semibold text-emerald-800 flex items-center gap-0.5">
+                                <Sparkles size={11} className="text-emerald-600" /> Matched:
+                              </span>
+                              <span className="text-slate-800 font-semibold">
+                                {matchedMed.medicineName || matchedMed.brandName}
+                              </span>
+                              {matchedMed.strength && (
+                                <span className="text-slate-500 font-mono text-[10px]">
+                                  ({matchedMed.strength})
+                                </span>
+                              )}
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                                  match.hasStock
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {match.hasStock ? `${match.totalStock} in stock` : "0 in stock"}
+                              </span>
+                            </div>
+                          )}
+                          {!matchedMed && (
+                            <p className="text-[11px] text-rose-600 flex items-center gap-1 mt-1">
+                              <AlertCircle size={11} /> Not found in hospital catalog
+                            </p>
+                          )}
+                        </div>
                         <span
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
                             isStocked
                               ? "bg-emerald-100 text-emerald-800"
+                              : matchedMed
+                              ? "bg-amber-100 text-amber-800"
                               : "bg-rose-100 text-rose-800"
                           }`}
                         >
-                          {isStocked ? "In Inventory" : "Non-Inventory"}
+                          {isStocked
+                            ? "In Inventory"
+                            : matchedMed
+                            ? "Out of Stock"
+                            : "Non-Inventory"}
                         </span>
                       </div>
-                      <p className="text-[11px] text-[#64748B] mt-0.5">
-                        {m.dosage} · {m.frequency} · {m.duration}
+                      <p className="text-[11px] text-[#64748B] mt-1.5">
+                        {m.dosage || "1 dose"} · {m.frequency || "Once"} · {m.duration || "Course"}
                       </p>
                       <p className="text-[11px] font-bold mt-1 text-[#0F766E]">
-                        Qty: {m.quantity}
+                        Qty: {m.quantity || 1}
                       </p>
                     </div>
                   )
