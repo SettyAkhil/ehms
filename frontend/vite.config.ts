@@ -32,6 +32,7 @@ function getSafeFallbackPayload(urlOrPath: string): any {
   // Authentication is never a development fallback. A running backend must
   // validate credentials and issue the HttpOnly session cookie.
   if (p.includes("/auth/")) return null
+  if (p.match(/\/er\/visits\/[^?]+/)) return null
   if (p.includes("/er/visits")) {
     return { visits: [] }
   }

@@ -195,18 +195,25 @@ async function handleLocalErMock<T = any>(
 
   // GET /api/er/visits/:id
 
-  const visitDetailMatch = pathname.match(/^\/api\/er\/visits\/(\d+)$/)
+  const visitDetailMatch = pathname.match(/^\/api\/er\/visits\/([^/]+)$/)
 
   if (visitDetailMatch && method === "GET") {
-    const visitId = parseInt(visitDetailMatch[1])
+    const rawId = visitDetailMatch[1]
+    const visitId = parseInt(rawId, 10)
 
-    let visit = ErDatabase.getVisit(visitId)
+    let visit = ErDatabase.getVisit(!isNaN(visitId) ? visitId : rawId)
 
     if (!visit) {
       const allVisits = ErDatabase.getVisits("all")
-
-      if (allVisits.length > 0) {
-        visit = ErDatabase.getVisit(allVisits[0].id)
+      const matched = allVisits.find(
+        (v) =>
+          v.id === visitId ||
+          v.visit_no === rawId ||
+          (v.visit_no && v.visit_no.endsWith(rawId)) ||
+          (!isNaN(visitId) && v.visit_no && v.visit_no.endsWith(String(visitId).padStart(5, "0")))
+      )
+      if (matched) {
+        visit = ErDatabase.getVisit(matched.id)
       }
     }
 

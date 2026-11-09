@@ -1439,12 +1439,30 @@ export class ErDatabase {
     return null
   }
 
-  static getVisit(id: number): ErVisitRecord | null {
+  static getVisit(id: number | string): ErVisitRecord | null {
     const visits = this.getVisits("all")
+    const idNum = Number(id)
+    const idStr = String(id || "").trim()
 
-    const v = visits.find((item) => item.id === Number(id))
+    const v = visits.find((item) => {
+      if (!isNaN(idNum) && item.id === idNum) return true
+      if (item.visit_no) {
+        if (item.visit_no === idStr) return true
+        if (item.visit_no.endsWith(idStr)) return true
+        if (!isNaN(idNum) && item.visit_no.endsWith(String(idNum).padStart(5, "0"))) return true
+      }
+      return false
+    })
 
     if (!v) return null
+
+    // Ensure visit_no and arrival_at are set
+    if (!v.visit_no) {
+      v.visit_no = `ER-${new Date().getFullYear()}-${String(v.id).padStart(5, "0")}`
+    }
+    if (!v.arrival_at) {
+      v.arrival_at = new Date().toISOString()
+    }
 
     // Attach patient details and prior visit count
 
@@ -1497,6 +1515,27 @@ export class ErDatabase {
       }
     } else {
       v.prior_visits_count = 0
+    }
+
+    // Fallback: If v.patient is still missing, synthesize from visit record fields
+    if (!v.patient && (v.patient_name || v.patient_id)) {
+      v.patient = {
+        patient_id: v.patient_id || `P-${v.id}`,
+        name: v.patient_name || "Emergency Patient",
+        last_name: v.patient_last_name || "",
+        gender: v.patient_gender || "Male",
+        age: v.patient_age || 35,
+        phone: v.patient_phone || "",
+        emergency_contact: v.patient_emergency_contact || v.patient_phone || "",
+        address: v.patient_address || "",
+        blood_group: v.patient_blood_group || "O+",
+        created_at: v.arrival_at || new Date().toISOString(),
+      }
+    }
+
+    // Keep patient_name synchronized
+    if (v.patient && !v.patient_name) {
+      v.patient_name = [v.patient.name, v.patient.last_name].filter(Boolean).join(" ")
     }
 
     return v
@@ -2175,12 +2214,14 @@ export class ErDatabase {
   }
 
   static createBedRequest(
-    visitId: number,
+    visitId: number | string,
     data: { requested_level_of_care?: string ;requested_specialty?: string },
   ): ErBedRequestItem {
     const visit = this.getVisit(visitId)
 
     if (!visit) throw new Error("Visit not found")
+
+    if (!visit.bed_requests) visit.bed_requests = []
 
     const newItem: ErBedRequestItem = {
       id: visit.bed_requests.length + 1,
@@ -2204,10 +2245,9 @@ export class ErDatabase {
       allocated_at: null,
     }
 
-    if (!visit.bed_requests) visit.bed_requests = []
     visit.bed_requests.push(newItem)
 
-    this.updateVisit(visitId, {
+    this.updateVisit(visit.id, {
       bed_requests: visit.bed_requests,
       status: "bed_requested",
     })
@@ -2425,7 +2465,7 @@ export class ErDatabase {
     }
   }
 
-  static recordDisposition(visitId: number, data: any): ErDispositionItem {
+  static recordDisposition(visitId: number | string, data: any): ErDispositionItem {
     const visit = this.getVisit(visitId)
 
     if (!visit) throw new Error("Visit not found")
@@ -2558,7 +2598,7 @@ export class ErDatabase {
         ? "closed"
         : "awaiting_disposition"
 
-    this.updateVisit(visitId, {
+    this.updateVisit(visit.id, {
       disposition: disp,
 
       bed_requests: visit.bed_requests,
@@ -2685,13 +2725,14 @@ export class ErDatabase {
   }
 
   static addTimelineEvent(
-    visitId: number,
+    visitId: number | string,
     eventData: Partial<ErTimelineEventItem>,
   ): ErTimelineEventItem {
+    const visit = this.getVisit(visitId)
+    if (!visit) throw new Error("Visit not found")
+
     const visits = this.getVisits("all")
-
-    const idx = visits.findIndex((v) => v.id === Number(visitId))
-
+    const idx = visits.findIndex((v) => v.id === visit.id)
     if (idx < 0) throw new Error("Visit not found")
 
     const v = visits[idx]

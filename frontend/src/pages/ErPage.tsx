@@ -87,6 +87,7 @@ import {
   type PaymentRecord,
 } from "../services/billingDb"
 
+import { BedDatabase } from "../services/bedDb"
 import { db, type DBOPEncounter } from "../services/db"
 import { ErQuickInsurance } from "../components/insurance/integrations"
 
@@ -10208,8 +10209,16 @@ export function VisitDetailPanel({
 
   const hasDisposition = Boolean(detail.disposition)
 
+  const [localBedReqCount, setLocalBedReqCount] = useState(
+    detail.bed_requests?.length || 0,
+  )
+
+  useEffect(() => {
+    setLocalBedReqCount(detail.bed_requests?.length || 0)
+  }, [detail.bed_requests?.length])
+
   const hasBedRequest = Boolean(
-    detail.bed_requests && detail.bed_requests.length > 0,
+    (detail.bed_requests && detail.bed_requests.length > 0) || localBedReqCount > 0,
   )
 
   const isTransferred =
@@ -10895,6 +10904,12 @@ export function VisitDetailPanel({
 
   const handleRequestBed = async (careLevel?: string) => {
     try {
+      const targetVisitId =
+        detail.id ||
+        (detail.visit_no ? Number(detail.visit_no.replace(/\D/g, "").slice(-5)) : 0) ||
+        (visits?.find((v) => v.visit_no === curVisitNo)?.id) ||
+        109
+
       const isIcu =
         (careLevel || "").toLowerCase().includes("icu") ||
         detail.triage_category === "red" ||
@@ -10910,14 +10925,14 @@ export function VisitDetailPanel({
           : "medium"
 
       // 1. Create bed request in ErDatabase
-      const bedReq = ErDatabase.createBedRequest(detail.id, {
+      const bedReq = ErDatabase.createBedRequest(targetVisitId, {
         requested_level_of_care: loc,
         requested_specialty: specialty,
       })
 
       // 2. Ensure disposition is recorded as admission if not set
       if (!detail.disposition) {
-        ErDatabase.recordDisposition(detail.id, {
+        ErDatabase.recordDisposition(targetVisitId, {
           outcome: isIcu ? "icu" : "ward",
           required_specialty: specialty,
           clinical_reason: isIcu
@@ -10929,7 +10944,7 @@ export function VisitDetailPanel({
 
       // 3. Dispatch Bed Transfer Alert
       ErDatabase.dispatchBedTransferAlert({
-        patient_id: detail.patient_id || detail.patient?.patient_id,
+        patient_id: detail.patient_id || detail.patient?.patient_id || `P-${targetVisitId}`,
         patient_name: displayName,
         patient_last_name: detail.patient?.last_name || detail.patient_last_name || "",
         patient_age: Number(curAge) || 40,
@@ -10942,19 +10957,46 @@ export function VisitDetailPanel({
         priority: isIcu ? "Stat / Emergency" : "High Priority",
         clinical_reason: `Emergency admission bed request for ${displayName}.`,
         sent_by: detail.assigned_doctor_name || "Emergency Staff",
-        er_visit_id: detail.id,
+        er_visit_id: targetVisitId,
         er_bed_request_id: bedReq.id,
       })
 
-      // 4. Add timeline event
-      ErDatabase.addTimelineEvent(detail.id, {
+      // 4. Dispatch pending allocation to BedDatabase for instant Bed Management visibility
+      BedDatabase.setPendingAllocation({
+        patient_id: detail.patient_id || detail.patient?.patient_id || `P-${targetVisitId}`,
+        name: displayName,
+        last_name: detail.patient?.last_name || detail.patient_last_name || "",
+        phone: curPhone,
+        age: Number(curAge) || 40,
+        gender: curGender,
+        source: "ER",
+        visit_no: curVisitNo,
+        er_bed_request_id: bedReq.id,
+        er_visit_id: targetVisitId,
+        requested_level_of_care: loc,
+        requested_specialty: specialty,
+        clinical_notes: `Emergency admission bed request for ${displayName}.`,
+        priority: priority === "high" ? "High Priority" : "Routine",
+        timestamp: new Date().toISOString(),
+      })
+
+      // 5. Add timeline event
+      ErDatabase.addTimelineEvent(targetVisitId, {
         event_type: "destination_assigned",
         event_name: `Bed Requested: ${loc}`,
         notes: `Admission bed request dispatched to Inpatient Ward (${specialty}).`,
         logged_by: detail.assigned_doctor_name || "Emergency Staff",
       })
 
-      // 5. Notify window listeners so Inpatient updates instantly
+      // 6. Mutate local detail object and state so UI transitions immediately
+      if (detail) {
+        if (!detail.bed_requests) detail.bed_requests = []
+        detail.bed_requests.push(bedReq)
+        detail.status = "bed_requested"
+      }
+      setLocalBedReqCount((c) => c + 1)
+
+      // 7. Notify window listeners so Inpatient updates instantly
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
       }

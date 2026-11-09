@@ -646,11 +646,17 @@ export default function BedManagementPage({
       setActivePendingAllocation(null)
     }
 
+    const handleBedRequestUpdated = () => {
+      void Promise.all([loadBeds(), loadErRequests()])
+    }
+
     window.addEventListener("bed:initiate_allocation", handleInitiate)
     window.addEventListener("bed:clear_allocation", handleClear)
+    window.addEventListener("hospai_bed_request_updated", handleBedRequestUpdated)
     return () => {
       window.removeEventListener("bed:initiate_allocation", handleInitiate)
       window.removeEventListener("bed:clear_allocation", handleClear)
+      window.removeEventListener("hospai_bed_request_updated", handleBedRequestUpdated)
     }
   }, [])
 
