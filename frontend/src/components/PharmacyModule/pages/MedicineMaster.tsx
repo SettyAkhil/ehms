@@ -520,9 +520,18 @@ export default function MedicineMaster({ onNavigate }: MedicineMasterProps) {
                             ? "#d97706"
                             : "#15803d",
                     }}
+                    title={`Sellable unexpired stock: ${Math.max(0, m.stock || 0)}`}
                   >
                     {Math.max(0, m.stock || 0)}
                   </span>
+                  {(m as any).expiredStock > 0 && (
+                    <div
+                      className="text-[10px] text-red-600 font-semibold mt-0.5 whitespace-nowrap cursor-help"
+                      title={`${(m as any).expiredStock} units expired and quarantined in non-sellable stock`}
+                    >
+                      ({(m as any).expiredStock} Expired)
+                    </div>
+                  )}
                 </td>
                 <td className="text-[13px] font-bold font-mono text-[#0F766E]">
                   {m.mnfCode || "MANK"}
@@ -661,7 +670,9 @@ export default function MedicineMaster({ onNavigate }: MedicineMasterProps) {
               <Grid
                 title="Stock"
                 rows={[
-                  ["Current Stock (Qty)", `${selected.stock} units`],
+                  ["Sellable Active Stock", `${selected.stock} units`],
+                  ...((selected as any).expiredStock > 0 ? [["Quarantined / Expired Stock", `${(selected as any).expiredStock} units (Non-sellable)`]] : []),
+                  ...((selected as any).totalStock && (selected as any).totalStock > selected.stock ? [["Total Batch Stock", `${(selected as any).totalStock} units`]] : []),
                 ]}
               />
             </div>

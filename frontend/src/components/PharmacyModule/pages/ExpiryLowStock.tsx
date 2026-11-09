@@ -26,6 +26,9 @@ import {
   Check,
   Download,
   Share2,
+  Trash2,
+  RotateCcw,
+  ShieldAlert,
 } from "lucide-react"
 import PageHeader from "../components/PageHeader"
 
@@ -256,6 +259,42 @@ export default function ExpiryLowStock({ onNavigate }: ExpiryLowStockProps) {
   const [receiveBinNo, setReceiveBinNo] = useState("")
   const [receiveGst, setReceiveGst] = useState<number>(5)
 
+  // Expired Stock Disposal / Write-Off Modal State
+  const [disposingBatch, setDisposingBatch] = useState<any | null>(null)
+  const [disposeQty, setDisposeQty] = useState<number | string>(1)
+  const [disposeReason, setDisposeReason] = useState("Expired Medicine Disposal")
+  const [disposeRemarks, setDisposeRemarks] = useState("")
+
+  const handleConfirmDisposal = () => {
+    if (!disposingBatch) return
+    const qty = Number(disposeQty)
+    if (!qty || qty <= 0) {
+      alert("Please enter a valid quantity to dispose.")
+      return
+    }
+
+    try {
+      PharmacyDatabase.executeMedicineWriteOff(
+        {
+          medicineId: disposingBatch.medicineId,
+          batchId: disposingBatch.id,
+          quantity: qty,
+          reason: disposeReason,
+          remarks: disposeRemarks,
+        },
+        "Pharmacist",
+      )
+      setToastMessage(
+        `Batch ${disposingBatch.batchNumber} (${qty} units) written off & disposed successfully.`,
+      )
+      setTimeout(() => setToastMessage(null), 4000)
+      setDisposingBatch(null)
+      refresh()
+    } catch (err: any) {
+      alert(err.message || "Failed to execute medicine write-off.")
+    }
+  }
+
   // Toast State
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
@@ -267,6 +306,7 @@ export default function ExpiryLowStock({ onNavigate }: ExpiryLowStockProps) {
         setOrderingMedicine(null)
         setGeneratedPO(null)
         setReceivingOrder(null)
+        setDisposingBatch(null)
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -998,7 +1038,9 @@ Thank you!
                 <th className="py-3 px-4 text-[11px] font-bold text-[#065F46] uppercase tracking-wider">Stock Left</th>
                 <th className="py-3 px-4 text-[11px] font-bold text-[#065F46] uppercase tracking-wider">Expiry Date</th>
                 <th className="py-3 px-4 text-[11px] font-bold text-[#065F46] uppercase tracking-wider">Time Left</th>
-                <th className="py-3 px-4 text-[11px] font-bold text-[#065F46] uppercase tracking-wider text-right">Order Action</th>
+                <th className="py-3 px-4 text-[11px] font-bold text-[#065F46] uppercase tracking-wider text-right">
+                  {activeTab === "expired" ? "Actions (Dispose / Return / Order)" : "Order Action"}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1046,7 +1088,64 @@ Thank you!
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {pendingPO ? (
+                        {activeTab === "expired" ? (
+                          <div
+                            className="flex items-center justify-end gap-1.5 flex-wrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              onClick={() => {
+                                setDisposingBatch({
+                                  id: m.id,
+                                  medicineId: m.medicineId,
+                                  medicineName: m.name || m.medicine,
+                                  batchNumber: m.batch,
+                                  stock: m.stock,
+                                  expiryDate: m.expiry,
+                                })
+                                setDisposeQty(m.stock)
+                                setDisposeReason("Expired Medicine Disposal")
+                                setDisposeRemarks("")
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                              title="Write off and dispose expired stock"
+                            >
+                              <Trash2 size={12} /> Write Off
+                            </button>
+
+                            {onNavigate && (
+                              <button
+                                onClick={() => onNavigate("supplier-returns")}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                                title="Return to supplier for credit"
+                              >
+                                <RotateCcw size={12} /> Return
+                              </button>
+                            )}
+
+                            {pendingPO ? (
+                              <div className="flex items-center gap-1">
+                                <span className="text-[10px] font-semibold px-2 py-1 rounded bg-teal-50 text-[#0F766E] border border-teal-200">
+                                  Ordered
+                                </span>
+                                <button
+                                  onClick={() => handleOpenReceiveModal(pendingPO, m)}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                                >
+                                  <PackageCheck size={12} /> Receive
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenOrderModal(m)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#0F766E] hover:bg-[#0D9488] text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer"
+                                title="Reorder replacement fresh stock"
+                              >
+                                <ShoppingCart size={12} /> Reorder Fresh
+                              </button>
+                            )}
+                          </div>
+                        ) : pendingPO ? (
                           <div
                             className="flex items-center justify-end gap-1.5"
                             onClick={(e) => e.stopPropagation()}
@@ -2042,6 +2141,7 @@ Thank you!
                           <th className="py-2.5 px-3">Cost Rate</th>
                           <th className="py-2.5 px-3">M.R.P.</th>
                           <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3 text-right">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -2052,6 +2152,7 @@ Thank you!
                             ? 0
                             : Math.ceil((expTime - Date.now()) / (1000 * 60 * 60 * 24))
                           const urg = urgencyLabel(daysLeft)
+                          const batchQty = b.availableQuantity ?? b.quantity ?? 0
                           return (
                             <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
                               <td className="py-2 px-3 font-mono font-medium text-slate-900">
@@ -2061,7 +2162,7 @@ Thank you!
                                 {cleanedExp}
                               </td>
                               <td className="py-2 px-3 font-bold text-slate-900">
-                                {b.availableQuantity ?? b.quantity ?? 0}
+                                {batchQty}
                               </td>
                               <td className="py-2 px-3 text-slate-700">
                                 ₹{Number(b.purchasePrice || selectedMedicine.purchasePrice || 0).toFixed(2)}
@@ -2076,6 +2177,31 @@ Thank you!
                                 >
                                   {urg.label}
                                 </span>
+                              </td>
+                              <td className="py-2 px-3 text-right">
+                                {daysLeft <= 0 && batchQty > 0 ? (
+                                  <button
+                                    onClick={() => {
+                                      setDisposingBatch({
+                                        id: b.id,
+                                        medicineId: selectedMedicine.id,
+                                        medicineName: selectedMedicine.name || selectedMedicine.medicineName,
+                                        batchNumber: b.batchNumber,
+                                        stock: batchQty,
+                                        expiryDate: b.expiryDate,
+                                      })
+                                      setDisposeQty(batchQty)
+                                      setDisposeReason("Expired Medicine Disposal")
+                                      setDisposeRemarks("")
+                                    }}
+                                    className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold shadow-sm transition-all cursor-pointer"
+                                    title="Write off expired batch"
+                                  >
+                                    Write Off
+                                  </button>
+                                ) : (
+                                  <span className="text-slate-400 text-[11px]">—</span>
+                                )}
                               </td>
                             </tr>
                           )
@@ -2111,6 +2237,125 @@ Thank you!
                 className="px-4 py-2 rounded-lg bg-[#0F1624] hover:bg-slate-800 text-white text-[12px] font-semibold transition-colors cursor-pointer"
               >
                 Close Details
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WRITE-OFF & DISPOSE MODAL */}
+      {disposingBatch && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(15,23,42,0.65)", backdropFilter: "blur(2px)" }}
+          onClick={() => setDisposingBatch(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden border border-red-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-red-100 bg-red-50/70">
+              <div className="flex items-center gap-2 text-red-800">
+                <ShieldAlert size={20} className="text-red-600" />
+                <h3 className="text-base font-bold">Write Off & Dispose Expired Stock</h3>
+              </div>
+              <button
+                onClick={() => setDisposingBatch(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Medicine:</span>
+                  <span className="font-bold text-slate-900">{disposingBatch.medicineName}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Batch Number:</span>
+                  <span className="font-mono font-bold text-slate-800">{disposingBatch.batchNumber}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Expiry Date:</span>
+                  <span className="font-bold text-red-600">{cleanExpiryDate(disposingBatch.expiryDate)} (Expired)</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-500 font-medium">Quarantined Stock:</span>
+                  <span className="font-bold text-slate-900">{disposingBatch.stock} units</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Quantity to Dispose / Write Off *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={disposingBatch.stock}
+                  required
+                  value={disposeQty}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value) || 0
+                    setDisposeQty(Math.min(disposingBatch.stock, Math.max(1, v)))
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm"
+                />
+                <span className="text-[10px] text-slate-500 mt-0.5 block">
+                  Max available to write off: {disposingBatch.stock} units
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Disposal Reason *
+                </label>
+                <select
+                  value={disposeReason}
+                  onChange={(e) => setDisposeReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm"
+                >
+                  <option value="Expired Medicine Disposal">Expired Medicine Disposal</option>
+                  <option value="Quarantine & Incineration">Quarantine & Incineration</option>
+                  <option value="Damaged / Degraded Stock">Damaged / Degraded Stock</option>
+                  <option value="Manufacturer Quality Recall">Manufacturer Quality Recall</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Remarks / Notes (Optional)
+                </label>
+                <textarea
+                  value={disposeRemarks}
+                  onChange={(e) => setDisposeRemarks(e.target.value)}
+                  placeholder="e.g. Disposed per biomedical waste safety protocol. Fresh batch received."
+                  rows={2}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setDisposingBatch(null)}
+                className="px-4 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDisposal}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 size={13} /> Confirm Write-Off & Clear Alert
               </button>
             </div>
           </div>

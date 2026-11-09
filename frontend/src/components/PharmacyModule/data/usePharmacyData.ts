@@ -244,13 +244,54 @@ export function usePharmacyData() {
   const mappedMedicines = useMemo(() => {
     return medicines.map((m) => {
       const mBatches = batchesByMedId.get(m.id) || []
+      const todayTime = new Date().setHours(0, 0, 0, 0)
+
+      // Active / sellable batches: available quantity > 0 and not expired
+      const activeBatches = mBatches.filter((b) => {
+        const qty = b.availableQuantity ?? b.quantity ?? 0
+        if (qty <= 0) return false
+        if (!b.expiryDate) return true
+        const expTime = new Date(b.expiryDate).getTime()
+        return isNaN(expTime) || expTime >= todayTime
+      })
+
+      // Expired batches: available quantity > 0 and expiryDate is past
+      const expiredBatches = mBatches.filter((b) => {
+        const qty = b.availableQuantity ?? b.quantity ?? 0
+        if (qty <= 0) return false
+        if (!b.expiryDate) return false
+        const expTime = new Date(b.expiryDate).getTime()
+        return !isNaN(expTime) && expTime < todayTime
+      })
+
+      const activeBatchStock = activeBatches.reduce(
+        (sum, b) => sum + (b.availableQuantity ?? b.quantity ?? 0),
+        0,
+      )
+      const expiredBatchStock = expiredBatches.reduce(
+        (sum, b) => sum + (b.availableQuantity ?? b.quantity ?? 0),
+        0,
+      )
+      const totalBatchStock = activeBatchStock + expiredBatchStock
+
+      // Prioritize active (sellable) latest batch, then any batch
       const latestBatch =
-        mBatches.length > 0 ? mBatches[mBatches.length - 1] : null
+        activeBatches.length > 0
+          ? activeBatches[activeBatches.length - 1]
+          : mBatches.length > 0
+            ? mBatches[mBatches.length - 1]
+            : null
 
       const mrp = latestBatch?.mrp || (m as any).mrp || 0
-      const batchStock = mBatches.reduce((sum, b) => sum + (b.availableQuantity ?? b.quantity ?? 0), 0)
-      const stock = Math.max(0, mBatches.length > 0 ? batchStock : ((m as any).stock || 0))
-      const purchasePrice = latestBatch?.purchasePrice || (m as any).purchasePrice || (mrp > 0 ? +(mrp * 0.75).toFixed(2) : 0)
+      // Stock represents ACTIVE SELLABLE STOCK (matches dispensing):
+      const stock = Math.max(
+        0,
+        mBatches.length > 0 ? activeBatchStock : ((m as any).stock || 0),
+      )
+      const purchasePrice =
+        latestBatch?.purchasePrice ||
+        (m as any).purchasePrice ||
+        (mrp > 0 ? +(mrp * 0.75).toFixed(2) : 0)
       const gstRate = m.taxPercentage !== undefined ? m.taxPercentage : 5
 
       return {
@@ -262,6 +303,9 @@ export function usePharmacyData() {
         packing: (m as any).packing || (m as any).pack || "",
         manufacturer: m.manufacturer,
         stock,
+        activeStock: stock,
+        expiredStock: expiredBatchStock,
+        totalStock: totalBatchStock,
         mrp,
         price: purchasePrice,
         purchasePrice,
@@ -272,9 +316,14 @@ export function usePharmacyData() {
         status: m.activeStatus === "Active" ? "active" : "inactive",
         sku: m.hsnCode || m.id,
         hsnCode: m.hsnCode || "3004 039",
-        mnfCode: (m as any).mnfCode || (m.manufacturer ? m.manufacturer.substring(0, 4).toUpperCase() : "MANK"),
+        mnfCode:
+          (m as any).mnfCode ||
+          (m.manufacturer
+            ? m.manufacturer.substring(0, 4).toUpperCase()
+            : "MANK"),
         binNo: (latestBatch as any)?.location || (m as any).binNo || "",
-        supplierName: (m as any).supplierName || latestBatch?.supplierName || "",
+        supplierName:
+          (m as any).supplierName || latestBatch?.supplierName || "",
         barcode: m.barcode || "89000000000",
         schedule: m.scheduleType || "H",
         prescription: m.controlledSubstanceFlag || false,
@@ -292,8 +341,10 @@ export function usePharmacyData() {
     return batches
       .filter((b) => {
         if (!medMap.has(b.medicineId)) return false
+        const qty = b.availableQuantity ?? b.quantity ?? 0
+        if (qty <= 0) return false // Batches with 0 stock do not have remaining stock to expire
         const expTime = new Date(b.expiryDate).getTime()
-        return expTime < threshold
+        return !isNaN(expTime) && expTime < threshold
       })
       .map((b) => {
         const m = medMap.get(b.medicineId)
@@ -306,8 +357,8 @@ export function usePharmacyData() {
           medicine: m ? m.medicineName : "Unknown",
           batch: b.batchNumber,
           expiry: b.expiryDate,
-          stock: b.availableQuantity,
-          quantity: b.availableQuantity,
+          stock: b.availableQuantity ?? b.quantity ?? 0,
+          quantity: b.availableQuantity ?? b.quantity ?? 0,
           daysLeft,
           status: expTime < nowTime ? "expired" : "expiring",
         }
