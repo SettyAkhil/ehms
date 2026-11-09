@@ -21,7 +21,6 @@ import {
   Sparkles,
   BarChart3,
   Landmark,
-  Moon,
 } from "lucide-react"
 
 import { Icon, type IconProps } from "./components/icons"
@@ -131,6 +130,15 @@ import DoctorScheduling from "./components/DoctorScheduling"
 import PatientExperience from "./components/PatientExperience"
 import PatientMessages from "./components/messaging/PatientMessages"
 
+import HrWorkspace, { type HrSection } from "./components/hr/HrWorkspace"
+import MyHR from "./components/hr/MyHR"
+import OnDutyStrip from "./components/hr/OnDutyStrip"
+import { hr } from "./services/hr/client"
+import { HrmsDatabase } from "./services/hrmsDb"
+import Employees from "./components/Employees"
+import HRMS from "./components/HRMS"
+import ApplyLeaveModal from "./components/hrms/ApplyLeaveModal"
+
 import Admissions from "./components/Admissions"
 
 import Readmission from "./components/Readmission"
@@ -155,7 +163,6 @@ import AccountsModule from "./components/AccountsModule"
 import MessagesPanel from "./components/MessagesPanel"
 import { useMediaQuery } from "./hooks/useMediaQuery"
 import PageErrorBoundary from "./components/PageErrorBoundary"
-import HelpModal from "./components/HelpModal"
 
 import {
   DoctorAccount,
@@ -189,6 +196,26 @@ const insuranceModule = (m: string): string =>
 
 
 type Module = "dashboard" | "patients" | "appointments" | "emergency" | "emergency_ui" | "clinical" | "inpatient" | "nursing" | "laboratory" | "lab_dashboard" | "lab_orders_collection" | "lab_workbench" | "lab_review_reports" | "lab_admin_config" | "lab_orders" | "lab_sample_collection" | "lab_sample_reception" | "lab_worklists" | "lab_analyzers" | "lab_result_entry" | "lab_pathologist_review" | "lab_critical_alerts" | "lab_reports" | "lab_test_master" | "lab_quality_analytics" | "lab_settings" | "lab_processing" | "lab_critical" | "lab_catalog" | "lab_inventory" | "lab_analytics" | "lab_tat" | "radiology" | "radiology_overview" | "radiology_worklist" | "radiology_scheduling" | "radiology_operations" | "radiology_reporting" | "radiology_finalized" | "radiology_exceptions" | "radiology_analytics" | "radiology_admin" | "radiology_template_upload" | "radiology_templates" | "radiology_xray" | "radiology_ct" | "radiology_usg" | "radiology_mri" | "radiology_reports" | "pharmacy" | "pharmacy_dispensing" | "pharmacy_rx" | "pharmacy_ocr" | "pharmacy_returns" | "pharmacy_supplier_returns" | "pharmacy_medicine" | "pharmacy_category" | "pharmacy_suppliers" | "pharmacy_po" | "pharmacy_grn" | "pharmacy_ledger" | "pharmacy_transfers" | "pharmacy_expiry" | "pharmacy_write_off" | "pharmacy_analytics" | "pharmacy_notifications" | "pharmacy_users" | "pharmacy_audit" | "pharmacy_settings" | "surgery" | "billing" | "billing_op" | "billing_ip" | "billing_er" | "billing_unified" | "billing_revenue" | "icu" | "icu_micu" | "icu_sicu" | "icu_ccu" | "icu_nicu" | "icu_picu" | "icu_ward" | "discharge" | "triage" | "insurance" | "insurance_overview" | "insurance_desk" | "insurance_board" | "insurance_case" | "insurance_discharge" | "insurance_reports" | "insurance_preauth" | "insurance_eligibility" | "insurance_claims" | "insurance_queries" | "insurance_emails" | "insurance_settlement" | "insurance_reconciliation" | "insurance_masters" | "insurance_tpas" | "insurance_packages" | "insurance_pricing" | "insurance_docrules" | "insurance_patient_policies" | "analytics" | "reports" | "reports_overview" | "reports_patients" | "reports_op" | "reports_er" | "reports_inpatient" | "reports_appointments" | "reports_doctors" | "reports_pharmacy" | "reports_laboratory" | "reports_radiology" | "reports_beds" | "reports_admissions" | "reports_discharges" | "reports_staff" | "admin" | "admin_doctors" | "chart" | "register" | "outpatient" | "queue" | "op_management" | "op_registration" | "op_workflow" | "op_nurse" | "opd_procedures" | "doctor_workflow" | "doctor_portal" | "scheduling" | "lab_billing" | "admissions" | "readmission" | "payments" | "revenue_reports" | "reports_pharmacy_damaged" | "reports_supplier_returns" | "hrms" | "my_hr" | "employees" | "hr_dashboard" | "hr_attendance" | "hr_staffing" | "hr_leave" | "hr_approvals" | "hr_payroll" | "hr_recruitment" | "hr_organization" | "hr_training" | "hr_performance" | "hr_compliance" | "hr_grievances" | "hr_reports" | "hr_announcements" | "patient_exp" | "patient_messages" | "intelligence" | "ocr" | "dpi_ocr" | "symptom_ai" | "clinical_rag" | "clinical_summaries" | "bulk_ai" | "nl_filtering" | "beds" | "accounts" | "accounts_dashboard" | "accounts_coa" | "accounts_gl" | "accounts_receipts" | "accounts_payments" | "accounts_ar" | "accounts_ap" | "accounts_cash_bank" | "accounts_pharmacy" | "accounts_insurance" | "accounts_tax" | "accounts_budget" | "accounts_assets" | "accounts_reports" | "accounts_period_close" | "accounts_audit" | "accounts_manager"
+
+const HR_MODULE_SECTION_MAP: Record<string, HrSection> = {
+  hrms: "dashboard",
+  hr_dashboard: "dashboard",
+  employees: "employees",
+  hr_attendance: "attendance",
+  scheduling: "shifts",
+  hr_staffing: "staffing",
+  hr_leave: "leave",
+  hr_approvals: "approvals",
+  hr_payroll: "payroll",
+  hr_recruitment: "recruitment",
+  hr_organization: "organization",
+  hr_training: "training",
+  hr_performance: "performance",
+  hr_compliance: "compliance",
+  hr_grievances: "grievances",
+  hr_reports: "reports",
+  hr_announcements: "announcements",
+}
 
 interface NavItem {
   key: Module
@@ -418,6 +445,31 @@ const NAV: NavItem[] = [
   },
 
   {
+    key: "hrms",
+    label: "HR & Staff",
+    Icon: UsersRound,
+    children: [
+      { key: "hrms", label: "Executive Dashboard" },
+      { key: "employees", label: "Employees Master" },
+      { key: "hr_attendance", label: "Attendance & Bio" },
+      { key: "scheduling", label: "Duty Shifts & Roster" },
+      { key: "hr_staffing", label: "Department Staffing" },
+      { key: "hr_leave", label: "Leave Requests" },
+      { key: "hr_approvals", label: "Pending Approvals" },
+      { key: "hr_payroll", label: "Payroll Processing" },
+      { key: "hr_recruitment", label: "Recruitment & Onboarding" },
+      { key: "hr_organization", label: "Organization Structure" },
+      { key: "hr_training", label: "Training & Compliance" },
+      { key: "hr_performance", label: "Staff Appraisals" },
+      { key: "hr_compliance", label: "Regulatory Audits" },
+      { key: "hr_grievances", label: "Disciplinary & Grievances" },
+      { key: "hr_reports", label: "Statutory HR Reports" },
+      { key: "hr_announcements", label: "Staff Circulars" },
+    ],
+  },
+  { key: "my_hr", label: "My HR", Icon: UserRound },
+
+  {
     key: "intelligence",
     label: "Hosp AI",
     Icon: Sparkles,
@@ -536,7 +588,6 @@ const NAV: NavItem[] = [
     children: [
       { key: "admin", label: "Control Centre" },
       { key: "admin_doctors", label: "Doctor Workspace & Master" },
-      { key: "employees", label: "Hospital Staff & Users" },
     ],
   },
 ]
@@ -1281,7 +1332,7 @@ export default function App() {
   const [notifOpen, setNotifOpen] = useState(false)
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [messagesUnreadCount, setMessagesUnreadCount] = useState(3)
-  const [helpOpen, setHelpOpen] = useState(false)
+  const [globalApplyLeaveOpen, setGlobalApplyLeaveOpen] = useState(false)
 
   const [globalSearch, setGlobalSearch] = useState("")
 
@@ -1606,15 +1657,8 @@ export default function App() {
         return
       }
 
-      if (!isInput && (e.key === "?" || (e.shiftKey && e.key === "/"))) {
-        e.preventDefault()
-        setHelpOpen((o) => !o)
-        return
-      }
-
       if (e.key === "Escape") {
         setCmdOpen(false)
-        setHelpOpen(false)
       }
     }
 
@@ -2102,15 +2146,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Theme Toggle (Moon) */}
-              <button
-                type="button"
-                className="hidden md:flex w-8 h-8 items-center justify-center text-[#94A3B8] hover:text-white rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
-                title="Toggle Theme"
-              >
-                <Moon size={15} />
-              </button>
-
               {/* Fullscreen */}
               <button
                 onClick={toggleFullscreen}
@@ -2118,16 +2153,6 @@ export default function App() {
                 title="Toggle Fullscreen"
               >
                 {isFullscreen ? <Icon.Minimize /> : <Icon.Maximize />}
-              </button>
-
-              {/* Help */}
-              <button
-                type="button"
-                onClick={() => setHelpOpen(true)}
-                title="Hospital System Help & Keyboard Shortcuts"
-                className="hidden sm:flex w-8 h-8 items-center justify-center text-[#94A3B8] hover:text-white rounded-lg hover:bg-white/10 transition-colors text-[13px] font-bold cursor-pointer"
-              >
-                ?
               </button>
 
               {/* Role Switcher / User Profile */}
@@ -2197,17 +2222,6 @@ export default function App() {
                           <span>Administration &amp; RBAC</span>
                         </button>
                       )}
-                      {/* The header's help button is hidden on phones. */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRoleMenuOpen(false)
-                          setHelpOpen(true)
-                        }}
-                        className="sm:hidden w-full text-left px-2.5 py-1 text-[11px] text-[#334155] hover:bg-[#F8FAFC] font-semibold rounded transition-colors"
-                      >
-                        Help &amp; shortcuts
-                      </button>
                       <button
                         onClick={handleLogout}
                         className="w-full text-left px-2.5 py-1 text-[11px] text-[#B91C1C] hover:bg-red-50 font-semibold rounded transition-colors"
@@ -2308,6 +2322,7 @@ export default function App() {
                     userPermissions.includes("admin")
                   const hasAccess =
                     isSuperAdmin ||
+                    item.key === "my_hr" ||
                     userPermissions.includes(item.key) ||
                     userPermissions.some((p) => p.startsWith(item.key + ":") || p.startsWith(item.key + ".")) ||
                     item.children?.some(
@@ -2992,6 +3007,7 @@ export default function App() {
                   onGoToBilling={() => setModule("billing")}
                 />
               )}
+              {module === "emergency" && <OnDutyStrip hmsModule="er" label="ER staff on duty" />}
               {module === "emergency" && (
                 <ErPage
                   setNotice={stableSetNotice}
@@ -3042,6 +3058,7 @@ export default function App() {
                   onNavigate={(m) => setModule(m as Module)}
                 />
               )}
+              {module === "surgery" && <OnDutyStrip hmsModule="ot" label="OT staff on duty" />}
               {module === "surgery" && <Surgery />}
               {(module === "billing_op" ||
                 module === "billing_ip" ||
@@ -3172,6 +3189,7 @@ export default function App() {
                   }}
                 />
               )}
+              {(module === "icu" || module.startsWith("icu_")) && <OnDutyStrip hmsModule="icu" label="ICU staff on duty" />}
               {(module === "icu" || module.startsWith("icu_")) && (
                 <ICU
                   unit={
@@ -3361,21 +3379,16 @@ export default function App() {
                   }
                 />
               )}
-              {(module === "admin" || module === "employees" || module === "admin_doctors") && (
+              {(module === "admin" || module === "admin_doctors") && (
                 <Administration
-                  initialTab={
-                    module === "employees"
-                      ? "users"
-                      : module === "admin_doctors"
-                        ? "doctors"
-                        : "overview"
-                  }
+                  initialTab={module === "admin_doctors" ? "doctors" : "overview"}
                   initialDoctorSubTab={module === "admin_doctors" ? "workspace" : undefined}
                   onNavigateToDoctorPortal={() => setModule("doctor_portal")}
                 />
               )}
 
               {/* Outpatient Department Modular Suite */}
+              {module === "op_management" && <OnDutyStrip hmsModule="op" category="doctor" label="Doctors on duty in OP" />}
               {module === "op_management" && (
                 <OPManagement
                   staffName={activeStaff?.name || "OP desk"}
@@ -3518,6 +3531,19 @@ export default function App() {
               {module === "readmission" && (
                 <Readmission setNotice={setNotice} />
               )}
+              {Boolean(HR_MODULE_SECTION_MAP[module]) && (
+                <HrWorkspace
+                  section={HR_MODULE_SECTION_MAP[module]}
+                  onNavigateSection={(sec) => {
+                    const targetModule = Object.entries(HR_MODULE_SECTION_MAP).find(
+                      ([k, v]) => v === sec && k !== "hr_dashboard" && k !== "hr_shifts"
+                    )?.[0]
+                    if (targetModule) setModule(targetModule as Module)
+                  }}
+                  legacy={<HRMS onNavigate={(m) => setModule(m as any)} />}
+                />
+              )}
+              {module === "my_hr" && <MyHR />}
               {module === "ocr" && <SmartOCR setNotice={setNotice} />}
               {ocrMounted && (
                 <div
@@ -3576,27 +3602,15 @@ export default function App() {
             }}
           />
 
-          <HelpModal
-            isOpen={helpOpen}
-            onClose={() => setHelpOpen(false)}
-            onOpenCommandPalette={() => setCmdOpen(true)}
-            onZoomIn={() =>
-              setZoomLevel((z) =>
-                Math.min(1.2, Math.round((z + 0.1) * 10) / 10),
-              )
-            }
-            onZoomOut={() =>
-              setZoomLevel((z) =>
-                Math.max(0.7, Math.round((z - 0.1) * 10) / 10),
-              )
-            }
-            onZoomReset={() => setZoomLevel(1)}
-            currentZoom={zoomLevel}
-            onToggleFullscreen={toggleFullscreen}
-            isFullscreen={isFullscreen}
-            onNavigate={(m) => navigate(m)}
-            onOpenMessages={() => setMessagesOpen(true)}
-          />
+          {globalApplyLeaveOpen && (
+            <ApplyLeaveModal
+              isOpen={globalApplyLeaveOpen}
+              onClose={() => setGlobalApplyLeaveOpen(false)}
+              loggedInStaffId={activeStaff.id}
+              loggedInStaffName={activeStaff.name}
+              isSelfService={userRole !== "ROLE_ADMIN" && userRole !== "ROLE_SUPERADMIN" && userRole !== "ROLE_HR"}
+            />
+          )}
         </>
       )}
     </div>

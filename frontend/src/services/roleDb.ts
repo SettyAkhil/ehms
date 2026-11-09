@@ -160,6 +160,8 @@ export const ALL_SYSTEM_MODULES = [
   "revenue_reports",
   "reports_pharmacy_damaged",
   "reports_supplier_returns",
+  "hrms",
+  "my_hr",
   "employees",
   "patient_exp",
   "patient_messages",
@@ -395,15 +397,43 @@ const INITIAL_ROLES: AppRole[] = [
   },
   {
     id: "ROLE_HR_MANAGER",
-    name: "Hospital Staff Manager",
-    allowedModules: ["employees"],
+    name: "HR & Staff Manager",
+    allowedModules: [
+      "hrms",
+      "my_hr",
+      "employees",
+      "scheduling",
+      "hr_dashboard",
+      "hr_attendance",
+      "hr_staffing",
+      "hr_leave",
+      "hr_approvals",
+      "hr_payroll",
+      "hr_recruitment",
+      "hr_organization",
+      "hr_training",
+      "hr_performance",
+      "hr_compliance",
+      "hr_grievances",
+      "hr_reports",
+      "hr_announcements",
+    ],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_HR_EXECUTIVE",
-    name: "Staff Administration Officer",
-    allowedModules: ["employees"],
+    name: "HR & Staff Officer",
+    allowedModules: [
+      "hrms",
+      "my_hr",
+      "employees",
+      "scheduling",
+      "hr_attendance",
+      "hr_leave",
+      "hr_approvals",
+      "hr_reports",
+    ],
     status: "Active",
     isSystem: true,
   },
@@ -626,11 +656,10 @@ export class RoleDatabase {
         if (r && r.id) {
           const base = roleMap.get(r.id)
           const rawMods = Array.isArray(r.allowedModules) ? r.allowedModules : (base?.allowedModules || [])
-          const cleanedMods = rawMods.filter((m) => m !== "my_hr" && m !== "hrms" && !m.startsWith("hr_"))
           roleMap.set(r.id, {
             ...base,
             ...r,
-            allowedModules: cleanedMods,
+            allowedModules: rawMods,
             status: r.status || base?.status || "Active",
             isSystem: r.isSystem ?? base?.isSystem ?? false,
           })
@@ -965,6 +994,8 @@ export class RoleDatabase {
         user = users.find((u) => String(u.username || "").toLowerCase() === "finance")
       } else if (cleanUser === "radiology") {
         user = users.find((u) => String(u.username || "").toLowerCase() === "radiology")
+      } else if (cleanUser === "hr") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "hr")
       }
     }
 
@@ -985,6 +1016,7 @@ export class RoleDatabase {
       "finance",
       "radiology",
       "insurance",
+      "hr",
     ].includes(String(user.username || "").toLowerCase())
 
     const pwMatches =
