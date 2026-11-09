@@ -1013,8 +1013,8 @@ export function renderTriagePill(category: string | null | undefined) {
   )
 }
 
-function renderStatusPill(status: string) {
-  const s = status.toLowerCase()
+function renderStatusPill(status?: string) {
+  const s = (status || "").toLowerCase()
 
   if (s === "under_treatment" || s === "treatment") {
     return (
@@ -5188,7 +5188,7 @@ function ExistingPatientIntakePanel({
                               {formatDateTimeIST(v.arrival_at)}
                             </span>
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
-                              {v.status.toUpperCase()}
+                              {(v.status || "ACTIVE").toUpperCase()}
                             </span>
                           </div>
                           <div className="text-slate-700">
@@ -9540,8 +9540,9 @@ function PatientHistoryArchiveModal({
                               </span>
                             )}
                             <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {STATUS_LABELS[v.status] ||
-                                v.status.toUpperCase()}
+                              {v.status
+                                ? STATUS_LABELS[v.status] || v.status.toUpperCase()
+                                : "ACTIVE"}
                             </span>
                             <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                               Triage: {v.triage_category || "B2"} (
@@ -11888,8 +11889,10 @@ export function VisitDetailPanel({
               </span>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-none text-xs font-bold bg-[#FEF3C7] text-[#B45309] border border-amber-300 whitespace-nowrap">
                 <span className="w-2 h-2 rounded-full bg-[#B45309] animate-pulse"></span>
-                {STATUS_LABELS[detail.status] ||
-                  detail.status.replace(/_/g, " ").toUpperCase()}
+                {detail.status
+                  ? STATUS_LABELS[detail.status] ||
+                    detail.status.replace(/_/g, " ").toUpperCase()
+                  : "WAITING / REGISTERED"}
               </span>
             </div>
 
