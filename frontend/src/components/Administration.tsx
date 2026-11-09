@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react"
+import { clearAllApplicationData } from "../services/legacySeedPurge"
 import {
   getDoctorMaster,
   addDoctorMaster,
@@ -2329,6 +2330,32 @@ export default function Administration() {
                     <div className="w-4 h-4 bg-white shadow"></div>
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between p-4 bg-rose-50/50 border border-rose-200">
+                  <div>
+                    <div className="font-bold text-rose-900 text-[13.5px]">
+                      Wipe All Patient &amp; Test Data
+                    </div>
+                    <div className="text-[11.5px] text-rose-700">
+                      Remove all patients, encounters, queue entries, visits, and billing claims to start from a completely clean slate.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "⚠️ Reset Application to Clean Slate?\n\nThis will completely remove all patients, visits, queue records, lab orders, pharmacy dispensing, and invoices so you can test from scratch.\n\nUser logins, roles, and rate cards will be preserved.\n\nClick OK to proceed.",
+                        )
+                      ) {
+                        clearAllApplicationData()
+                      }
+                    }}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-[12.5px] font-bold shadow-xs transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    🧹 Clear All Data
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
@@ -2678,20 +2705,34 @@ export default function Administration() {
               </div>
 
               <div>
-                <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  Account Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[12px] font-bold text-[#334155]">
+                    Account Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCredentialsForm({
+                        ...credentialsForm,
+                        password: `Pass#${Math.floor(1000 + Math.random() * 9000)}`,
+                      })
+                    }
+                    className="text-[11px] font-semibold text-[#1B4FD8] hover:underline"
+                  >
+                    🎲 Generate Password
+                  </button>
+                </div>
                 <input
                   required
                   type="text"
-                  value={credentialsForm.password || "password123"}
+                  value={credentialsForm.password ?? ""}
                   onChange={(e) =>
                     setCredentialsForm({
                       ...credentialsForm,
                       password: e.target.value,
                     })
                   }
-                  placeholder="password123"
+                  placeholder="Enter or generate password..."
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
@@ -3017,16 +3058,31 @@ export default function Administration() {
               </div>
 
               <div>
-                <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  Initial Account Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[12px] font-bold text-[#334155]">
+                    Initial Account Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingUser({
+                        ...editingUser,
+                        password: `Pass#${Math.floor(1000 + Math.random() * 9000)}`,
+                      })
+                    }
+                    className="text-[11px] font-semibold text-[#1B4FD8] hover:underline"
+                  >
+                    🎲 Generate Password
+                  </button>
+                </div>
                 <input
                   required
                   type="text"
-                  value={editingUser.password || "password123"}
+                  value={editingUser.password ?? ""}
                   onChange={(e) =>
                     setEditingUser({ ...editingUser, password: e.target.value })
                   }
+                  placeholder="Enter password..."
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>
@@ -3074,14 +3130,26 @@ export default function Administration() {
               </div>
 
               <div>
-                <label className="block text-[12px] font-bold text-[#334155] mb-1.5">
-                  New Password
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[12px] font-bold text-[#334155]">
+                    New Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewPassInput(`Pass#${Math.floor(1000 + Math.random() * 9000)}`)
+                    }
+                    className="text-[11px] font-semibold text-[#1B4FD8] hover:underline"
+                  >
+                    🎲 Generate Password
+                  </button>
+                </div>
                 <input
                   required
                   type="text"
                   value={newPassInput}
                   onChange={(e) => setNewPassInput(e.target.value)}
+                  placeholder="Enter new password..."
                   className="w-full bg-white border border-[#DDE2EC] px-3.5 py-2 text-[13px] text-[#0F172A] focus:outline-none focus:border-[#1B4FD8] font-mono"
                 />
               </div>

@@ -54,7 +54,7 @@ export default function EnhancedAuditRulesPage({
   const auditLogs = useMemo(() => {
     const list: any[] = []
     cases.forEach((c) => {
-      (c.timeline || []).forEach((t, idx) => {
+      ((c as any).timeline || []).forEach((t: any, idx: any) => {
         list.push({
           id: `AUD-${c.id}-${idx}`,
           timestamp: t.at || c.updatedAt || c.createdAt,
@@ -67,7 +67,7 @@ export default function EnhancedAuditRulesPage({
           details: t.description || `Case status updated to ${c.status}`,
         })
       })
-      if (!c.timeline || c.timeline.length === 0) {
+      if (!(c as any).timeline || (c as any).timeline.length === 0) {
         list.push({
           id: `AUD-${c.id}`,
           timestamp: c.updatedAt || c.createdAt,

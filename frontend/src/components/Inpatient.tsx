@@ -30,6 +30,7 @@ type Bed = {
   admission_id: number | null
   allocation_id: number | null
   allocated_at: string | null
+  admission_notes?: string | null
 }
 
 type Summary = {

@@ -1,0 +1,11 @@
+{
+  "name": "main-ehms-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Workspace root for Enterprise Hospital Management System",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build"
+  }
+}
+

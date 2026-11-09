@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useMemo } from "react"
 import toast from "react-hot-toast"
 import { useStickyState } from "../hooks/useStickyState"
 import { AppointmentBookingModal } from "./Appointments"
@@ -82,6 +82,78 @@ export default function Registration({
     phone: string
   } | null>(null)
 
+  // Edit Existing Patient Modal State
+  const [editingPatient, setEditingPatient] = useState<DBPatient | null>(null)
+  const [editFormData, setEditFormData] = useState({
+    name: "",
+    dob: "",
+    age: 0,
+    sex: "Male" as "Male" | "Female" | "Other",
+    bloodGroup: "",
+    phone: "",
+    address: "",
+  })
+
+  const handleOpenEditPatient = (p: DBPatient) => {
+    setEditingPatient(p)
+    setEditFormData({
+      name: p.name || "",
+      dob: p.dob || "",
+      age: p.age || 0,
+      sex: (p.sex as any) || "Male",
+      bloodGroup: p.bloodGroup || "",
+      phone: p.phone || "",
+      address: p.address || "",
+    })
+  }
+
+  const handleEditDobChange = (newDob: string) => {
+    const computedAge = calculateAge(newDob)
+    setEditFormData((prev) => ({
+      ...prev,
+      dob: newDob,
+      age: computedAge,
+    }))
+  }
+
+  const handleSaveEditPatient = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingPatient) return
+    if (!editFormData.name.trim()) {
+      toast.error("Please enter patient name.")
+      return
+    }
+    const phoneVal = validatePhoneNumber(editFormData.phone)
+    if (!phoneVal.isValid) {
+      toast.error(phoneVal.error || "Please enter a valid mobile phone number.")
+      return
+    }
+
+    try {
+      db.updatePatient(editingPatient.umr, {
+        name: editFormData.name.trim(),
+        dob: editFormData.dob || undefined,
+        age:
+          editFormData.age > 0
+            ? editFormData.age
+            : editFormData.dob
+              ? calculateAge(editFormData.dob)
+              : editingPatient.age,
+        sex: editFormData.sex,
+        bloodGroup: editFormData.bloodGroup || undefined,
+        phone: editFormData.phone.trim(),
+        address: editFormData.address.trim() || undefined,
+      })
+      refreshFromDb()
+      toast.success(
+        `Patient details updated for ${editingPatient.name} (${editingPatient.umr})`,
+      )
+      setEditingPatient(null)
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update patient details.")
+    }
+  }
+
   // Sync with DB
   const refreshFromDb = () => {
     const allPatients = db.getPatients()
@@ -101,6 +173,29 @@ export default function Registration({
     }
   }, [])
 
+  const isEncounterToday = (e: DBOPEncounter) => {
+    const todayStr = new Date().toISOString().split("T")[0]
+    const todayLocale = new Date().toLocaleDateString("en-CA")
+    if (e.date && (e.date === todayStr || e.date === todayLocale)) return true
+    if (e.createdAt) {
+      const encDate = new Date(e.createdAt).toISOString().split("T")[0]
+      if (encDate === todayStr || encDate === todayLocale) return true
+    }
+    return false
+  }
+
+  const unassignedToday = useMemo(
+    () =>
+      encounters.filter(
+        (e) =>
+          !e.assignedDoctor?.trim() &&
+          isEncounterToday(e) &&
+          e.status !== "Cancelled" &&
+          e.status !== "Discharged",
+      ),
+    [encounters],
+  )
+
   // Form State
   // Draft-backed: App.tsx unmounts this screen when the user navigates, so plain
   // component state meant a half-filled patient form vanished the moment
@@ -115,6 +210,7 @@ export default function Registration({
       dob: "",
       age: 0,
       sex: "" as "Male" | "Female" | "Other" | "",
+      bloodGroup: "",
       // Contact Information
       phone: "",
       email: "",
@@ -273,6 +369,7 @@ export default function Registration({
           dob: finalDob,
           age: computedAge,
           sex: (formData.sex as "Male" | "Female" | "Other") || "Male",
+          bloodGroup: formData.bloodGroup || undefined,
           phone: finalPhone,
           address: formData.address.trim() || "Local Address",
         })
@@ -318,6 +415,7 @@ export default function Registration({
       dob: "",
       age: 0,
       sex: "",
+      bloodGroup: "",
       phone: "",
       email: "",
       address: "",
@@ -443,6 +541,183 @@ export default function Registration({
         encounter={selectedJourneyEncounter}
         onClose={() => setSelectedJourneyEncounter(null)}
       />
+
+      {/* Edit Existing Patient Details Modal */}
+      {editingPatient && (
+        <div className="fixed inset-0 bg-gray-900/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-2 border-[#CBD5E1] shadow-2xl w-full max-w-lg rounded-none overflow-hidden animate-in fade-in">
+            <div className="px-5 py-3.5 bg-[#0F172A] text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">✏️</span>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    Edit Patient Details
+                  </h3>
+                  <span className="text-[11px] font-mono text-sky-300">
+                    UMR: {editingPatient.umr}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPatient(null)}
+                className="text-slate-400 hover:text-white text-lg p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditPatient} className="p-5 space-y-4">
+              <div>
+                <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  required
+                  type="text"
+                  value={editFormData.name}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, name: e.target.value })
+                  }
+                  className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                    Date of Birth
+                  </label>
+                  <input
+                    type="date"
+                    value={editFormData.dob}
+                    onChange={(e) => handleEditDobChange(e.target.value)}
+                    max={new Date().toISOString().split("T")[0]}
+                    className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                    Age (Years)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="130"
+                    value={editFormData.age > 0 ? editFormData.age : ""}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        age: parseInt(e.target.value, 10) || 0,
+                      })
+                    }
+                    className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                    Sex at Birth <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={editFormData.sex}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        sex: e.target.value as any,
+                      })
+                    }
+                    className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                    required
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                    Blood Group
+                  </label>
+                  <select
+                    value={editFormData.bloodGroup}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        bloodGroup: e.target.value,
+                      })
+                    }
+                    className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                  >
+                    <option value="">Select Blood Group...</option>
+                    <option value="A+">A+</option>
+                    <option value="A-">A-</option>
+                    <option value="B+">B+</option>
+                    <option value="B-">B-</option>
+                    <option value="AB+">AB+</option>
+                    <option value="AB-">AB-</option>
+                    <option value="O+">O+</option>
+                    <option value="O-">O-</option>
+                    <option value="Unknown">Unknown / Not Tested</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                  Mobile Phone <span className="text-red-500">*</span>
+                </label>
+                <input
+                  required
+                  type="tel"
+                  value={editFormData.phone}
+                  onChange={(e) =>
+                    setEditFormData({ ...editFormData, phone: e.target.value })
+                  }
+                  placeholder="+91 98765 43210"
+                  className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-bold text-[#334155] mb-1">
+                  Address
+                </label>
+                <input
+                  type="text"
+                  value={editFormData.address}
+                  onChange={(e) =>
+                    setEditFormData({
+                      ...editFormData,
+                      address: e.target.value,
+                    })
+                  }
+                  placeholder="Street / City address"
+                  className="w-full border border-[#CBD5E1] rounded px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#E2E8F0]">
+                <button
+                  type="button"
+                  onClick={() => setEditingPatient(null)}
+                  className="px-4 py-2 bg-white hover:bg-gray-100 border border-[#CBD5E1] text-[#334155] text-[12.5px] font-semibold rounded cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12.5px] font-semibold rounded shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>💾</span> Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Main Workspace */}
       <div className="flex-1 overflow-y-auto p-6 w-full space-y-6">
@@ -630,20 +905,30 @@ export default function Registration({
                           </div>
 
                           {/* Existing Patient Workflow -> Next Step Action */}
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleCreateRevisitEncounter(
-                                matchingExistingPatient,
-                              )
-                              resetForm()
-                            }}
-                            className="px-5 py-2.5 bg-gradient-to-r from-[#1E3A8A] to-[#1B4FD8] hover:from-[#1E40AF] hover:to-[#2563EB] text-white text-[13px] font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            <span>🔄</span> Continue with Existing Patient (
-                            {matchingExistingPatient.umr}) ➔ Proceed to Next
-                            Step
-                          </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditPatient(matchingExistingPatient)}
+                              className="px-3.5 py-2.5 bg-white hover:bg-blue-50 text-blue-900 border border-blue-300 text-[12.5px] font-semibold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                              title="Edit patient demographics & contact information"
+                            >
+                              <span>✏️</span> Edit Details
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleCreateRevisitEncounter(
+                                  matchingExistingPatient,
+                                )
+                                resetForm()
+                              }}
+                              className="px-5 py-2.5 bg-gradient-to-r from-[#1E3A8A] to-[#1B4FD8] hover:from-[#1E40AF] hover:to-[#2563EB] text-white text-[13px] font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
+                            >
+                              <span>🔄</span> Continue with Existing Patient (
+                              {matchingExistingPatient.umr}) ➔ Proceed to Next
+                              Step
+                            </button>
+                          </div>
                         </div>
 
                         {/* View Existing Patient Record Details */}
@@ -762,7 +1047,7 @@ export default function Registration({
                   2. Patient Details
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <label className="text-[12px] font-semibold text-gray-800 block mb-1.5">
                       Date of Birth (DOB)
@@ -815,6 +1100,29 @@ export default function Registration({
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                       <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-semibold text-gray-800 block mb-1.5">
+                      Blood Group
+                    </label>
+                    <select
+                      value={formData.bloodGroup}
+                      onChange={(e) =>
+                        setFormData({ ...formData, bloodGroup: e.target.value })
+                      }
+                      className="w-full border border-[#94A3B8] rounded-lg px-3 py-2 text-[13px] bg-white focus:outline-none focus:border-[#1B4FD8] focus:ring-2 focus:ring-blue-100 font-medium text-gray-900"
+                    >
+                      <option value="">Select Blood Group...</option>
+                      <option value="A+">A+</option>
+                      <option value="A-">A-</option>
+                      <option value="B+">B+</option>
+                      <option value="B-">B-</option>
+                      <option value="AB+">AB+</option>
+                      <option value="AB-">AB-</option>
+                      <option value="O+">O+</option>
+                      <option value="O-">O-</option>
+                      <option value="Unknown">Unknown / Not Tested</option>
                     </select>
                   </div>
                 </div>
@@ -993,11 +1301,22 @@ export default function Registration({
                             </div>
                             <div className="text-[11.5px] text-[#64748B]">
                               {p.age} yrs · {p.sex} · {p.phone}
+                              {p.bloodGroup ? ` · Blood: ${p.bloodGroup}` : ""}
                             </div>
                           </div>
-                          <span className="font-mono text-[12.5px] font-bold text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                            {p.umr}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditPatient(p)}
+                              className="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold border border-slate-300 transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                              title="Edit patient details"
+                            >
+                              <span>✏️</span> Edit
+                            </button>
+                            <span className="font-mono text-[12.5px] font-bold text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                              {p.umr}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Past Visits history preview */}
@@ -1030,16 +1349,26 @@ export default function Registration({
                         </div>
                       </div>
 
-                      <div className="flex justify-between items-center pt-2 border-t border-[#F1F5F9] mt-2">
+                      <div className="flex justify-between items-center pt-2 border-t border-[#F1F5F9] mt-2 gap-2 flex-wrap">
                         <span className="text-[11.5px] text-[#166534] font-semibold">
                           ✓ Retain {p.umr}
                         </span>
-                        <button
-                          onClick={() => handleCreateRevisitEncounter(p)}
-                          className="px-3.5 py-1.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12px] font-semibold rounded transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <span>🔄</span> Generate New Visit OP Number ➔
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditPatient(p)}
+                            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-[#CBD5E1] text-[12px] font-semibold rounded transition-colors flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                            title="Edit patient demographics & contact information"
+                          >
+                            <span>✏️</span> Edit Details
+                          </button>
+                          <button
+                            onClick={() => handleCreateRevisitEncounter(p)}
+                            className="px-3.5 py-1.5 bg-[#1B4FD8] hover:bg-[#1740B4] text-white text-[12px] font-semibold rounded transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          >
+                            <span>🔄</span> Generate New Visit OP Number ➔
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )
@@ -1162,16 +1491,12 @@ export default function Registration({
                   <div className="px-4 py-2.5 border-b border-[#DDE2EC]">
                     <h3 className="text-[12.5px] font-bold text-gray-900">
                       Registered today, no doctor booked yet (
-                      {
-                        encounters.filter((e) => !e.assignedDoctor?.trim())
-                          .length
-                      }
+                      {unassignedToday.length}
                       )
                     </h3>
                   </div>
                   <div className="max-h-72 overflow-y-auto">
-                    {encounters
-                      .filter((e) => !e.assignedDoctor?.trim())
+                    {unassignedToday
                       .slice(0, 25)
                       .map((e) => (
                         <button
@@ -1198,8 +1523,7 @@ export default function Registration({
                           </span>
                         </button>
                       ))}
-                    {encounters.filter((e) => !e.assignedDoctor?.trim())
-                      .length === 0 && (
+                    {unassignedToday.length === 0 && (
                       <p className="p-5 text-center text-[12px] text-[#94A3B8]">
                         Everyone registered today already has a doctor booked.
                       </p>

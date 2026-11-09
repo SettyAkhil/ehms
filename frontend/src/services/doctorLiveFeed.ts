@@ -211,12 +211,23 @@ export function buildDoctorLiveBoard(
     return n === normDocName || (n.length >= 4 && normDocName.length >= 4 && (n.includes(normDocName) || normDocName.includes(n)))
   }
 
+  const attendedEncounterIds = new Set(
+    mine
+      .filter((e) => !isWaitingForDoctor(e.status) || e.status === "Consultation Completed" || e.status === "Awaiting Billing" || e.status === "Under Consultation")
+      .map((e) => e.id),
+  )
+
   const labOrders = LabOrderDatabase.getOrders().filter(
-    (order) =>
-      order &&
-      (order.doctorId === doctor?.id ||
-        isDocMatch(order.doctorId, order.doctorName) ||
-        (order.umr && myUmrs.has(order.umr.toUpperCase()))),
+    (order) => {
+      if (!order) return false
+      // Only include orders ordered by this doctor or associated with an encounter that has commenced or completed consultation
+      const docMatches = order.doctorId === doctor?.id || isDocMatch(order.doctorId, order.doctorName)
+      if (order.encounterId && attendedEncounterIds.has(order.encounterId)) {
+        return docMatches || (order.umr && myUmrs.has(order.umr.toUpperCase()))
+      }
+      // If there is no specific encounter linked or patient has not attended consultation yet, require direct doctor assignment and order created today
+      return docMatches && isToday(order.createdAt)
+    },
   )
   const prescriptions = PharmacyDatabase.getPrescriptions().filter(
     (rx) =>

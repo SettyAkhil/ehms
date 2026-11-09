@@ -70,24 +70,12 @@ export function getDoctorMaster(): MasterDoctor[] {
     }
 
     const parsed: MasterDoctor[] = JSON.parse(stored)
-    if (!Array.isArray(parsed)) return []
-
-    // Filter out legacy demo doctors
-    const filtered = parsed.filter(
-      (d) =>
-        d &&
-        !String(d.id).startsWith("IMP-0") &&
-        !String(d.id).startsWith("IMP-1") &&
-        !String(d.id).startsWith("IMP-2") &&
-        d.name !== "Dr. P. R. K. Varma" &&
-        d.name !== "Dr. Rajesh Sharma"
-    )
-
-    if (filtered.length !== parsed.length) {
-      window.localStorage.setItem(DOCTOR_MASTER_KEY, JSON.stringify(filtered))
+    if (!Array.isArray(parsed)) {
+      window.localStorage.setItem(DOCTOR_MASTER_KEY, JSON.stringify([]))
+      return []
     }
 
-    return filtered
+    return parsed
   } catch {
     return []
   }

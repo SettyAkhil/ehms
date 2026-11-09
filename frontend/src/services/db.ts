@@ -377,11 +377,11 @@ class HospitalDatabase {
     }
 
     if (!safeDbGetItem(STORAGE_KEYS.UMR_COUNTER)) {
-      safeDbSetItem(STORAGE_KEYS.UMR_COUNTER, "10048")
+      safeDbSetItem(STORAGE_KEYS.UMR_COUNTER, "10001")
     }
 
     if (!safeDbGetItem(STORAGE_KEYS.OP_COUNTER)) {
-      safeDbSetItem(STORAGE_KEYS.OP_COUNTER, "33")
+      safeDbSetItem(STORAGE_KEYS.OP_COUNTER, "1")
     }
 
     // Drop sample records older builds seeded, and deduplicate
@@ -796,7 +796,7 @@ class HospitalDatabase {
     // Next UMR Generator
 
     const currentCounter = parseInt(
-      safeDbGetItem(STORAGE_KEYS.UMR_COUNTER) || "10048",
+      safeDbGetItem(STORAGE_KEYS.UMR_COUNTER) || "10000",
       10,
     )
 
@@ -809,7 +809,7 @@ class HospitalDatabase {
     // Global Continuous Unique OP Number Generator
 
     const currentOpCounter = parseInt(
-      safeDbGetItem(STORAGE_KEYS.OP_COUNTER) || "33",
+      safeDbGetItem(STORAGE_KEYS.OP_COUNTER) || "0",
       10,
     )
 
@@ -1395,6 +1395,56 @@ class HospitalDatabase {
     this.notify()
 
     return updated
+  }
+
+  /**
+   * Update existing patient demographics and synchronize encounters
+   */
+  public updatePatient(
+    umr: string,
+    updates: Partial<Omit<DBPatient, "umr" | "createdAt">>,
+  ): DBPatient {
+    const patients = this.getPatients()
+    let updatedPatient: DBPatient | null = null
+
+    const newPatients = patients.map((p) => {
+      if (p.umr.toUpperCase() === umr.toUpperCase()) {
+        updatedPatient = {
+          ...p,
+          ...updates,
+          updatedAt: new Date().toISOString(),
+        }
+        return updatedPatient
+      }
+      return p
+    })
+
+    if (!updatedPatient) {
+      throw new Error(`Patient with UMR ${umr} not found.`)
+    }
+
+    safeDbSetItem(STORAGE_KEYS.PATIENTS, JSON.stringify(newPatients))
+
+    // Synchronize latest demographics to encounters under this UMR
+    const encounters = this.getEncounters()
+    const newEncounters = encounters.map((e) => {
+      if (e.umr.toUpperCase() === umr.toUpperCase()) {
+        return {
+          ...e,
+          ...(updates.name ? { patientName: updates.name } : {}),
+          ...(updates.age !== undefined ? { age: updates.age } : {}),
+          ...(updates.sex ? { sex: updates.sex } : {}),
+          ...(updates.phone ? { phone: updates.phone } : {}),
+          ...(updates.address ? { address: updates.address } : {}),
+          ...(updates.bloodGroup ? { bloodGroup: updates.bloodGroup } : {}),
+        }
+      }
+      return e
+    })
+    safeDbSetItem(STORAGE_KEYS.ENCOUNTERS, JSON.stringify(newEncounters))
+
+    this.notify()
+    return updatedPatient
   }
 
   /**

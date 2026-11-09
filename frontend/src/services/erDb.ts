@@ -4,6 +4,7 @@
  */
 
 import { db } from "./db"
+import { BedDatabase } from "./bedDb"
 import { LLM_API_KEY, LLM_CHAT_URL, llmModel } from "../lib/llm"
 
 export interface ErPatientMedicalProfile {
@@ -804,6 +805,7 @@ export class ErDatabase {
           allergies: updates.allergies !== undefined ? updates.allergies : (v.patient?.allergies || "No Known Allergies"),
           blood_group: updates.blood_group || v.patient?.blood_group || "O+",
           guardian_name: updates.guardian_name !== undefined ? updates.guardian_name : (v.patient?.guardian_name || ""),
+          created_at: v.patient?.created_at || new Date().toISOString(),
         }
         changed = true
       }
@@ -1408,6 +1410,7 @@ export class ErDatabase {
   }
 
   static async createVisit(visitData: {
+    [key: string]: any
     patientId?: string
 
     patientDetails?: Partial<ErPatient>

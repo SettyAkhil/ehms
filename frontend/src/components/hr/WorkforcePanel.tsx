@@ -20,7 +20,11 @@ export default function WorkforcePanel({ onOpen }: { onOpen?: () => void }) {
   const [data, setData] = useState<CC | null>(null)
   useEffect(() => {
     let alive = true
-    const load = () => hr.get<CC>("/api/v1/hr/command-center").then((d) => alive && setData(d)).catch(() => alive && setData(null))
+    const load = () =>
+      hr
+        .get<CC>("/api/v1/hr/command-center")
+        .then((d) => alive && setData(d && d.workforce ? d : null))
+        .catch(() => alive && setData(null))
     load()
     const t = setInterval(load, 120_000)
     return () => {
@@ -28,7 +32,7 @@ export default function WorkforcePanel({ onOpen }: { onOpen?: () => void }) {
       clearInterval(t)
     }
   }, [])
-  if (!data) return null
+  if (!data || !data.workforce || !data.attendance_today) return null
   const stat = (label: string, value: string | number, tone = "text-gray-900") => (
     <div className="px-3 py-2">
       <div className="text-[10px] uppercase tracking-wider font-semibold text-gray-500">{label}</div>
@@ -48,19 +52,19 @@ export default function WorkforcePanel({ onOpen }: { onOpen?: () => void }) {
         )}
       </header>
       <div className="grid grid-cols-3 md:grid-cols-7 divide-x divide-[#DDE2EC]">
-        {stat("On duty", data.workforce.on_duty_now)}
-        {stat("Checked in", data.workforce.checked_in_now, "text-[#1B4FD8]")}
-        {stat("Attendance", data.attendance_today.rate !== null ? `${data.attendance_today.rate}%` : "—")}
-        {stat("Absent", data.attendance_today.absent, data.attendance_today.absent ? "text-rose-700" : undefined)}
-        {stat("Short staffed", data.shortages.length, data.shortages.length ? "text-rose-700" : undefined)}
-        {stat("Approvals", data.pending_approvals)}
-        {stat("Devices offline", data.devices.offline ?? 0, data.devices.offline ? "text-rose-700" : undefined)}
+        {stat("On duty", data.workforce.on_duty_now ?? 0)}
+        {stat("Checked in", data.workforce.checked_in_now ?? 0, "text-[#1B4FD8]")}
+        {stat("Attendance", data.attendance_today.rate !== null && data.attendance_today.rate !== undefined ? `${data.attendance_today.rate}%` : "—")}
+        {stat("Absent", data.attendance_today.absent ?? 0, data.attendance_today.absent ? "text-rose-700" : undefined)}
+        {stat("Short staffed", data.shortages?.length ?? 0, data.shortages?.length ? "text-rose-700" : undefined)}
+        {stat("Approvals", data.pending_approvals ?? 0)}
+        {stat("Devices offline", data.devices?.offline ?? 0, data.devices?.offline ? "text-rose-700" : undefined)}
       </div>
-      {!!data.shortages.length && (
+      {!!data.shortages?.length && (
         <ul className="px-4 py-2 border-t border-[#DDE2EC] bg-rose-50/40 text-xs text-rose-800 space-y-0.5">
           {data.shortages.slice(0, 4).map((s, i) => (
             <li key={i} className="flex items-center gap-1">
-              <AlertTriangle className="w-3.5 h-3.5" /> {s.department}, {s.shift}: {s.assigned}/{s.required} {s.category.replace(/_/g, " ")}
+              <AlertTriangle className="w-3.5 h-3.5" /> {s.department}, {s.shift}: {s.assigned}/{s.required} {s.category?.replace(/_/g, " ") ?? ""}
             </li>
           ))}
         </ul>

@@ -701,7 +701,7 @@ export class LabOrderDatabase {
     if (result) {
       try {
         const invoiceNo = result.billing.invoiceNo || `INV-LAB-${result.id.slice(-6)}`
-        const receiptNo = result.billing.receiptNo
+        const receiptNo = result.billing.receiptNo || `REC-LAB-${result.id.slice(-6)}`
         const nowIso = result.billing.paidAt || new Date().toISOString()
         const paidAmount = result.billing.total
         const claimId = `CLM-${result.id}`

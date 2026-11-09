@@ -874,8 +874,37 @@ export default function OPWorkflow({
           </p>
         </div>
 
-        {/* Quick Patient Selector from Database */}
-        <div className="flex items-center gap-2.5">
+        {/* Quick Patient Selector & Handheld Barcode Scanner */}
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-white border border-[#CBD5E1] px-2.5 py-1.5 rounded shadow-2xs">
+            <span className="text-gray-500 text-[13px]">🏷️</span>
+            <input
+              type="text"
+              placeholder="Scan OP Barcode / UMR..."
+              title="Scan patient card barcode or press Enter"
+              className="w-48 text-[12px] font-mono focus:outline-none placeholder:text-gray-400"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const val = (e.currentTarget.value || "").trim().toUpperCase()
+                  if (val) {
+                    const match = dbEncounters.find(
+                      (enc) =>
+                        enc.umr?.toUpperCase() === val ||
+                        enc.opNumber?.toUpperCase() === val ||
+                        enc.id === val,
+                    )
+                    if (match) {
+                      loadEncounterIntoWorkflow(match)
+                      e.currentTarget.value = ""
+                    } else {
+                      alert(`No outpatient record found for barcode: ${val}`)
+                    }
+                  }
+                }
+              }}
+            />
+          </div>
+
           <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] px-3.5 py-1.5 rounded text-[12px]">
             <span className="text-[#64748B] font-medium whitespace-nowrap">
               Active Encounter:
@@ -1697,18 +1726,27 @@ export default function OPWorkflow({
                     }}
                     className="text-[11.5px] font-semibold text-gray-700 bg-white border border-[#CBD5E1] rounded px-2.5 py-1.5 focus:outline-none focus:border-[#1B4FD8] cursor-pointer"
                   >
-                    {getDoctorMaster()
-                      .filter(
-                        (d) =>
-                          d.verified &&
-                          (d.specialty === patient.aiSpecialty ||
-                            !patient.aiSpecialty),
-                      )
-                      .map((d) => (
-                        <option key={d.id} value={d.name}>
-                          {d.name} ({d.qualification}) — {d.room}
-                        </option>
-                      ))}
+                    {getDoctorMaster().filter(
+                      (d) =>
+                        d.verified &&
+                        (d.specialty === patient.aiSpecialty ||
+                          !patient.aiSpecialty),
+                    ).length === 0 ? (
+                      <option value="">No doctors available in roster</option>
+                    ) : (
+                      getDoctorMaster()
+                        .filter(
+                          (d) =>
+                            d.verified &&
+                            (d.specialty === patient.aiSpecialty ||
+                              !patient.aiSpecialty),
+                        )
+                        .map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name} ({d.qualification}) — {d.room}
+                          </option>
+                        ))
+                    )}
                   </select>
                 </div>
               </div>

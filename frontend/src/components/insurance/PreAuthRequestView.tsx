@@ -221,7 +221,7 @@ export default function PreAuthRequestView({
   useEffect(() => {
     try {
       const claims = InsuranceEngineService.getClaims()
-      const candidate = claims.find((c) => c.status === "Draft" || c.status === "Pre-Auth" || c.status === "Awaiting Pre-Auth") || claims[0]
+      const candidate: any = claims.find((c: any) => c.status === "Draft" || c.status === "Pre-Auth" || c.status === "Awaiting Pre-Auth") || claims[0]
       if (candidate) {
         setUhid(candidate.patientId || candidate.uhid || "")
         setPatientName(candidate.patientName || "")

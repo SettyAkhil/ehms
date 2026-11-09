@@ -1233,6 +1233,143 @@ export class BillingDatabase {
 
   // ── INVOICES & CLAIMS ───────────────────────────────────────────────────────
 
+  static saveClaims(claims: ClaimRecord[]): void {
+    this.save(STORAGE_KEY_CLAIMS, claims)
+  }
+
+  static ensureInpatientClaims(): void {
+    try {
+      const beds = BedDatabase.getBeds()
+      const occupied = beds.filter((b) => b.status === "Occupied" && (b.patient_id || b.patient_name))
+      if (occupied.length === 0) return
+
+      let claims = this.load<ClaimRecord[]>(STORAGE_KEY_CLAIMS, [])
+      let updated = false
+
+      for (const b of occupied) {
+        const pId = b.patient_id || `IP-${b.id}`
+        const pName = b.patient_name || "Inpatient"
+        const exists = claims.some(
+          (c) =>
+            (c.patientId === pId || (c.patientName && c.patientName.toLowerCase() === pName.toLowerCase())) &&
+            (c.department === "Inpatient" || c.department === "ICU") &&
+            c.status !== "Voided" &&
+            c.status !== "Paid"
+        )
+
+        if (!exists) {
+          const admitTime = b.admission_date
+            ? new Date(b.admission_date).getTime()
+            : b.allocated_at
+            ? new Date(b.allocated_at).getTime()
+            : Date.now() - 86400000 * 2
+          const days = Math.max(1, Math.ceil((Date.now() - admitTime) / (1000 * 60 * 60 * 24)))
+          const dailyRate = b.daily_rate || (b.ward === "ICU" ? 5500 : 2000)
+          const roomTotal = days * dailyRate
+          const nursingTotal = days * 600
+          const docTotal = days * 1000
+          const total = roomTotal + nursingTotal + docTotal
+
+          const maxClaimNum = claims.reduce((max, c) => {
+            const num = parseInt((c.id || "").replace(/\D/g, ""), 10)
+            return !isNaN(num) && num > max ? num : max
+          }, 8937)
+          const claimNum = maxClaimNum + 1
+
+          const maxInvNum = claims.reduce((max, c) => {
+            const match = (c.invoiceNo || "").match(/(\d+)$/)
+            const num = match ? parseInt(match[1], 10) : 0
+            return num > max ? num : max
+          }, 827)
+          const invNum = maxInvNum + 1
+
+          const items: InvoiceItem[] = [
+            {
+              id: `item-${Date.now()}-${b.id}-1`,
+              code: "IP-BED",
+              description: `${b.ward || "Inpatient Ward"} - Bed ${b.bed_no || b.id} Accommodation (${days} day${days > 1 ? "s" : ""})`,
+              quantity: days,
+              unitPrice: dailyRate,
+              total: roomTotal,
+              patientPayable: roomTotal,
+              insuranceCovered: 0,
+              department: b.ward === "ICU" ? "ICU" : "Inpatient",
+              date: b.admission_date || new Date().toISOString(),
+            },
+            {
+              id: `item-${Date.now()}-${b.id}-2`,
+              code: "IP-NURS",
+              description: "24-Hour Continuous Inpatient Nursing Care",
+              quantity: days,
+              unitPrice: 600,
+              total: nursingTotal,
+              patientPayable: nursingTotal,
+              insuranceCovered: 0,
+              department: b.ward === "ICU" ? "ICU" : "Inpatient",
+              date: b.admission_date || new Date().toISOString(),
+            },
+            {
+              id: `item-${Date.now()}-${b.id}-3`,
+              code: "IP-DOC",
+              description: "Attending Consultant / Inpatient Rounds",
+              quantity: days,
+              unitPrice: 1000,
+              total: docTotal,
+              patientPayable: docTotal,
+              insuranceCovered: 0,
+              department: b.ward === "ICU" ? "ICU" : "Inpatient",
+              date: b.admission_date || new Date().toISOString(),
+            },
+          ]
+
+          const newClaim: ClaimRecord = {
+            id: `CLM-${claimNum}`,
+            invoiceNo: `INV-2026-${String(invNum).padStart(4, "0")}`,
+            patientId: pId,
+            patientName: pName,
+            age: b.patient_age || 42,
+            gender: (b.patient_gender as any) || "Male",
+            contactPhone: b.patient_phone || "(617) 555-0100",
+            department: b.ward === "ICU" ? "ICU" : "Inpatient",
+            encounterType: b.ward === "ICU" ? "ICU" : "Inpatient Ward",
+            ward: b.ward || "General Ward",
+            bedNumber: `${b.room_no || "R1"}-${b.bed_no || "B1"}`,
+            admissionDate: b.admission_date || new Date(Date.now() - 86400000 * days).toISOString(),
+            dischargeDate: undefined,
+            carePathway: "Inpatient",
+            items,
+            subtotal: total,
+            discount: 0,
+            tax: 0,
+            totalAmount: total,
+            paidAmount: 0,
+            balanceDue: total,
+            patientPortion: total,
+            insurancePortion: 0,
+            tpa: undefined,
+            preAuthCode: undefined,
+            status: "Draft",
+            paymentStatus: "Pending",
+            paymentMode: "Cash",
+            isCashless: false,
+            settlementStatus: "Unsettled",
+            createdAt: b.admission_date || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }
+
+          claims.unshift(newClaim)
+          updated = true
+        }
+      }
+
+      if (updated) {
+        this.save(STORAGE_KEY_CLAIMS, claims)
+      }
+    } catch (e) {
+      console.warn("Failed to ensure inpatient claims from beds:", e)
+    }
+  }
+
   static getClaims(filter?: {
     status?: ClaimStatus | "All"
 
@@ -1242,6 +1379,7 @@ export class BillingDatabase {
 
     umr?: string
   }): ClaimRecord[] {
+    this.ensureInpatientClaims()
     let claims = this.load<ClaimRecord[]>(
       STORAGE_KEY_CLAIMS,
       [],

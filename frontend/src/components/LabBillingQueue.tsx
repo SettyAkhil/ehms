@@ -117,7 +117,7 @@ export default function LabBillingQueue({
             total: updated.billing.total,
             insuranceCovered: 0,
             patientPayable: updated.billing.total,
-            orderedBy: selected.doctor || "Ordering Physician",
+            orderedBy: selected.doctorName || selected.doctorId || (selected as any).doctor || "Ordering Physician",
             orderedAt: selected.createdAt || new Date().toISOString(),
           },
         ],

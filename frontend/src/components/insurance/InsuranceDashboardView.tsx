@@ -58,7 +58,8 @@ export default function InsuranceDashboardView({
     cases.forEach((c) => {
       const docs = c.documents || []
       docs.forEach((d) => {
-        if (d.status === "UPLOADED" || d.status === "VERIFIED") complete++
+        const s = (d.status || "").toUpperCase()
+        if (s === "UPLOADED" || s === "VERIFIED") complete++
         else pending++
       })
     })

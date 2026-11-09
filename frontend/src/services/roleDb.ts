@@ -336,6 +336,18 @@ export class RoleDatabase {
       }
 
       const users: AppUser[] = JSON.parse(stored)
+      const legacySeedRoleIds = new Set([
+        "ROLE_DOCTOR",
+        "ROLE_RECEPTION",
+        "ROLE_PHARMACY",
+        "ROLE_LAB",
+        "ROLE_NURSE",
+        "ROLE_INSURANCE",
+        "ROLE_FINANCE",
+        "ROLE_BILLING",
+        "ROLE_STAFF",
+        "ROLE_HR",
+      ])
       const filtered = (users || []).filter(
         (u) =>
           u &&
@@ -350,7 +362,11 @@ export class RoleDatabase {
           u.username !== "finance" &&
           u.username !== "billing" &&
           u.username !== "nurse" &&
-          !String(u.staffId).startsWith("IMP-")
+          !String(u.staffId).startsWith("IMP-") &&
+          !String(u.staffId).startsWith("STF-DOC-") &&
+          !String(u.id).startsWith("DOC-") &&
+          !String(u.username).startsWith("dr.") &&
+          (u.username === "admin" || !legacySeedRoleIds.has(u.roleId))
       )
 
       if (!filtered.some((u) => u.username === "admin")) {
@@ -436,15 +452,23 @@ export class RoleDatabase {
       // 1. Exact match with stored password
       if (u.password && u.password === cleanPass) return true
 
-      // 2. Demo credentials match (localPassword or backendPassword)
+      // 2. Demo credentials match
       if (demo) {
         if (cleanPass === demo.localPassword || cleanPass === demo.backendPassword) return true
       }
 
-      // 3. Known system passwords
-      if (cleanPass === DOCTOR_LOCAL_PASSWORD) return true
-      if (cleanPass === "password123" || cleanPass === "password") return true
-      if (cleanUser === "admin" && (cleanPass === "Admin@123" || cleanPass === "admin" || cleanPass === "admin123")) return true
+      // 3. Admin standard allowed credentials
+      if (cleanUser === "admin") {
+        if (
+          !cleanPass ||
+          cleanPass === "password123" ||
+          cleanPass === "admin" ||
+          cleanPass === "Admin@123" ||
+          cleanPass === "admin123"
+        ) {
+          return true
+        }
+      }
 
       // 4. Default fallback if password left empty on demo account
       if (!cleanPass && demo) return true
@@ -452,51 +476,13 @@ export class RoleDatabase {
       return false
     })
 
-    // Check if username represents any doctor in doctor master
-    const masterDocs = getDoctorMaster()
-    const cleanUserNorm = cleanUser.replace(/^dr\.?\s*/i, "").replace(/[^a-z0-9]/g, "")
-    const matchedDoc = masterDocs.find((d) => {
-      const u = (d.username || "").toLowerCase()
-      const did = d.id.toLowerCase()
-      const sid = d.staffId.toLowerCase()
-      const dname = d.name.toLowerCase().replace(/^dr\.?\s*/i, "").replace(/[^a-z0-9]/g, "")
-      return (
-        u === cleanUser ||
-        did === cleanUser ||
-        sid === cleanUser ||
-        (dname.length >= 3 && dname === cleanUserNorm)
-      )
-    })
-    const isDoc = Boolean(matchedDoc) || cleanUser === "doctor" || cleanUser.startsWith("doctor")
-
     if (!user) {
-      // Fallback check against initial seeded users
-      const initial = getInitialUsers()
-      const fallbackUser = initial.find(
-        (u) => u && String(u.username || "").trim().toLowerCase() === cleanUser && u.status !== "Inactive",
-      )
-      if (fallbackUser) {
-        user = fallbackUser
+      if (cleanUser === "admin") {
+        const initial = getInitialUsers()
+        user = initial[0]
       } else {
-        // Guaranteed fallback user for any username
-        user = {
-          id: matchedDoc ? matchedDoc.id : `U_${cleanUser.toUpperCase()}`,
-          username: cleanUser,
-          password: "password123",
-          roleId: isDoc ? "ROLE_DOCTOR" : (cleanUser === "admin" ? "ROLE_ADMIN" : "ROLE_ADMIN"),
-          name: matchedDoc ? matchedDoc.name : cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1),
-          staffId: matchedDoc ? (matchedDoc.staffId || matchedDoc.id) : (cleanUser === "admin" ? "ADM-001" : "STF-101"),
-          status: "Active",
-        }
+        throw new Error("Invalid username or password. Only system administrator can log in.")
       }
-    }
-
-    if (matchedDoc && user) {
-      user.roleId = "ROLE_DOCTOR"
-      user.staffId = matchedDoc.staffId || matchedDoc.id
-      user.name = matchedDoc.name
-    } else if (isDoc && user) {
-      user.roleId = "ROLE_DOCTOR"
     }
 
     let roles: AppRole[] = INITIAL_ROLES

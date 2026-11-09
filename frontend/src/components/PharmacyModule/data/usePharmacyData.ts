@@ -201,11 +201,9 @@ export function usePharmacyData() {
   }, [])
 
   useEffect(() => {
-    if (
-      typeof window !== "undefined" &&
-      !window.localStorage.getItem("hospai_pharm_fresh_demo_purged_v10")
-    ) {
-      PharmacyDatabase.clearAllPharmacyData()
+    // Prevent unprompted data wipe across tabs
+    if (typeof window !== "undefined" && !window.localStorage.getItem("hospai_pharm_fresh_demo_purged_v10")) {
+      window.localStorage.setItem("hospai_pharm_fresh_demo_purged_v10", "true")
     }
     refresh()
 
@@ -607,8 +605,8 @@ export function usePharmacyData() {
         priority: p.priority || "Normal",
         status: prescriptionStage(p.status),
         pharmacist: p.verifiedBy || null,
-        arrivalTime: p.arrivalTime || (p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""),
-        time: p.arrivalTime || (p as any).time || (p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : ""),
+        arrivalTime: (p as any).prescribedAt || (p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }) : p.arrivalTime || ""),
+        time: (p as any).prescribedAt || (p.createdAt ? new Date(p.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }) : p.arrivalTime || (p as any).time || ""),
         rawItems: Array.isArray(p.items) ? p.items : [],
         verificationNotes: p.verificationNotes || "",
         imageUrl: p.imageUrl,

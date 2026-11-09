@@ -382,60 +382,14 @@ export default function PatientSearch({
                         {new Date(p.createdAt).toLocaleDateString()}
                       </div>
                       <div className="flex items-center gap-2">
-                        {latestEncounter ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSelectedJourneyEncounter(latestEncounter)
-                            }
-                            className="px-2.5 py-1 bg-[#EFF6FF] text-[#1B4FD8] hover:bg-blue-100 rounded-none text-[11px] font-bold border border-blue-200 transition-colors cursor-pointer"
-                          >
-                            View OP Chart
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const syntheticEnc: DBOPEncounter = {
-                                id: `enc-${p.umr}`,
-                                umr: p.umr,
-                                patientName: p.name,
-                                age: p.age,
-                                sex: p.sex,
-                                phone: p.phone,
-                                address: p.address || "OP Patient",
-                                bloodGroup: p.bloodGroup || "O+",
-                                opNumber: `OP-${p.umr}`,
-                                dept: "General OP",
-                                isNew: true,
-                                date: (p.createdAt || new Date().toISOString()).split("T")[0],
-                                createdAt: p.createdAt || new Date().toISOString(),
-                                registrationTime: new Date(p.createdAt || Date.now()).toLocaleTimeString(
-                                  [],
-                                  { hour: "2-digit", minute: "2-digit" },
-                                ),
-                                chiefComplaint: "Outpatient Consultation",
-                                symptoms: ["General Examination"],
-                                aiSpecialty: "General Medicine",
-                                aiDoctor: "Duty Doctor",
-                                doctorGenderPref: "Any",
-                                assignedDoctor: "Duty Doctor",
-                                room: "Room 101",
-                                status: "Registered",
-                                bookedAt:
-                                  p.createdAt || new Date().toISOString(),
-                                timestamps: {
-                                  arrival: p.createdAt || new Date().toISOString(),
-                                  registration: p.createdAt || new Date().toISOString(),
-                                },
-                              } as unknown as DBOPEncounter
-                              setSelectedJourneyEncounter(syntheticEnc)
-                            }}
-                            className="px-2.5 py-1 bg-[#EFF6FF] text-[#1B4FD8] hover:bg-blue-100 rounded-none text-[11px] font-bold border border-blue-200 transition-colors cursor-pointer"
-                          >
-                            View OP Chart &amp; Journey
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => onSelect(p)}
+                          className="px-2.5 py-1 bg-[#EFF6FF] text-[#1B4FD8] hover:bg-blue-100 rounded-none text-[11px] font-bold border border-blue-200 transition-colors cursor-pointer flex items-center gap-1"
+                          title="Open full electronic medical record & clinical chart"
+                        >
+                          <span>📋</span> View Clinical Chart
+                        </button>
                         <button
                           onClick={() => {
                             if (

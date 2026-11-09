@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { extractCardCode, patientPageUrl } from "../patientRecord/patientRecord"
+import { db } from "../../services/db"
 
 /**
  * Scanning an OP card opens that patient's record page (`#/patient/<code>`)
@@ -103,6 +104,22 @@ export default function JourneyScanHost(_props: {
     const link = /#\/card\/[A-Za-z0-9_-]{20,64}/.exec(raw)
     const code = link ? link[0].slice("#/card/".length) : extractCardCode(raw)
     if (!code) return
+
+    // If onNavigateToOPWorkflow is provided and patient exists, open directly in OP Workflow
+    if (_props.onNavigateToOPWorkflow) {
+      const allEncounters = db.getEncounters()
+      const normalized = code.toUpperCase().trim()
+      const match = allEncounters.find(
+        (e) => (e.umr && e.umr.toUpperCase().trim() === normalized) ||
+               (e.opNumber && e.opNumber.toUpperCase().trim() === normalized) ||
+               e.id === code
+      )
+      if (match) {
+        _props.onNavigateToOPWorkflow(match.id, 2)
+        return
+      }
+    }
+
     const url = link ? `${window.location.origin}${window.location.pathname}${link[0]}` : patientPageUrl(code)
     const win = window.open(url, "_blank")
     if (win) {
@@ -110,7 +127,7 @@ export default function JourneyScanHost(_props: {
     } else {
       setBlocked({ code: code.toUpperCase(), url })
     }
-  }, [])
+  }, [_props])
 
   useBarcodeScanner(open)
   useEffect(() => {

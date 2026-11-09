@@ -12,6 +12,7 @@ import {
   AppPharmacyBill,
 } from "../services/pharmacyDb"
 import { AuditDatabase } from "../services/auditDb"
+import { calculateMedicineQuantity } from "../utils/prescriptionQuantity"
 
 interface DoctorProfile {
   id: string
@@ -916,7 +917,7 @@ export default function DoctorWorkflow({
               route: m.route || "Oral",
               instructions: m.instructions || "",
               remarks: m.remarks || "",
-              quantity: Number(m.quantity) > 0 ? Number(m.quantity) : 1,
+              quantity: Number(m.quantity) > 0 ? Number(m.quantity) : calculateMedicineQuantity(m.dosage, m.frequency, m.duration),
               substitutionAllowed: true,
             }
           })
@@ -951,7 +952,7 @@ export default function DoctorWorkflow({
 
       const nowIso = new Date().toISOString()
       const rxDate = nowIso.split("T")[0]
-      const rxArrival = activeEncounter.registrationTime || new Date().toLocaleTimeString("en-IN", {
+      const rxArrival = new Date().toLocaleTimeString("en-IN", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
@@ -1193,7 +1194,12 @@ export default function DoctorWorkflow({
                   const isSelected = activeEncounter?.id === enc.id
                   const isCompleted =
                     enc.status === "Consultation Completed" ||
-                    enc.status === "OP Completed"
+                    enc.status === "OP Completed" ||
+                    enc.status === "Awaiting Billing" ||
+                    enc.status === "Billing Completed" ||
+                    enc.status === "Post-Consultation" ||
+                    enc.status === "Prescription Sent" ||
+                    enc.status === "Discharged"
                   return (
                     <div
                       key={enc.id}
@@ -1737,15 +1743,24 @@ export default function DoctorWorkflow({
                             </span>
                             <input
                               value={med.dosage}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const newDosage = e.target.value
                                 setMedications((prev) =>
                                   prev.map((m, i) =>
                                     i === idx
-                                      ? { ...m, dosage: e.target.value }
+                                      ? {
+                                          ...m,
+                                          dosage: newDosage,
+                                          quantity: calculateMedicineQuantity(
+                                            newDosage,
+                                            m.frequency,
+                                            m.duration,
+                                          ),
+                                        }
                                       : m,
                                   ),
                                 )
-                              }
+                              }}
                               className="w-full bg-white border border-[#DDE2EC] rounded px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-[#1B4FD8]"
                             />
                           </div>
@@ -1755,15 +1770,24 @@ export default function DoctorWorkflow({
                             </span>
                             <input
                               value={med.frequency}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const newFreq = e.target.value
                                 setMedications((prev) =>
                                   prev.map((m, i) =>
                                     i === idx
-                                      ? { ...m, frequency: e.target.value }
+                                      ? {
+                                          ...m,
+                                          frequency: newFreq,
+                                          quantity: calculateMedicineQuantity(
+                                            m.dosage,
+                                            newFreq,
+                                            m.duration,
+                                          ),
+                                        }
                                       : m,
                                   ),
                                 )
-                              }
+                              }}
                               className="w-full bg-white border border-[#DDE2EC] rounded px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-[#1B4FD8]"
                             />
                           </div>
@@ -1773,15 +1797,24 @@ export default function DoctorWorkflow({
                             </span>
                             <input
                               value={med.duration}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                const newDur = e.target.value
                                 setMedications((prev) =>
                                   prev.map((m, i) =>
                                     i === idx
-                                      ? { ...m, duration: e.target.value }
+                                      ? {
+                                          ...m,
+                                          duration: newDur,
+                                          quantity: calculateMedicineQuantity(
+                                            m.dosage,
+                                            m.frequency,
+                                            newDur,
+                                          ),
+                                        }
                                       : m,
                                   ),
                                 )
-                              }
+                              }}
                               className="w-full bg-white border border-[#DDE2EC] rounded px-2.5 py-1.5 text-[12.5px] focus:outline-none focus:border-[#1B4FD8]"
                             />
                           </div>

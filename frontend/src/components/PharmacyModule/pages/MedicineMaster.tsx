@@ -54,6 +54,13 @@ export default function MedicineMaster({ onNavigate }: MedicineMasterProps) {
   const [selected, setSelected] = useState<typeof medicines[0] | null>(null)
   const [editingMedicine, setEditingMedicine] = useState<any>(null)
 
+  useEffect(() => {
+    refresh()
+    const handleFocus = () => refresh()
+    window.addEventListener("focus", handleFocus)
+    return () => window.removeEventListener("focus", handleFocus)
+  }, [refresh])
+
   const handleEdit = (m: any) => {
     const totalGst = m.gst ?? 5
     const half = +(totalGst / 2).toFixed(2)

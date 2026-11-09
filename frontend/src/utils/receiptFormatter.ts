@@ -276,13 +276,13 @@ export function groupReceiptItems(items: InvoiceItem[]): ReceiptItemSection[] {
 
   items.forEach((item, idx) => {
     const isRegistration =
-      item.category === "Registration" ||
+      (item.category as any) === "Registration" ||
       item.description.toLowerCase().includes("registration")
 
     const isDoctor =
       !isRegistration &&
       (item.category === "Consultation" ||
-        item.category === "Doctor Consultation" ||
+        (item.category as any) === "Doctor Consultation" ||
         item.description.toLowerCase().includes("consult") ||
         item.description.toLowerCase().includes("dr.") ||
         item.description.toLowerCase().includes("doctor"))

@@ -2903,7 +2903,7 @@ function NewPatientIntakePanel({
           arrivalMode,
           broughtBy,
           conditionAtArrival,
-          consciousnessLevel,
+          consciousness: consciousnessLevel,
           triageCategory,
           triageBedLabel,
           complaint: complaint.trim(),
@@ -3916,7 +3916,7 @@ function UnidentifiedPatientIntakePanel({
           arrivalMode,
           broughtBy,
           conditionAtArrival,
-          consciousnessLevel,
+          consciousness: consciousnessLevel,
           triageCategory,
           triageBedLabel,
           complaint: complaintText,
@@ -11524,7 +11524,7 @@ export function VisitDetailPanel({
               onClick={() => {
                 setActiveTab("disposition")
                 setNotice({
-                  type: "info",
+                  type: "warning",
                   message: "Bed request has been submitted and is pending manual bed allocation by Bed Management.",
                 })
               }}
