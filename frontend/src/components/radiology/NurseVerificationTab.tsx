@@ -39,16 +39,28 @@ export default function NurseVerificationTab({
 
   const allStudies = useMemo(() => RadiologyWorkflowDb.getStudies(), [tick])
 
-  // Unverified doctor orders (nurseVerified === false or status is Orders with no nurse verification log)
+  // Unverified doctor orders (newest orders strictly on top)
   const unverifiedStudies = useMemo(() => {
-    return allStudies.filter((s) => {
-      return s.nurseVerified === false
-    })
+    return allStudies
+      .filter((s) => s.nurseVerified === false)
+      .sort((a, b) => {
+        const timeA = RadiologyWorkflowDb.getOrderCreationTimestamp(a)
+        const timeB = RadiologyWorkflowDb.getOrderCreationTimestamp(b)
+        if (timeA !== timeB) return timeB - timeA
+        return (b.id || "").localeCompare(a.id || "")
+      })
   }, [allStudies])
 
-  // Verified studies list (recently verified by nurse)
+  // Verified studies list (most recently verified strictly on top)
   const verifiedStudies = useMemo(() => {
-    return allStudies.filter((s) => s.nurseVerified === true)
+    return allStudies
+      .filter((s) => s.nurseVerified === true)
+      .sort((a, b) => {
+        const timeA = RadiologyWorkflowDb.getOrderCreationTimestamp(a)
+        const timeB = RadiologyWorkflowDb.getOrderCreationTimestamp(b)
+        if (timeA !== timeB) return timeB - timeA
+        return (b.id || "").localeCompare(a.id || "")
+      })
   }, [allStudies])
 
   // Filtered unverified list

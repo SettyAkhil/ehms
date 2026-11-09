@@ -339,16 +339,52 @@ export default function RadiologyWorklistView({
   // Includes all radiology examination orders (Paid, Unpaid, and Exceptions).
   // Newly created examinations immediately appear at the top and survive browser refreshes.
   // Stable secondary tie-breaker: Examination ID descending.
+  const handleSort = (field: "ordered" | "patient" | "priority" | "modality") => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === "desc" ? "asc" : "desc"))
+    } else {
+      setSortField(field)
+      setSortDirection("desc") // Default to newest/descending
+    }
+  }
+
   const sortedStudies = useMemo(() => {
     return [...filteredStudies].sort((a, b) => {
+      if (sortField === "ordered") {
+        const timeA = RadiologyWorkflowDb.getOrderCreationTimestamp(a)
+        const timeB = RadiologyWorkflowDb.getOrderCreationTimestamp(b)
+        if (timeA !== timeB) {
+          return sortDirection === "desc" ? timeB - timeA : timeA - timeB
+        }
+        return sortDirection === "desc"
+          ? (b.id || "").localeCompare(a.id || "")
+          : (a.id || "").localeCompare(b.id || "")
+      }
+      if (sortField === "patient") {
+        const cmp = (a.patient || "").localeCompare(b.patient || "")
+        if (cmp !== 0) return sortDirection === "desc" ? -cmp : cmp
+      }
+      if (sortField === "priority") {
+        const weight = (p?: string) => (p === "STAT" ? 2 : 1)
+        const diff = weight(b.priority) - weight(a.priority)
+        if (diff !== 0) return sortDirection === "desc" ? diff : -diff
+      }
+      if (sortField === "modality") {
+        const modA = getCanonicalRadiologyModality(a)
+        const modB = getCanonicalRadiologyModality(b)
+        const cmp = modA.localeCompare(modB)
+        if (cmp !== 0) return sortDirection === "desc" ? -cmp : cmp
+      }
+
+      // Default: newest orders strictly first (descending)
       const timeA = RadiologyWorkflowDb.getOrderCreationTimestamp(a)
       const timeB = RadiologyWorkflowDb.getOrderCreationTimestamp(b)
       if (timeA !== timeB) {
-        return timeB - timeA // Newest orders first (descending)
+        return timeB - timeA
       }
       return (b.id || "").localeCompare(a.id || "")
     })
-  }, [filteredStudies])
+  }, [filteredStudies, sortField, sortDirection])
 
   const paginatedStudies = useMemo(() => {
     const start = (currentPage - 1) * pageSize
@@ -611,14 +647,82 @@ export default function RadiologyWorklistView({
 
       {/* ── Universal Worklist Table ── */}
       <div className="bg-white border border-[#DDE2EC] rounded-lg shadow-2xs overflow-hidden">
+        <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#DDE2EC] flex items-center justify-between text-[11.5px] text-[#64748B]">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-[#0F172A]">Examination Queue</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200 text-[10.5px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
+              {sortField === "ordered" && sortDirection === "desc"
+                ? "Recent Patients & Cases at Top (Top-to-Bottom)"
+                : `Sorted by ${sortField} (${sortDirection.toUpperCase()})`}
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-500">
+            Total {sortedStudies.length} {sortedStudies.length === 1 ? "case" : "cases"}
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[920px] text-left text-[12.5px] border-collapse">
             <thead>
               <tr className="bg-[#F8FAFC] text-[#475569] font-bold text-[11px] uppercase tracking-wider border-b border-[#DDE2EC]">
-                <th className="py-3 px-3 w-32">Order Date & Time</th>
-                <th className="py-3 px-4">Patient Name & UMR</th>
-                <th className="py-3 px-4">Examination & Modality</th>
-                <th className="py-3 px-2 w-24 text-center">Priority</th>
+                <th
+                  onClick={() => handleSort("ordered")}
+                  className="py-3 px-3 w-36 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                  title="Click to sort by Order Date/Time (Newest on Top by default)"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Order Date & Time</span>
+                    {sortField === "ordered" ? (
+                      <span className="text-[#1B4FD8] font-black text-[13px]">
+                        {sortDirection === "desc" ? "↓" : "↑"}
+                      </span>
+                    ) : (
+                      <span className="text-slate-300 text-[11px]">↕</span>
+                    )}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("patient")}
+                  className="py-3 px-4 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                  title="Click to sort by Patient Name"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Patient Name & UMR</span>
+                    {sortField === "patient" && (
+                      <span className="text-[#1B4FD8] font-black text-[13px]">
+                        {sortDirection === "desc" ? "↓" : "↑"}
+                      </span>
+                    )}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("modality")}
+                  className="py-3 px-4 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                  title="Click to sort by Examination & Modality"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Examination & Modality</span>
+                    {sortField === "modality" && (
+                      <span className="text-[#1B4FD8] font-black text-[13px]">
+                        {sortDirection === "desc" ? "↓" : "↑"}
+                      </span>
+                    )}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort("priority")}
+                  className="py-3 px-2 w-24 text-center cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                  title="Click to sort by Priority (STAT first)"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>Priority</span>
+                    {sortField === "priority" && (
+                      <span className="text-[#1B4FD8] font-black text-[13px]">
+                        {sortDirection === "desc" ? "↓" : "↑"}
+                      </span>
+                    )}
+                  </div>
+                </th>
                 <th className="py-3 px-3 w-36">Billing Status</th>
                 <th className="py-3 px-3 w-36">Scanning Status</th>
                 <th className="py-3 px-3 w-40">Reporting Status</th>

@@ -3525,6 +3525,10 @@ export class BillingDatabase {
                   ? "NM"
                   : "XR";
 
+          const nowIso = new Date().toISOString();
+          const todayDateStr = nowIso.split("T")[0];
+          const nowTimeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
           const newRadStudy: RadiologyStudyRecord = {
             id: `RAD-${Date.now().toString().slice(-4)}-${Math.floor(10 + Math.random() * 90)}`,
             patient: resolvedPatientName,
@@ -3535,7 +3539,10 @@ export class BillingDatabase {
             study: studyName,
             modality: modality as any,
             priority: matchingClaim?.department === "Emergency" ? "STAT" : "Routine",
-            ordered: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            createdAt: nowIso,
+            orderedAt: nowIso,
+            orderDate: todayDateStr,
+            ordered: `${todayDateStr} · ${nowTimeStr}`,
             provider: matchingClaim?.attendingDoctor || "Attending Specialist",
             status: "Orders",
             room: modality === "CT" ? "CT-1" : modality === "MR" ? "MR-1" : modality === "US" ? "US-1" : "XR-1",
@@ -4382,6 +4389,9 @@ export class BillingDatabase {
                   ? "US-1"
                   : "XR-1"
 
+          const claimDateStr = claim.dateOfService || (claim as any).createdAt?.split("T")[0] || new Date().toISOString().split("T")[0];
+          const claimNowIso = (claim as any).createdAt || (claim.dateOfService ? `${claim.dateOfService}T09:00:00.000Z` : new Date().toISOString());
+
           syncedStudies.push({
             id: `RAD-INV-${(claim.invoiceNo || "").replace(/\D/g, "").slice(-4) || (claim.id || claim.patientId || "101").replace(/\D/g, "").slice(-4) || "1036"}`,
 
@@ -4399,7 +4409,10 @@ export class BillingDatabase {
 
             priority: claim.department === "Emergency" ? "STAT" : "Routine",
 
-            ordered: `${claim.dateOfService || "2026-09-12"} · ${new Date().toLocaleTimeString([], {
+            createdAt: claimNowIso,
+            orderedAt: claimNowIso,
+            orderDate: claimDateStr,
+            ordered: `${claimDateStr} · ${new Date().toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             })}`,
@@ -4518,6 +4531,9 @@ export class BillingDatabase {
                   ? "US-1"
                   : "XR-1"
 
+          const deptDateStr = (dept as any).date || (dept as any).createdAt?.split("T")[0] || new Date().toISOString().split("T")[0];
+          const deptNowIso = (dept as any).createdAt || ((dept as any).date ? `${(dept as any).date}T09:00:00.000Z` : new Date().toISOString());
+
           syncedStudies.push({
             id: `RAD-DCHG-${(dept.id || "").replace(/\D/g, "").slice(-4) || (dept.patientId || "101").replace(/\D/g, "").slice(-4) || "1036"}`,
 
@@ -4535,7 +4551,10 @@ export class BillingDatabase {
 
             priority: dept.department === "Emergency" ? "STAT" : "Routine",
 
-            ordered: `${(dept as any).date || (dept as any).createdAt?.split("T")[0] || "2026-09-12"} · ${new Date().toLocaleTimeString([], {
+            createdAt: deptNowIso,
+            orderedAt: deptNowIso,
+            orderDate: deptDateStr,
+            ordered: `${deptDateStr} · ${new Date().toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             })}`,
@@ -4620,16 +4639,61 @@ export class BillingDatabase {
           resolvedDate = new Date().toISOString().split("T")[0]
         }
 
+        const fullOrdered = `${resolvedDate} · ${timePart}`
+        const parsedTime = new Date(`${resolvedDate} ${timePart}`).getTime()
+        const fallbackIso = !isNaN(parsedTime) && parsedTime > 0 ? new Date(parsedTime).toISOString() : new Date().toISOString()
+
         deduplicatedStudies.push({
           ...s,
-          ordered: `${resolvedDate} · ${timePart}`,
+          orderDate: s.orderDate || resolvedDate,
+          orderedAt: (s as any).orderedAt || (s as any).createdAt || fallbackIso,
+          createdAt: (s as any).createdAt || (s as any).orderedAt || fallbackIso,
+          ordered: fullOrdered,
         })
       }
     }
     return deduplicatedStudies.sort((a, b) => {
-      const timeB = new Date((b as any).createdAt || (b as any).orderedAt || (b as any).date || 0).getTime()
-      const timeA = new Date((a as any).createdAt || (a as any).orderedAt || (a as any).date || 0).getTime()
-      return timeB - timeA || (b.id || "").localeCompare(a.id || "")
+      const getStudyTimestamp = (study: any): number => {
+        if (study.orderedAt) {
+          const t = new Date(study.orderedAt).getTime()
+          if (!isNaN(t) && t > 0) return t
+        }
+        if (study.createdAt) {
+          const t = new Date(study.createdAt).getTime()
+          if (!isNaN(t) && t > 0) return t
+        }
+        if (study.orderDate && study.ordered) {
+          const cleanOrd = String(study.ordered).replace(/[·,]/g, " ").replace(/\s+/g, " ").trim()
+          const ordHasDate = /\d{4}-\d{2}-\d{2}/.test(cleanOrd)
+          const targetStr = ordHasDate ? cleanOrd : `${study.orderDate} ${cleanOrd}`
+          const t = new Date(targetStr).getTime()
+          if (!isNaN(t) && t > 0) return t
+        }
+        if (study.ordered) {
+          const clean = String(study.ordered).replace(/[·,]/g, " ").replace(/\s+/g, " ").trim()
+          const t = new Date(clean).getTime()
+          if (!isNaN(t) && t > 0) return t
+          // Time-only string check (e.g. 02:30 PM)
+          if (/^\d{1,2}:\d{2}/.test(clean)) {
+            const today = new Date().toISOString().split("T")[0]
+            const tToday = new Date(`${today} ${clean}`).getTime()
+            if (!isNaN(tToday) && tToday > 0) return tToday
+          }
+        }
+        if (study.orderDate) {
+          const t = new Date(study.orderDate).getTime()
+          if (!isNaN(t) && t > 0) return t
+        }
+        if (study.paidAt) {
+          const t = new Date(study.paidAt).getTime()
+          if (!isNaN(t) && t > 0) return t
+        }
+        return 0
+      }
+      const timeB = getStudyTimestamp(b)
+      const timeA = getStudyTimestamp(a)
+      if (timeA !== timeB) return timeB - timeA // Newest records strictly at the top
+      return (b.id || "").localeCompare(a.id || "")
     })
   }
 
