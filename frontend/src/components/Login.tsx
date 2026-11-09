@@ -324,34 +324,6 @@ export default function Login({ onLogin }: LoginProps) {
     return () => { active = false }
   }, [])
 
-  useEffect(() => {
-    let active = true
-    setRoleLoginUsers([])
-    // System Admin is a platform account, not a hospital role record.
-    if (!selectedLoginRole || selectedLoginRole === "admin") return () => { active = false }
-    setRoleUsersLoading(true)
-    apiFetch<{ users: RoleLoginUser[] }>(`/api/auth/login-roles/${encodeURIComponent(selectedLoginRole)}/users`)
-      .then((response) => {
-        if (active) setRoleLoginUsers(response.users || [])
-      })
-      .catch(() => {
-        if (!active) return
-        const localUsers = RoleDatabase.getUsers()
-        const matchingUsers = localUsers
-          .filter((u) => u.roleId === selectedLoginRole)
-          .map((u) => ({
-            id: u.id,
-            employee_id: u.username,
-            full_name: u.name,
-            department: u.department,
-          }))
-        setRoleLoginUsers(matchingUsers)
-      })
-      .finally(() => {
-        if (active) setRoleUsersLoading(false)
-      })
-    return () => { active = false }
-  }, [selectedLoginRole])
   const submit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault()
