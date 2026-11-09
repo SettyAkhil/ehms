@@ -2015,13 +2015,42 @@ export class ErDatabase {
       allocated_at: null,
     }
 
+    if (!visit.bed_requests) visit.bed_requests = []
     visit.bed_requests.push(newItem)
 
     this.updateVisit(visitId, {
       bed_requests: visit.bed_requests,
-
       status: "bed_requested",
     })
+
+    try {
+      ErDatabase.dispatchBedTransferAlert({
+        patient_id: visit.patient_id,
+        patient_name:
+          visit.patient_name ||
+          (visit.patient as any)?.name ||
+          (visit.is_unknown_patient
+            ? visit.unknown_patient_label || "Unknown Patient"
+            : "Patient"),
+        patient_last_name: visit.patient_last_name || (visit.patient as any)?.last_name || "",
+        patient_age: visit.patient_age,
+        patient_gender: visit.patient_gender,
+        patient_phone: visit.patient_phone,
+        source_department: `Emergency Department (${visit.triage?.triage_bed_label || visit.triage_bed_label || "Triage Bay"})`,
+        target_destination: newItem.requested_level_of_care,
+        target_bed_type: newItem.requested_level_of_care.toLowerCase().includes("icu") ? "ICU" : "General",
+        target_ward: newItem.requested_level_of_care.toLowerCase().includes("icu") ? "Intensive Care Unit (ICU)" : "3N Medical/Surgical",
+        priority: "High Priority",
+        clinical_reason: `Emergency admission bed request (${newItem.requested_level_of_care}).`,
+        sent_by: visit.assigned_doctor_name || "Emergency Staff",
+        er_visit_id: visit.id,
+        er_bed_request_id: newItem.id,
+      })
+    } catch {}
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
+    }
 
     return newItem
   }
@@ -2353,6 +2382,10 @@ export class ErDatabase {
           : null,
     })
 
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
+    }
+
     return disp
   }
 
@@ -2378,9 +2411,10 @@ export class ErDatabase {
 
           patient_name:
             v.patient_name ||
+            (v.patient as any)?.name ||
             (v.is_unknown_patient ? v.unknown_patient_label : "Patient"),
 
-          patient_last_name: v.patient_last_name || "",
+          patient_last_name: v.patient_last_name || (v.patient as any)?.last_name || "",
 
           is_unknown_patient: v.is_unknown_patient,
 

@@ -8,6 +8,7 @@ import { LabOrder, LabOrderTest } from "../../services/labOrdersDb"
 interface LabWorkbenchViewProps {
   initialOrder?: LabOrder
   initialTest?: LabOrderTest
+  initialDepartment?: any
   onCompleteToReports?: () => void
   initialTab?: "worklists" | "result_entry" | "review"
 }
@@ -15,6 +16,7 @@ interface LabWorkbenchViewProps {
 export default function LabWorkbenchView({
   initialOrder,
   initialTest,
+  initialDepartment,
   onCompleteToReports,
   initialTab = "worklists",
 }: LabWorkbenchViewProps) {
@@ -23,6 +25,12 @@ export default function LabWorkbenchView({
   )
   const [selectedOrder, setSelectedOrder] = useState<LabOrder | null>(initialOrder || null)
   const [selectedTest, setSelectedTest] = useState<LabOrderTest | null>(initialTest || null)
+
+  React.useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+    if (initialOrder) setSelectedOrder(initialOrder)
+    if (initialTest) setSelectedTest(initialTest)
+  }, [initialTab, initialOrder, initialTest])
 
   const handleOpenResultEntryFromWorklist = (order: LabOrder, test?: LabOrderTest) => {
     setSelectedOrder(order)
@@ -95,7 +103,11 @@ export default function LabWorkbenchView({
       {/* ── ACTIVE PANEL RENDERING ─────────────────────────────────────────── */}
       <div className="transition-all">
         {activeTab === "worklists" && (
-          <LabWorklistsView onOpenResultEntry={handleOpenResultEntryFromWorklist} />
+          <LabWorklistsView
+            onOpenResultEntry={handleOpenResultEntryFromWorklist}
+            initialDepartment={initialDepartment}
+            initialOrderId={selectedOrder?.id}
+          />
         )}
 
         {activeTab === "result_entry" && (

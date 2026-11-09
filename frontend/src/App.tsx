@@ -323,7 +323,7 @@ const NAV: NavItem[] = [
     Icon: FlaskConical,
     children: [
       { key: "lab_dashboard", label: "Lab Dashboard" },
-      { key: "lab_orders_collection", label: "Lab Orders & Sample Collection" },
+      { key: "lab_orders_collection", label: "Lab Orders Directory" },
       { key: "lab_workbench", label: "Lab Workbench" },
       { key: "lab_reports", label: "Lab Reports" },
       { key: "lab_inventory", label: "Lab Inventory & Consumables" },

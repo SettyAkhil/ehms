@@ -2876,13 +2876,12 @@ function NewPatientIntakePanel({
       let visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
       const patientId = regRes?.patient_id ?? regRes?.patient?.patient_id ?? `P-${Math.floor(100000 + Math.random() * 900000)}`
 
+      // Persist to ErDatabase only if apiFetch did not already create it
       if (!visitId) {
         visitId = Date.now()
         visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
-      }
 
-      // Ensure patient and visit are persisted in ErDatabase
-      try {
+        try {
         ErDatabase.addPatient({
           patient_id: patientId,
           name: newName.trim(),
@@ -2921,6 +2920,7 @@ function NewPatientIntakePanel({
         })
       } catch (dbErr) {
         console.warn("Could not save to ErDatabase:", dbErr)
+      }
       }
 
       // Manual Triage & Bed Allocation Assignment
@@ -3892,15 +3892,13 @@ function UnidentifiedPatientIntakePanel({
       let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
       let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
 
+      // Persist to ErDatabase only if apiFetch did not already create it
       if (!visitId) {
         visitId = Date.now()
         visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
-      }
+        const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
 
-      const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
-
-      // Persist unidentified patient and visit in local ErDatabase
-      try {
+        try {
         ErDatabase.addPatient({
           patient_id: tempPatientId,
           name: unknownLabel.trim(),
@@ -3934,6 +3932,7 @@ function UnidentifiedPatientIntakePanel({
         })
       } catch (dbErr) {
         console.warn("Could not record unidentified visit in ErDatabase:", dbErr)
+      }
       }
 
       try {
@@ -10551,6 +10550,18 @@ export function VisitDetailPanel({
             ev.event_type === "medication_given"
           ) {
             const intvName = ev.event_name || ev.notes || "Emergency Procedure"
+            const lower = intvName.toLowerCase()
+            if (
+              lower.includes("bill") ||
+              lower.includes("invoice") ||
+              lower.includes("central billing") ||
+              lower.includes("dispatch") ||
+              lower.includes("arrival") ||
+              lower.includes("registered") ||
+              lower.includes("triage")
+            ) {
+              return
+            }
 
             const tariff = resolveErItemPrice(intvName, "intervention")
 
@@ -10648,20 +10659,31 @@ export function VisitDetailPanel({
           ),
       );
 
+      // If bill is already dispatched with no new unbilled charges, inform user without redirecting
+      if (activeClaim && (erClearance.status as string) === "due" && (!erClearance.unbilledAmount || erClearance.unbilledAmount === 0)) {
+        setNotice({
+          type: "info",
+          message: `Bill already sent to Emergency Billing (Invoice ${activeClaim.invoiceNo}: ₹${(activeClaim.balanceDue || activeClaim.patientPortion).toLocaleString("en-IN")}).`,
+        });
+        return;
+      }
+
+      const existingPaid = activeClaim?.amountPaid || 0;
       const subtotal = billItems.reduce(
         (sum, it) => sum + Number(it.patientPayable || it.total || 0),
         0,
       );
+      const finalBalanceDue = Math.max(0, subtotal - existingPaid);
 
       if (activeClaim) {
         activeClaim = BillingDatabase.updateClaim(activeClaim.id, {
           items: billItems,
           department: "Emergency",
           encounterId: encKey || activeClaim.encounterId,
-          status: "Accepted",
-          amountPaid: 0,
-          balanceDue: subtotal,
-          payments: [],
+          status: finalBalanceDue === 0 && existingPaid > 0 ? "Paid" : "Accepted",
+          amountPaid: existingPaid,
+          balanceDue: finalBalanceDue,
+          payments: activeClaim.payments || [],
         });
       } else {
         activeClaim = BillingDatabase.createClaim({
@@ -10696,7 +10718,7 @@ export function VisitDetailPanel({
       // Log dispatch to timeline safely
       try {
         ErDatabase.addTimelineEvent(Number(detail.id), {
-          event_type: "intervention_given",
+          event_type: "destination_assigned",
           event_name: "Bill Dispatched to Central Billing",
           notes: `ER clinical bill of ₹${(activeClaim.balanceDue || activeClaim.patientPortion).toLocaleString("en-IN")} dispatched to Central Billing Desk (Invoice: ${activeClaim.invoiceNo}). Clearance pending.`,
           logged_by: "Staff RN",
@@ -10720,12 +10742,94 @@ export function VisitDetailPanel({
 
       setNotice({
         type: "success",
-        message: `📄 ER Bill Generated: Invoice ${activeClaim.invoiceNo} (₹${(activeClaim.balanceDue || activeClaim.patientPortion).toLocaleString("en-IN")}) sent to Central Billing Department.`,
+        message: `📄 ER Bill Generated: Invoice ${activeClaim.invoiceNo} (₹${(activeClaim.balanceDue || activeClaim.patientPortion).toLocaleString("en-IN")}) sent to Emergency Billing.`,
       });
     } catch (e: any) {
       setNotice({
         type: "error",
         message: e.message || "Failed to generate bill.",
+      })
+    }
+  }
+
+  const handleRequestBed = async (careLevel?: string) => {
+    try {
+      const isIcu =
+        (careLevel || "").toLowerCase().includes("icu") ||
+        detail.triage_category === "red" ||
+        (detail.assigned_specialty || "").toLowerCase().includes("icu")
+      const loc = careLevel || (isIcu ? "ICU (Intensive Care Unit)" : "Inpatient General Ward")
+      const specialty =
+        detail.assigned_specialty ||
+        detail.disposition?.required_specialty ||
+        (isIcu ? "Intensive Care Unit (ICU)" : "General Medicine")
+      const priority =
+        detail.triage_category === "red" || detail.triage_category === "orange"
+          ? "high"
+          : "medium"
+
+      // 1. Create bed request in ErDatabase
+      const bedReq = ErDatabase.createBedRequest(detail.id, {
+        requested_level_of_care: loc,
+        requested_specialty: specialty,
+      })
+
+      // 2. Ensure disposition is recorded as admission if not set
+      if (!detail.disposition) {
+        ErDatabase.recordDisposition(detail.id, {
+          outcome: isIcu ? "icu" : "ward",
+          required_specialty: specialty,
+          clinical_reason: isIcu
+            ? "Emergency ICU admission requested for continuous monitoring."
+            : `Emergency inpatient admission requested for ${specialty}.`,
+          priority,
+        })
+      }
+
+      // 3. Dispatch Bed Transfer Alert
+      ErDatabase.dispatchBedTransferAlert({
+        patient_id: detail.patient_id || detail.patient?.patient_id,
+        patient_name: displayName,
+        patient_last_name: detail.patient?.last_name || detail.patient_last_name || "",
+        patient_age: Number(curAge) || 40,
+        patient_gender: curGender,
+        patient_phone: curPhone,
+        source_department: `Emergency Department (${detail.triage_bed_label || "Triage Bay"})`,
+        target_destination: loc,
+        target_bed_type: isIcu ? "ICU" : "General",
+        target_ward: isIcu ? "Intensive Care Unit (ICU)" : "Inpatient Ward",
+        priority: isIcu ? "Stat / Emergency" : "High Priority",
+        clinical_reason: `Emergency admission bed request for ${displayName}.`,
+        sent_by: detail.assigned_doctor_name || "Emergency Staff",
+        er_visit_id: detail.id,
+        er_bed_request_id: bedReq.id,
+      })
+
+      // 4. Add timeline event
+      ErDatabase.addTimelineEvent(detail.id, {
+        event_type: "destination_assigned",
+        event_name: `Bed Requested: ${loc}`,
+        notes: `Admission bed request dispatched to Inpatient Ward (${specialty}).`,
+        logged_by: detail.assigned_doctor_name || "Emergency Staff",
+      })
+
+      // 5. Notify window listeners so Inpatient updates instantly
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("hospai_bed_request_updated"))
+      }
+
+      setNotice({
+        type: "success",
+        message: `🛏️ Bed request for ${displayName} (${loc}) submitted! Sent to Inpatient module.`,
+      })
+
+      if (onRefresh) {
+        onRefresh()
+      }
+    } catch (err: any) {
+      setNotice({
+        type: "error",
+        message: err.message || "Failed to submit bed request.",
       })
     }
   }
@@ -11537,9 +11641,9 @@ export function VisitDetailPanel({
           ) : (
             <button
               type="button"
-              onClick={() => setActiveTab("disposition")}
+              onClick={() => handleRequestBed()}
               className="px-3 py-1.5 bg-blue-50 border border-blue-300 hover:bg-blue-100 text-blue-900 font-bold rounded-none text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-              title="Submit bed transfer request to Bed Management"
+              title="Submit bed transfer request to Inpatient Department"
             >
               <span className="text-xs">🛏️</span>
               <span>Request Bed</span>
@@ -11843,9 +11947,15 @@ export function VisitDetailPanel({
                     type="button"
                     onClick={handleGenerateErBill}
                     className="px-2.5 py-1 bg-[#1B4FD8] hover:bg-[#1541B5] text-white rounded-none text-[11.5px] font-bold cursor-pointer shadow-2xs flex items-center gap-1 transition-colors"
-                    title="Generate ER bill and send to Central Billing Department"
+                    title={(erClearance.status as string) === "due" ? "Open Invoice in Central Billing Desk" : "Generate ER bill and send to Central Billing Department"}
                   >
-                    <span>📤 Send to Billing</span>
+                    <span>
+                      {(erClearance.status as string) === "due"
+                        ? "✓ Sent to Billing"
+                        : erClearance.isCleared
+                          ? "✓ Bill Paid"
+                          : "📤 Send to Billing"}
+                    </span>
                   </button>
                 </div>
               )}
