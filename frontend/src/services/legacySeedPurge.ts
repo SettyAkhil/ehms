@@ -42,13 +42,17 @@ export const SEED_LAB_ORDERS: readonly SeedFingerprint[] = [
  * mock encounters, claims, lab orders, and radiology studies stored in older
  * browser sessions are reset so the system starts completely blank.
  */
-export function purgeAllLegacySeedData(): void {
+export function purgeAllLegacySeedData(force = false): void {
   if (typeof window === "undefined") return
 
-  const PURGE_FLAG = "hospai_seeds_purged_v11"
-  if (localStorage.getItem(PURGE_FLAG) === "true") return
+  const PURGE_FLAG = "hospai_seeds_purged_v15"
+  if (!force && localStorage.getItem(PURGE_FLAG) === "true") return
 
   const keysToResetEmptyArray = [
+    "hospai_doctor_master_v3",
+    "hospai_doctor_master_v2",
+    "hospai_doctor_master_v1",
+    "hospai_doctor_master",
     "hospai_lis_qc_records_v1",
     "hosp_billing_claims_inr_v11",
     "hosp_billing_dept_charges_v11",
@@ -82,20 +86,10 @@ export function purgeAllLegacySeedData(): void {
     "hospai_discharged_patients_v3",
     "hospai_bed_transfer_notifications_v3",
     "hospai_pending_bed_allocation_v2",
-    "hospai_inpatient_beds_v9",
     "hospai_rad_appointments_v1",
     "hospai_rad_exceptions_v1",
     "hospai_rad_templates_v1",
     "hospai_rad_templates_v2",
-    "hospai_rad_tests_v1",
-    "hospai_insurance_companies_v1",
-    "hospai_insurance_packages_v1",
-    "hospai_insurance_pricing_rules_v1",
-    "hospai_insurance_document_rules_v1",
-    "hospai_diagnostic_tariffs_v5",
-    "hospai_audit_logs_v1",
-    "hospai_rbac_roles_v28",
-    "hospai_rbac_roles_v27",
     "hms_nursing_assignments",
     "hms_nursing_doctor_instructions",
     "hms_nursing_notes",
@@ -107,20 +101,12 @@ export function purgeAllLegacySeedData(): void {
     "hospai_insurance_cases_v2",
     "hospai_patient_policies_v1",
     "hospai_insurance_fixed_package_bills_v1",
-    "hospai_lab_inventory_items_v1",
-    "hospai_lab_inventory_tx_v1",
-    "hospai_lab_inventory_suppliers_v1",
-    "hospai_pharm_medicines_v1",
-    "hospai_pharm_batches_v1",
     "hospai_pharm_prescriptions_v1",
     "hospai_pharm_bills_v1",
     "hospai_pharm_purchase_orders_v1",
     "hospai_pharm_grns_v1",
     "hospai_pharm_returns_v1",
     "hospai_pharm_audit_logs_v1",
-    "hrms_payroll_run",
-    "hrms_staff_loans",
-    "hospai_doctor_master_v3",
   ]
 
   keysToResetEmptyArray.forEach((k) => {
@@ -128,6 +114,15 @@ export function purgeAllLegacySeedData(): void {
       localStorage.setItem(k, "[]")
     } catch {}
   })
+
+  // Reset UMR and OP sequence counters so first patient gets UMR10001 and OP001
+  try {
+    localStorage.setItem("hospai_db_umr_counter", "10000")
+    localStorage.setItem("hospai_db_op_counter", "0")
+    localStorage.removeItem("registration_search")
+    localStorage.removeItem("registration_form")
+    localStorage.removeItem("patient_search_query")
+  } catch {}
 
   // Set default system administrator user account
   try {
@@ -179,43 +174,37 @@ export function purgeAllLegacySeedData(): void {
     localStorage.removeItem("hospai_rbac_roles_v27")
   } catch {}
 
-  // Sanitize bed registry so all physical beds are Available with no mock patients
+  // Sanitize bed registry so all physical beds are 100% Available with no mock patients
   try {
-    const rawBeds = localStorage.getItem("hospai_inpatient_beds_v9")
-    if (rawBeds) {
-      const beds = JSON.parse(rawBeds)
-      if (Array.isArray(beds)) {
-        const cleanedBeds = beds.map((b: any) => ({
-          ...b,
-          status: "Available",
-          allocation_id: null,
-          patient_id: null,
-          patient_name: null,
-          patient_last_name: null,
-          patient_gender: null,
-          patient_age: null,
-          assigned_doctor: null,
-          admission_id: null,
-          admission_notes: null,
-          admitted_at: null,
-          estimated_discharge: null,
-        }))
-        localStorage.setItem("hospai_inpatient_beds_v9", JSON.stringify(cleanedBeds))
-      }
-    }
+    const cleanBeds = [
+      { id: 1, ward: "ICU", room_no: "ICU-01", bed_no: "B1", bed_type: "ICU", status: "Available", daily_rate: 5500, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 2, ward: "ICU", room_no: "ICU-02", bed_no: "B2", bed_type: "ICU", status: "Available", daily_rate: 5500, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 3, ward: "General Ward", room_no: "GW-101", bed_no: "B1", bed_type: "General", status: "Available", daily_rate: 2000, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 4, ward: "General Ward", room_no: "GW-101", bed_no: "B2", bed_type: "General", status: "Available", daily_rate: 2000, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 5, ward: "Semi-Private", room_no: "SP-201", bed_no: "B1", bed_type: "Semi-Private", status: "Available", daily_rate: 3500, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 6, ward: "Semi-Private", room_no: "SP-201", bed_no: "B2", bed_type: "Semi-Private", status: "Available", daily_rate: 3500, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+      { id: 7, ward: "Private", room_no: "PV-301", bed_no: "B1", bed_type: "Private", status: "Available", daily_rate: 5000, allocation_id: null, admission_id: null, allocated_at: null, admission_date: null, expected_discharge_date: null, patient_id: null, patient_name: null, patient_last_name: null, patient_phone: null, patient_age: null, patient_gender: null, admission_notes: null, room_charges_so_far: null },
+    ]
+    localStorage.setItem("hospai_inpatient_beds_v9", JSON.stringify(cleanBeds))
   } catch {}
 
-  // Clear all rad sent/status keys and ICU flowsheets
+  // Clear all patient-specific dynamic keys, vitals, diagnoses, evaluations, ICU flowsheets
   try {
+    const dynamicPrefixes = [
+      "hospai_patient_vitals_",
+      "hospai_patient_diagnoses_",
+      "hospai_patient_evaluations_",
+      "hospai_rad_sent_",
+      "hospai_rad_rep_status_",
+      "icu.flowsheet.",
+      "hms_icu_admission_acks",
+      "hospai_token_",
+      "hospai_encounter_",
+    ]
     const keysToRemove: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i)
-      if (
-        k &&
-        (k.startsWith("hospai_rad_sent_") ||
-          k.startsWith("hospai_rad_rep_status_") ||
-          k.startsWith("icu.flowsheet."))
-      ) {
+      if (k && dynamicPrefixes.some((p) => k.startsWith(p))) {
         keysToRemove.push(k)
       }
     }
@@ -225,3 +214,16 @@ export function purgeAllLegacySeedData(): void {
   localStorage.setItem(PURGE_FLAG, "true")
 }
 
+// Global clean slate function callable anywhere in app or developer console
+export function clearAllApplicationData(): void {
+  purgeAllLegacySeedData(true)
+  if (typeof window !== "undefined") {
+    window.location.reload()
+  }
+}
+
+// Expose on window for easy developer/admin on-demand reset
+if (typeof window !== "undefined") {
+  ;(window as any).purgeAllSeedData = clearAllApplicationData
+  ;(window as any).clearAllHospitalData = clearAllApplicationData
+}

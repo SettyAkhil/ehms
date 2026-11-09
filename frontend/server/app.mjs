@@ -17,8 +17,9 @@ const app = express();
 // Not $PORT either: that is the HMS dev server's.
 const PORT = parseInt(process.env.HRMS_PORT || '8011', 10);
 
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
+  origin: allowedOrigins.length > 0 ? allowedOrigins : true,
   credentials: true,
 }));
 

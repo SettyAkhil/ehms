@@ -1242,29 +1242,35 @@ export default function Appointments({
               </div>
 
               <div className="p-3 space-y-2 max-h-[550px] overflow-y-auto">
-                {getDoctorMaster()
-                  .filter((d) => d.verified)
-                  .map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="p-3 border border-[#E2E8F0] rounded-none bg-[#F8FAFC] text-[12px] hover:border-blue-300 transition-colors"
-                    >
-                      <div className="font-bold text-[#0F172A] flex items-center justify-between">
-                        <span>{doc.name}</span>
-                        <span className="text-[10px] font-mono font-bold text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded-none border border-blue-200">
-                          {doc.room}
-                        </span>
+                {getDoctorMaster().filter((d) => d.verified).length === 0 ? (
+                  <div className="p-4 text-center text-xs text-[#64748B]">
+                    No doctors registered in roster. Add doctors from Administration.
+                  </div>
+                ) : (
+                  getDoctorMaster()
+                    .filter((d) => d.verified)
+                    .map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="p-3 border border-[#E2E8F0] rounded-none bg-[#F8FAFC] text-[12px] hover:border-blue-300 transition-colors"
+                      >
+                        <div className="font-bold text-[#0F172A] flex items-center justify-between">
+                          <span>{doc.name}</span>
+                          <span className="text-[10px] font-mono font-bold text-[#1B4FD8] bg-blue-50 px-2 py-0.5 rounded-none border border-blue-200">
+                            {doc.room}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-[#64748B] mt-0.5 flex items-center justify-between">
+                          <span>
+                            {doc.specialty} • {doc.qualification}
+                          </span>
+                          <span className="text-[10px] text-emerald-700 font-bold">
+                            Available
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-[#64748B] mt-0.5 flex items-center justify-between">
-                        <span>
-                          {doc.specialty} • {doc.qualification}
-                        </span>
-                        <span className="text-[10px] text-emerald-700 font-bold">
-                          Available
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                )}
               </div>
             </div>
           </div>

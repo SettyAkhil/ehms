@@ -108,7 +108,18 @@ function PatientDirectory({
         const data = await apiFetch<{ patients: PatientRow[]; counts: StreamCounts }>(
           `/api/patients${qs.toString() ? `?${qs.toString()}` : ""}`,
         );
-        const patients = data.patients || [];
+        const dbEncounters = db.getEncounters();
+        const patients = (data.patients || []).map((p) => {
+          let doc = p.appointment_doctor;
+          if (!doc) {
+            const enc = dbEncounters.find((e) => e.umr === p.patient_id || e.id === p.patient_id || e.patientName?.toLowerCase() === p.name.toLowerCase());
+            if (enc?.assignedDoctor) doc = enc.assignedDoctor;
+          }
+          return {
+            ...p,
+            appointment_doctor: doc || "Duty Doctor",
+          };
+        });
         setRows(careFilter === "icu" ? patients.filter((p) => isIcuBed(p.active_bed)) : patients);
         setCounts(data.counts || { all: 0, op: 0, ip: 0, er: 0 });
       } catch (error: any) {
@@ -211,7 +222,7 @@ function PatientDirectory({
                   <TD><LocationBadge row={row} /></TD>
                   <TD>
                     <span className="text-[12px] text-[#64748B]">
-                      {row.care_stream === "OP" ? row.appointment_doctor || "—" : "—"}
+                      {row.appointment_doctor || "Duty Doctor"}
                     </span>
                   </TD>
                   <TD>
@@ -540,16 +551,22 @@ export default function PatientChart({
     const dbPatients = db.getPatients();
     const dbEncounters = db.getEncounters();
     
-    const targetEnc = dbEncounters.find(e => 
+    // Sort encounters descending by timestamp/date so the active/latest consultation is selected
+    const matchingEncs = dbEncounters.filter(e => 
       e.id === patientId || 
       e.umr === patientId || 
       e.opNumber === patientId ||
-      e.patientName.toLowerCase().includes(patientId.toLowerCase())
-    );
+      e.patientName?.toLowerCase().includes(patientId.toLowerCase())
+    ).sort((a, b) => {
+      const timeB = new Date(b.createdAt || b.date || 0).getTime();
+      const timeA = new Date(a.createdAt || a.date || 0).getTime();
+      return timeB - timeA;
+    });
+    const targetEnc = matchingEncs[0];
     
     const targetPatient = dbPatients.find(p => 
       p.umr === patientId || 
-      p.name.toLowerCase().includes(patientId.toLowerCase())
+      p.name?.toLowerCase().includes(patientId.toLowerCase())
     );
 
     if (!targetEnc && !targetPatient) return null;
@@ -567,7 +584,7 @@ export default function PatientChart({
       gender: sex,
       phone,
       care_stream: "OP",
-      appointment_doctor: targetEnc?.assignedDoctor || "Dr. Arjun Mehta",
+      appointment_doctor: targetEnc?.assignedDoctor || (targetPatient as any)?.doctor || "Duty Doctor",
       appointment_dept: targetEnc?.dept || "Cardiology",
       appointment_status: targetEnc?.status || "Checked In",
     };
@@ -763,7 +780,12 @@ export default function PatientChart({
   const [selectedJourneyEncounter, setSelectedJourneyEncounter] = useState<DBOPEncounter | null>(null);
 
   const handleOpenOpJourney = (row: PatientRow) => {
-    const enc = (db.getEncounters().find((e) => e.umr === row.patient_id) || {
+    const encs = db.getEncounters().filter((e) => e.umr === row.patient_id || e.patientName?.toLowerCase() === row.name?.toLowerCase()).sort((a, b) => {
+      const timeB = new Date(b.createdAt || b.date || 0).getTime();
+      const timeA = new Date(a.createdAt || a.date || 0).getTime();
+      return timeB - timeA;
+    });
+    const enc = (encs[0] || {
       id: `enc-${row.patient_id}`,
       umr: row.patient_id,
       patientName: rowDisplayName(row),
@@ -909,6 +931,11 @@ export default function PatientChart({
                 {selectedRow.age && <span>{selectedRow.age}y · {selectedRow.gender || "—"}</span>}
                 {selectedRow.phone && <span>{selectedRow.phone}</span>}
                 {patient?.blood_group && <span>Blood: {patient.blood_group}</span>}
+                {(selectedRow.appointment_doctor || careTeam[0]?.name) && (
+                  <span className="text-[#1B4FD8] font-semibold">
+                    Doctor: {selectedRow.appointment_doctor || careTeam[0]?.name}
+                  </span>
+                )}
               </div>
             </div>
           </div>

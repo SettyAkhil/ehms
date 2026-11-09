@@ -347,11 +347,24 @@ export default function NurseStation({
   }, [])
 
   const waitMinutes = (e: DBOPEncounter) => {
-    const timeStr = e.timestamps?.arrival || e.registrationTime
-    const dateObj = parseTimeString(timeStr)
-    if (!dateObj) return 12
+    const candidates = [
+      e.timestamps?.arrival,
+      e.timestamps?.registration,
+      e.createdAt,
+      e.registrationTime,
+    ]
+    let dateObj: Date | null = null
+    for (const c of candidates) {
+      if (!c) continue
+      const parsed = parseTimeString(c)
+      if (parsed) {
+        dateObj = parsed
+        break
+      }
+    }
+    if (!dateObj) return 0
     const diffMins = Math.floor((now - dateObj.getTime()) / 60000)
-    return Math.max(1, diffMins)
+    return Math.max(0, diffMins)
   }
   const longestWait = waiting.reduce((m, e) => Math.max(m, waitMinutes(e)), 0)
 

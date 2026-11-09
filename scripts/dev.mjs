@@ -6,4 +6,3 @@ const rootDir = path.resolve(__dirname, '..');
 
 // Launch complete EHMS stack
 await import(path.join(rootDir, 'run_ehms.mjs'));
-

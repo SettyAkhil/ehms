@@ -211,7 +211,13 @@ export function dispatchConsultation(
         department: encounter.dept || doctor.specialty,
         diagnosis: record.diagnosis || encounter.diagnosis,
         date: nowIso.split("T")[0],
-        arrivalTime: encounter.registrationTime || new Date().toLocaleTimeString("en-IN", {
+        arrivalTime: new Date().toLocaleTimeString("en-IN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        }),
+        prescribedAt: new Date().toLocaleTimeString("en-IN", {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",

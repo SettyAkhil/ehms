@@ -604,7 +604,7 @@ export default function HospitalReceiptModal({
                 </div>
 
                 {/* 3. Hospitalisation Charges Banner Box (Inpatients only) */}
-                {((claim.department && claim.department === "Inpatient") || (claim.visitType === "IP") || (admittedWard !== "OPD" && admittedWard !== "CASUALTY" && admittedWard !== "NONE")) ? (
+                {((claim.department && claim.department === "Inpatient") || ((claim as any).visitType === "IP") || (admittedWard !== "OPD" && admittedWard !== "CASUALTY" && admittedWard !== "NONE")) ? (
                   <div className="border border-slate-400 py-1 px-3 text-center text-[12px] font-bold text-slate-900 my-2">
                     <span>Hospitalisation Charges From &nbsp;&nbsp;</span>
                     <span className="font-mono">{startPeriodStr}</span>

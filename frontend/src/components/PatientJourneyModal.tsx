@@ -92,11 +92,77 @@ export default function PatientJourneyModal({
   })
 
   return (
-    <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 animate-in fade-in overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 animate-in fade-in overflow-y-auto patient-journey-modal-root">
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          .patient-journey-modal-root,
+          .patient-journey-modal-root #printable-area,
+          .patient-journey-modal-root #printable-area * {
+            visibility: visible !important;
+          }
+          .patient-journey-modal-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            height: auto !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+          }
+          .patient-journey-modal-root #printable-area {
+            position: static !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: none !important;
+            overflow: visible !important;
+            border: none !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .print-only-header {
+            display: block !important;
+          }
+        }
+        @media screen {
+          .print-only-header {
+            display: none !important;
+          }
+        }
+      `}</style>
       <div
         id="printable-area"
         className="printable-area bg-white border-2 border-[#CBD5E1] rounded-none shadow-2xl max-w-3xl w-full my-auto flex flex-col max-h-[92vh] overflow-hidden"
       >
+        {/* Print-Only Official Hospital Header */}
+        <div className="print-only-header border-b-2 border-[#1B4FD8] pb-3 mb-4 px-6 pt-4">
+          <div className="flex justify-between items-start">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded bg-[#1B4FD8] text-white flex items-center justify-center font-bold text-2xl">
+                🏥
+              </div>
+              <div>
+                <h1 className="text-xl font-bold tracking-tight text-gray-900">IMPERIAL HOSPITALS</h1>
+                <p className="text-[11px] font-semibold text-[#1B4FD8]">A UNIT OF MUKUNDA HEALTHCARE PRIVATE LIMITED</p>
+                <p className="text-[10px] text-gray-600"># 27-14-13/A, Opp. Ganesh Canteen Street, Health City · Helpline: 0891-2567890</p>
+              </div>
+            </div>
+            <div className="text-right">
+              <span className="inline-block px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-900 font-bold text-[12px]">
+                CLINICAL JOURNEY REPORT
+              </span>
+              <p className="text-[10px] text-gray-500 mt-1">Generated: {new Date().toLocaleString("en-IN")}</p>
+            </div>
+          </div>
+        </div>
+
         {/* Header */}
         <div className="px-6 py-4 bg-[#0F172A] text-white flex justify-between items-center flex-shrink-0 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -125,7 +191,7 @@ export default function PatientJourneyModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white text-xl p-1 cursor-pointer"
+            className="no-print text-slate-400 hover:text-white text-xl p-1 cursor-pointer"
           >
             ✕
           </button>
@@ -1169,7 +1235,7 @@ export default function PatientJourneyModal({
         )}
 
         {/* Modal Bottom Actions */}
-        <div className="px-6 py-3.5 bg-slate-50 border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0">
+        <div className="no-print px-6 py-3.5 bg-slate-50 border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0">
           <div className="text-[11.5px] text-[#64748B]">
             Permanent UMR: <strong>{encounter.umr}</strong> · Visit:{" "}
             <strong>{encounter.opNumber}</strong>

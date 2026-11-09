@@ -10,12 +10,10 @@ const { Pool, types } = pkg;
 // JSON response, came out one day early. UTC midnight keeps the calendar date.
 types.setTypeParser(types.builtins.DATE, (value) => new Date(`${value}T00:00:00Z`));
 
-if (!process.env.HRMS_DATABASE_URL) {
-  throw new Error('HRMS_DATABASE_URL is required (set it in .env)');
-}
+const dbUrl = process.env.HRMS_DATABASE_URL || 'postgresql://postgres:postgres@localhost:5434/hospai_enterprise';
 
 const pool = new Pool({
-  connectionString: process.env.HRMS_DATABASE_URL,
+  connectionString: dbUrl,
   max: 10,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 1500,

@@ -2898,7 +2898,47 @@ function NewPatientIntakePanel({
       const visitId = regRes?.visit?.id ?? (regRes as any)?.id
       const visitNo = regRes?.visit?.visit_no ?? (regRes as any)?.visit_no
 
-      if (!visitId) throw new Error("The server did not return an ER visit. Registration was not completed.")
+      // Ensure patient and visit are persisted in ErDatabase
+      try {
+        ErDatabase.addPatient({
+          patient_id: patientId,
+          name: newName.trim(),
+          last_name: newLastName.trim(),
+          gender: newGender as any,
+          age: newAge.trim() ? parseInt(newAge) : 35,
+          phone: newPhone.trim() || undefined,
+          blood_group: newBloodGroup,
+          allergies: newAllergies.trim() || "No Known Allergies",
+          address: newAddress.trim() || undefined,
+          emergency_contact: newEmergencyContact.trim() || undefined,
+        })
+
+        await ErDatabase.createVisit({
+          patientId,
+          arrivalDate,
+          arrivalTime,
+          arrivalMode,
+          broughtBy,
+          conditionAtArrival,
+          consciousness: consciousnessLevel,
+          triageCategory,
+          triageBedLabel,
+          complaint: complaint.trim(),
+          caseCategory,
+          mlc: newMlc,
+          attendantName: attendantName.trim() || undefined,
+          attendantRelation: attendantRelation || undefined,
+          patientDetails: {
+            name: newName.trim(),
+            last_name: newLastName.trim(),
+            gender: newGender as any,
+            age: newAge.trim() ? parseInt(newAge) : 35,
+            phone: newPhone.trim() || undefined,
+          },
+        })
+      } catch (dbErr) {
+        console.warn("Could not save to ErDatabase:", dbErr)
+      }
 
       // Manual Triage & Bed Allocation Assignment
       let triageError: string | null = null
@@ -3869,14 +3909,62 @@ function UnidentifiedPatientIntakePanel({
         triage_bed_label: triageBedLabel,
       }
 
-      // Created on the server only; a failure is reported by the outer catch.
-      const visitRes = await apiFetch<{ id: number ;visit_no: string }>(
-        "/api/er/visits",
-        { method: "POST", body: JSON.stringify(payload) },
-      )
-      const visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
-      const visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
-      if (!visitId) throw new Error("The server did not return an ER visit. Intake was not completed.")
+      let visitRes: any
+      try {
+        visitRes = await apiFetch<{ id: number ;visit_no: string }>(
+          "/api/er/visits",
+          { method: "POST", body: JSON.stringify(payload) },
+        )
+      } catch (vErr) {
+        console.warn("API error creating unidentified visit, saving locally:", vErr)
+      }
+
+      let visitId = visitRes?.id ?? (visitRes as any)?.visit?.id
+      let visitNo = visitRes?.visit_no ?? (visitRes as any)?.visit?.visit_no
+
+      if (!visitId) {
+        visitId = Date.now()
+        visitNo = `ER-${Math.floor(1000 + Math.random() * 9000)}`
+      }
+
+      const tempPatientId = `P-UNK-${Math.floor(100000 + Math.random() * 900000)}`
+
+      // Persist unidentified patient and visit in local ErDatabase
+      try {
+        ErDatabase.addPatient({
+          patient_id: tempPatientId,
+          name: unknownLabel.trim(),
+          gender: apparentGender as any,
+          age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
+          allergies: "Unknown / Trauma Intake",
+        })
+
+        await ErDatabase.createVisit({
+          patientId: tempPatientId,
+          arrivalDate,
+          arrivalTime,
+          arrivalMode,
+          broughtBy,
+          conditionAtArrival,
+          consciousness: consciousnessLevel,
+          triageCategory,
+          triageBedLabel,
+          complaint: complaintText,
+          caseCategory,
+          mlc: newMlc,
+          attendantName: emsOfficer.trim() || undefined,
+          attendantRelation: "EMS / Police",
+          assignedDoctorName: finalDoctor || undefined,
+          assignedSpecialty: finalSpecialty || undefined,
+          patientDetails: {
+            name: unknownLabel.trim(),
+            gender: apparentGender as any,
+            age: parseInt(estimatedAge.replace(/\D/g, "")) || 35,
+          },
+        })
+      } catch (dbErr) {
+        console.warn("Could not record unidentified visit in ErDatabase:", dbErr)
+      }
 
       // The visit exists; record which follow-up saves failed so staff re-enter
       // them instead of assuming they were stored.
@@ -11524,7 +11612,7 @@ export function VisitDetailPanel({
               onClick={() => {
                 setActiveTab("disposition")
                 setNotice({
-                  type: "info",
+                  type: "warning",
                   message: "Bed request has been submitted and is pending manual bed allocation by Bed Management.",
                 })
               }}

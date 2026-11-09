@@ -173,7 +173,7 @@ export default function InsuranceIntakeView({
       const opPatients = db.getPatients()
       opPatients.forEach((p) => {
         list.push({
-          uhid: p.umr || p.id,
+          uhid: p.umr || (p as any).id,
           name: p.name,
           age: p.age ? String(p.age) : "30",
           gender: p.gender || "Male",
@@ -471,7 +471,7 @@ export default function InsuranceIntakeView({
                       onClick={() => {
                         const q = searchQuery.toLowerCase().trim()
                         if (!q) {
-                          notify("Please enter search terms.", "warning")
+                          notify("Please enter search terms.", "error")
                           return
                         }
                         const match = hospitalPatients.find(p =>
@@ -484,7 +484,7 @@ export default function InsuranceIntakeView({
                           handleSelectPatient(match)
                           notify(`Loaded patient details for ${match.name} (${match.uhid})`, "success")
                         } else {
-                          notify(`No matching patient record found for "${searchQuery}". Enter details below.`, "info")
+                          notify(`No matching patient record found for "${searchQuery}". Enter details below.`, "error")
                         }
                       }}
                       className="h-11 px-5 bg-blue-600 hover:bg-blue-700 text-white rounded-none flex items-center justify-center cursor-pointer transition-all shadow-md shadow-blue-500/20 hover:shadow-lg"
