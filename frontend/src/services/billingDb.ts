@@ -1095,52 +1095,8 @@ export class BillingDatabase {
   private static load<T,>(key: string, fallback: T): T {
     try {
       const raw = localStorage.getItem(key)
-
       if (!raw) return fallback
-
-      const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) {
-        const isLegacySeed = (item: any): boolean => {
-          if (!item) return false
-          const id = String(item.id || "")
-          const patient = String(item.patient || item.patientName || "")
-          if (
-            /^RAD-10\d{2}$/.test(id) ||
-            /^RAD-10\d$/.test(id) ||
-            /^LAB-10\d$/.test(id) ||
-            /^LAB-2026-000\d$/.test(id) ||
-            /^DCHG-2026-/.test(id) ||
-            /^CLM-2026-089\d$/.test(id) ||
-            /^CLM-89\d{2}$/.test(id) ||
-            /^PAY-100\d$/.test(id) ||
-            patient === "Rahul Sharma" ||
-            patient === "Thomas Reed" ||
-            patient === "Priya Sharma" ||
-            patient === "John Smith" ||
-            patient === "Mary Jones" ||
-            patient === "James Wilson" ||
-            patient === "Maria Garcia" ||
-            patient === "Robert Chen" ||
-            patient === "Sarah Miller" ||
-            patient === "William Taylor" ||
-            patient === "Emma Davis" ||
-            patient === "David Brown" ||
-            patient === "Lisa Anderson"
-          ) {
-            return true
-          }
-          return false
-        }
-
-        const kept = parsed.filter((item: any) => !isLegacySeed(item))
-        if (kept.length !== parsed.length) {
-          try {
-            localStorage.setItem(key, JSON.stringify(kept))
-          } catch {}
-        }
-        return kept as T
-      }
-      return parsed
+      return JSON.parse(raw) as T
     } catch {
       return fallback
     }
@@ -1588,6 +1544,7 @@ export class BillingDatabase {
       claims[existingIndex] = updatedClaim
 
       this.save(STORAGE_KEY_CLAIMS, claims)
+      this.emitUpdate()
 
       return updatedClaim
     }
@@ -1676,6 +1633,7 @@ export class BillingDatabase {
     claims.unshift(newClaim)
 
     this.save(STORAGE_KEY_CLAIMS, claims)
+    this.emitUpdate()
 
     BillingRbacManager.logEvent({
       action: "INVOICE_CREATED",
@@ -1847,6 +1805,7 @@ export class BillingDatabase {
     claims[idx] = updatedClaim
 
     this.save(STORAGE_KEY_CLAIMS, claims)
+    this.emitUpdate()
 
     return updatedClaim
   }
@@ -4619,6 +4578,18 @@ export class BillingDatabase {
                 ev.event_type === "intervention_given"
               ) {
                 const evName = ev.event_name || ev.notes || "";
+                const lower = evName.toLowerCase();
+                if (
+                  lower.includes("bill") ||
+                  lower.includes("invoice") ||
+                  lower.includes("central billing") ||
+                  lower.includes("dispatch") ||
+                  lower.includes("arrival") ||
+                  lower.includes("registered") ||
+                  lower.includes("triage")
+                ) {
+                  return;
+                }
                 if (evName) {
                   const tariff = resolveErItemPrice(
                     evName,
@@ -6871,6 +6842,25 @@ export function resolveErItemPrice(
   itemType: "medication" | "investigation" | "intervention" | "procedure",
 ): ErPricedItem {
   const norm = (itemName || "").toLowerCase().trim()
+
+  if (
+    norm.includes("bill dispatched") ||
+    norm.includes("central billing") ||
+    norm.includes("billing desk") ||
+    norm.includes("invoice") ||
+    norm.includes("clearance pending") ||
+    norm.includes("patient arrived") ||
+    norm.includes("bed assigned") ||
+    norm.includes("doctor assigned") ||
+    norm.includes("triage")
+  ) {
+    return {
+      name: itemName,
+      category: "Administrative" as any,
+      unitPrice: 0,
+      cptCode: "99080",
+    }
+  }
 
   if (itemType === "medication") {
     if (

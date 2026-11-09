@@ -18,6 +18,7 @@ import {
   Tag,
 } from "lucide-react"
 import { LabOrder, LabOrderDatabase, priceForTest } from "../../services/labOrdersDb"
+import { LabLisService } from "../../services/labLisService"
 import { ALL_LAB_TESTS, LabTestDefinition, findTestDefinition } from "./labCatalogueSchema"
 import { db, DBPatient } from "../../services/db"
 import { AuditDatabase } from "../../services/auditDb"
@@ -26,9 +27,10 @@ interface LabOrdersViewProps {
   onOpenReport?: (order: LabOrder) => void
   onOpenBench?: (order: LabOrder) => void
   onCollectSample?: (order?: LabOrder) => void
+  onOpenWorklists?: (order: LabOrder) => void
 }
 
-export default function LabOrdersView({ onOpenReport, onOpenBench, onCollectSample }: LabOrdersViewProps) {
+export default function LabOrdersView({ onOpenReport, onOpenBench, onCollectSample, onOpenWorklists }: LabOrdersViewProps) {
   const [orders, setOrders] = useState<LabOrder[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatusTab, setSelectedStatusTab] = useState<string>("All")
@@ -38,6 +40,31 @@ export default function LabOrdersView({ onOpenReport, onOpenBench, onCollectSamp
   const [patientSearch, setPatientSearch] = useState("")
   const [selectedPatient, setSelectedPatient] = useState<DBPatient | null>(null)
   const [patientMatches, setPatientMatches] = useState<DBPatient[]>([])
+
+  const handleDrawSampleAndOpenWorklist = (order: LabOrder) => {
+    // 1. Advance order status to Sample Collected
+    LabOrderDatabase.advanceStatus(order.id, "Sample Collected", "Lab Tech")
+
+    // 2. Mark linked specimen records as Collected
+    try {
+      const specimens = LabLisService.getSpecimens().filter((s) => s.orderId === order.id)
+      specimens.forEach((spec) => {
+        LabLisService.collectSpecimen(spec.id, "Lab Tech", "Laboratory")
+      })
+    } catch (e) {
+      console.warn("Specimen auto-collection skipped:", e)
+    }
+
+    toast.success(`Samples drawn for ${order.patientName}. Transferred directly to Department Analytical Worklists.`)
+
+    // 3. Directly open Department Analytical Worklists
+    if (onOpenWorklists) {
+      onOpenWorklists(order)
+    } else if (onOpenBench) {
+      onOpenBench(order)
+    }
+  }
+
   const [orderSource, setOrderSource] = useState<"OPD" | "IPD" | "Emergency" | "ICU" | "OT" | "Direct">("OPD")
   const [orderingDoctor, setOrderingDoctor] = useState("Dr. P. R. K. Varma")
   const [department, setDepartment] = useState("Cardiology")
@@ -340,12 +367,12 @@ export default function LabOrdersView({ onOpenReport, onOpenBench, onCollectSamp
                             </span>
                           ) : (
                             <>
-                              {order.status === "Billed" && onCollectSample && (
+                              {order.status === "Billed" && (
                                 <button
                                   type="button"
-                                  onClick={() => onCollectSample(order)}
+                                  onClick={() => handleDrawSampleAndOpenWorklist(order)}
                                   className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-[#7552B8] border border-purple-200 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1 shadow-2xs"
-                                  title="Go to Phlebotomy / Sample Collection"
+                                  title="Draw sample and send directly to Department Analytical Worklists"
                                 >
                                   <span>💉 Draw Sample</span>
                                 </button>

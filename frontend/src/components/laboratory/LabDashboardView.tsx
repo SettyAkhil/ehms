@@ -134,7 +134,7 @@ export default function LabDashboardView({
           {
             label: "Awaiting Draw",
             value: metrics.awaitingCollection,
-            subtext: "Phlebotomy Queue",
+            subtext: "Analytical Worklists",
             icon: Clock,
             color: "text-amber-600",
             bgColor: "bg-amber-50",
@@ -443,7 +443,18 @@ export default function LabDashboardView({
                         ) : order.status === "Billed" ? (
                           <button
                             type="button"
-                            onClick={() => onNavigate("lab_orders_collection")}
+                            onClick={() => {
+                              LabOrderDatabase.updateOrderStatus(order.id, 'Sample Collected');
+                              const specs = LabLisService.getSpecimens().filter((s) => s.orderId === order.id);
+                              specs.forEach((s) =>
+                                LabLisService.updateSpecimenStatus(s.id, 'Collected', {
+                                  collectedBy: 'Lab Technician',
+                                  collectedAt: new Date().toISOString(),
+                                })
+                              );
+                              if (onOpenOrder) onOpenOrder(order);
+                              else onNavigate('lab_workbench');
+                            }}
                             className="px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-[#7552B8] border border-purple-200 text-xs font-bold rounded-lg transition cursor-pointer"
                           >
                             💉 Draw Sample
