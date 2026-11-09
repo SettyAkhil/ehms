@@ -139,6 +139,30 @@ function getSafeFallbackPayload(urlOrPath: string): any {
       devices: {},
     }
   }
+  if (p.includes("/workforce/on-duty") || p.includes("/on-duty")) {
+    return { departments: [], staff: [] }
+  }
+  if (p.includes("/workforce/availability") || p.includes("/availability")) {
+    return []
+  }
+  if (p.includes("/workforce/coverage") || p.includes("/coverage")) {
+    return { coverage: [], census_error: null }
+  }
+  if (p.includes("/notifications") || p.includes("/me/notifications")) {
+    return []
+  }
+  if (p.includes("/approvals") || p.includes("/workflows")) {
+    return []
+  }
+  if (p.includes("/training/matrix")) {
+    return { programs: [], rows: [], gaps: 0 }
+  }
+  if (p.includes("/training")) {
+    return []
+  }
+  if (p.includes("/devices") || p.includes("/punches") || p.includes("/integrations") || p.includes("/corrections") || p.includes("/overtime") || p.includes("/exceptions")) {
+    return []
+  }
   if (p.includes("/hospitals")) {
     return []
   }
@@ -223,7 +247,7 @@ function hmsApiMockMiddleware() {
       // /api/auth/login here while the gateway was up meant no session cookie
       // was ever issued, so every authenticated call (prescription reading,
       // OCR) failed with 401 -- the real backend handles it whenever it can.
-      const realPort = pathname.startsWith("/api/hr/") || pathname.startsWith("/api/v1/hr") || pathname.startsWith("/api/v1/attendance") ? 8011 : 8010
+      const realPort = pathname.startsWith("/api/hr/") || pathname === "/api/hr" || pathname.startsWith("/iclock") ? 8011 : 8010
       if (await portUp(realPort)) return next()
 
       // SSE EventSource streams must return text/event-stream to avoid browser aborts

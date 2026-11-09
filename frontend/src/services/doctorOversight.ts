@@ -180,7 +180,16 @@ function countsFor(rows: DoctorPatientRow[], cons: ConsultationRecord[], labs: L
     consultations: cons.length,
     dispatched: cons.filter((c) => c.dispatch === "Dispatched").length,
     labOrders: labs.length,
-    labPending: labs.filter((o) => !LAB_DONE.includes(o.status)).length,
+    labPending: labs.filter((o) => {
+      if (LAB_DONE.includes(o.status)) return false
+      // Do not count lab orders for patients who have not attended consultation yet
+      const matchingRow = rows.find((r) => r.encounter.id === o.encounterId || r.encounter.umr === o.umr)
+      if (matchingRow && (matchingRow.stage === "Waiting" || matchingRow.stage === "Registered" || matchingRow.stage === "With nurse")) {
+        // Patient has not attended consultation yet -- do not count pending lab
+        return false
+      }
+      return true
+    }).length,
     labCritical: labs.filter((o) => o.tests.some((t) => /critical/i.test(t.flag || "") || Object.values(t.results || {}).some((r) => /critical/i.test(r.flag || "")))).length,
     prescriptions: rx.length,
     rxAtPharmacy: rx.filter((p) => !RX_DONE.includes(p.status)).length,

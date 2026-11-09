@@ -161,7 +161,162 @@ const PENDING_ALLOCATION_KEY = "hospai_pending_bed_allocation_v2"
 
 const INITIAL_TRANSFER_NOTIFICATIONS: BedTransferNotification[] = []
 
-const INITIAL_BEDS: BedRecord[] = []
+const INITIAL_BEDS: BedRecord[] = [
+  {
+    id: 1,
+    ward: "ICU",
+    room_no: "ICU-01",
+    bed_no: "B1",
+    bed_type: "ICU",
+    status: "Available",
+    daily_rate: 5500,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 2,
+    ward: "ICU",
+    room_no: "ICU-02",
+    bed_no: "B2",
+    bed_type: "ICU",
+    status: "Available",
+    daily_rate: 5500,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 3,
+    ward: "General Ward",
+    room_no: "GW-101",
+    bed_no: "B1",
+    bed_type: "General",
+    status: "Available",
+    daily_rate: 2000,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 4,
+    ward: "General Ward",
+    room_no: "GW-101",
+    bed_no: "B2",
+    bed_type: "General",
+    status: "Available",
+    daily_rate: 2000,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 5,
+    ward: "Semi-Private",
+    room_no: "SP-201",
+    bed_no: "B1",
+    bed_type: "Semi-Private",
+    status: "Available",
+    daily_rate: 3500,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 6,
+    ward: "Semi-Private",
+    room_no: "SP-201",
+    bed_no: "B2",
+    bed_type: "Semi-Private",
+    status: "Available",
+    daily_rate: 3500,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+  {
+    id: 7,
+    ward: "Private",
+    room_no: "PV-301",
+    bed_no: "B1",
+    bed_type: "Private",
+    status: "Available",
+    daily_rate: 5000,
+    allocation_id: null,
+    admission_id: null,
+    allocated_at: null,
+    admission_date: null,
+    expected_discharge_date: null,
+    patient_id: null,
+    patient_name: null,
+    patient_last_name: null,
+    patient_phone: null,
+    patient_age: null,
+    patient_gender: null,
+    admission_notes: null,
+    room_charges_so_far: null,
+  },
+]
 
 const INITIAL_DISCHARGED: DischargedPatientRecord[] = []
 
@@ -179,13 +334,18 @@ export class BedDatabase {
         return INITIAL_BEDS
       }
 
-      return JSON.parse(stored)
+      const parsed: BedRecord[] = JSON.parse(stored)
+      if (parsed.length === 0) {
+        this.save(INITIAL_BEDS)
+        return INITIAL_BEDS
+      }
+      return parsed
     } catch {
       return INITIAL_BEDS
     }
   }
 
-  private static save(beds: BedRecord[]): void {
+  public static save(beds: BedRecord[]): void {
     if (typeof window === "undefined" || !window.localStorage) return
 
     try {
@@ -704,6 +864,28 @@ export class BedDatabase {
         allocation_id: null,
 
         admission_id: null,
+
+        allocated_at: null,
+
+        admission_date: null,
+
+        expected_discharge_date: null,
+
+        patient_id: null,
+
+        patient_name: null,
+
+        patient_last_name: null,
+
+        patient_phone: null,
+
+        patient_age: null,
+
+        patient_gender: null,
+
+        admission_notes: null,
+
+        room_charges_so_far: null,
       }
 
       created.push(newBed)
@@ -779,6 +961,8 @@ export class BedDatabase {
 
       patient_id:
         data.patient_id || `P-${Math.floor(100000 + Math.random() * 900000)}`,
+
+      patient_name: (data as any).patient_name || "Patient",
 
       source_department:
         data.source_department || "Emergency Department (ER Bay 1)",

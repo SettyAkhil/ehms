@@ -24,6 +24,7 @@ import {
   DispatchTargets,
 } from "../../services/consultationDispatch"
 import { LabOrderDatabase, priceForTest } from "../../services/labOrdersDb"
+import { calculateMedicineQuantity } from "../../utils/prescriptionQuantity"
 import {
   checkPrescriptionAiStatus,
   splitPrescriptionFile,
@@ -4378,9 +4379,18 @@ function ReviewAndDispatch({
                     value: string | number,
                   ) =>
                     onMedications(
-                      medications.map((m, i) =>
-                        i === index ? { ...m, [field]: value } : m,
-                      ),
+                      medications.map((m, i) => {
+                        if (i !== index) return m
+                        const updated = { ...m, [field]: value }
+                        if (field === "dosage" || field === "frequency" || field === "duration") {
+                          updated.quantity = calculateMedicineQuantity(
+                            field === "dosage" ? String(value) : updated.dosage,
+                            field === "frequency" ? String(value) : updated.frequency,
+                            field === "duration" ? String(value) : updated.duration,
+                          )
+                        }
+                        return updated
+                      }),
                     )
                   const cell =
                     "w-full bg-transparent border border-transparent hover:border-[#DDE2EC] focus:border-[#1B4FD8] focus:bg-white rounded px-1.5 py-1 focus:outline-none disabled:hover:border-transparent"

@@ -152,7 +152,7 @@ export function opCardHtml(
       ${registered ? `<div class="since">Patient since ${esc(registered)}</div>` : ""}
       <div class="hint">Show this card at every visit</div>
     </div>
-    ${qr ? `<div class="qr">${qr}<div class="qrcap">Scan for record</div></div>` : `<div class="qr"><div class="noqr">${esc(QR_PROBLEM_TEXT[qrProblem ?? "offline"])}</div></div>`}
+    ${qr ? `<div class="qr">${qr}<div class="qrcap">Scan for record</div></div>` : `<div class="qr">${qrSvg(publicPatientPageUrl(card.umr), 110)}<div class="qrcap">Scan for record</div></div>`}
   </div>
 </div>
 </body></html>`

@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { PharmacyDatabase, AppBatch, AppMedicine } from "../../../services/pharmacyDb"
 import { db } from "../../../services/db"
+import { findMatchingMedicine } from "../../../utils/medicineMatcher"
 import toast from "react-hot-toast"
 import PageHeader from "../components/PageHeader"
 import InvoicePrintModal from "../components/InvoicePrintModal"
@@ -369,31 +370,14 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
       const str = typeof item.strength === "string" ? item.strength.trim() : ""
       const itemName = str && !rawName.toLowerCase().includes(str.toLowerCase()) ? `${rawName} ${str}` : rawName
 
-      // 1. Match against medicines in database (by ID, exact name, or partial match)
-      let med = allMedicines.find((m) => m.id === item.medicineId)
-      if (!med) {
-        const target = itemName.toLowerCase().trim()
-        med = allMedicines.find((m) => {
-          const mMedName = (m.medicineName || "").toLowerCase().trim()
-          const mBrandName = (m.brandName || "").toLowerCase().trim()
-          return mMedName === target || mBrandName === target
-        })
-      }
-      if (!med) {
-        const target = itemName.toLowerCase().trim()
-        med = allMedicines.find((m) => {
-          const mMedName = (m.medicineName || "").toLowerCase().trim()
-          const mBrandName = (m.brandName || "").toLowerCase().trim()
-          return (
-            (mMedName && (target.includes(mMedName) || mMedName.includes(target))) ||
-            (mBrandName && (target.includes(mBrandName) || mBrandName.includes(target)))
-          )
-        })
-      }
+      // 1. Match against medicines in database with clinical intelligent resolution
+      // (handles abbreviations like PCM, brand names like Dolo, typos like Paraceramol, and missing strength)
+      const matchResult = findMatchingMedicine(item, allMedicines, allBatches)
+      const med = matchResult.matchedMedicine
 
       // 2. If not found in catalog, do NOT auto-create records in Medicine Master
       if (!med) {
-        toast.error(`"${itemName}" is not registered in Medicine Master. Please add it to the catalog first.`, { duration: 4000 })
+        toast.error(`"${rawName || itemName}" is not registered in Medicine Master. Please add it to the catalog first.`, { duration: 4000 })
         return
       }
 
@@ -453,6 +437,7 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
           medicineId: med!.id,
           batchId: b.id,
           medicine: med!.brandName || med!.medicineName,
+          prescribedName: rawName || itemName,
           generic: med!.genericName,
           form: med!.dosageForm || (med as any).form || "TABLET",
           packing: (med as any).packing || (med as any).pack || "",
@@ -488,15 +473,19 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
       ? medicines
           .filter((m) => {
             const q = searchQuery.toLowerCase().trim()
-            return (
-              m.name.toLowerCase().includes(q) ||
+            if (
+              (m.name || "").toLowerCase().includes(q) ||
               (m.generic && m.generic.toLowerCase().includes(q)) ||
               (m.mnfCode && m.mnfCode.toLowerCase().includes(q)) ||
               (m.hsnCode && m.hsnCode.toLowerCase().includes(q)) ||
               (m.packing && m.packing.toLowerCase().includes(q)) ||
               (m.sku && m.sku.toLowerCase().includes(q)) ||
               (m.barcode && m.barcode.toLowerCase().includes(q))
-            )
+            ) {
+              return true
+            }
+            const match = findMatchingMedicine({ medicineName: q }, [m as any], [])
+            return match.matchedMedicine !== null
           })
           .slice(0, 8)
       : []
@@ -1713,7 +1702,14 @@ export default function Dispensing({ onNavigate }: DispensingProps) {
                       <tr key={i} className="hover:bg-[#F0FDFA] transition-colors border-b border-[#E2E8F0] last:border-0 hover:bg-[#F5F7FA]"
                       >
                         <td className="px-5 py-4 font-medium text-[13px] text-[#0F1624]">
-                          <div>{item.medicine}</div>
+                          <div className="font-semibold">{item.medicine}</div>
+                          {item.prescribedName && item.prescribedName.toLowerCase().trim() !== item.medicine.toLowerCase().trim() && (
+                            <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
+                              <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded border border-emerald-200 text-[10px]">
+                                Rx: {item.prescribedName}
+                              </span>
+                            </div>
+                          )}
                           <div className="text-[11px] text-[#64748B]">
                             {item.mnf || "MANK"} · Pack: {item.packing || "1's"} · HSN: {item.hsnCode || "3004 039"}{item.rate ? ` · Rate: ₹${Number(item.rate).toFixed(2)}` : ""}
                           </div>

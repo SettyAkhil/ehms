@@ -206,7 +206,7 @@ export default function Dashboard({
       return (
         orders.find(
           (o) =>
-            (o.status === "Critical" ||
+            ((o.status as any) === "Critical" ||
               (o as any).priority === "STAT" ||
               o.tests?.some((t) => t.urgency === "STAT")) &&
             o.status !== "Completed"
@@ -226,15 +226,15 @@ export default function Dashboard({
       )
       const surgeryCases = SurgeryDatabase.getCases()
       const surgeryInCare = surgeryCases.filter(
-        (c) => c.status === "In Progress" || c.status === "PACU"
+        (c) => (c.status as any) === "In Progress" || (c.status as any) === "PACU"
       )
       const surgeryWaiting = surgeryCases.filter(
-        (c) => c.status === "Scheduled" || c.status === "Pre-Op"
+        (c) => (c.status as any) === "Scheduled" || (c.status as any) === "Pre-Op"
       )
 
       const edCapacity = beds.filter(
         (b) =>
-          b.bed_type === "Emergency" ||
+          (b.bed_type as any) === "Emergency" ||
           b.ward.toLowerCase().includes("emergency")
       ).length
       const edInCare = erVisits.length
@@ -279,7 +279,7 @@ export default function Dashboard({
       const wardMap = new Map<string, BedRecord[]>()
       beds.forEach((b) => {
         if (
-          b.bed_type === "Emergency" ||
+          (b.bed_type as any) === "Emergency" ||
           b.ward.toLowerCase().includes("emergency")
         )
           return

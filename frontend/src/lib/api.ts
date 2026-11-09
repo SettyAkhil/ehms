@@ -538,17 +538,25 @@ async function handleLocalErMock<T = any>(
     const updated = ErDatabase.updatePatient(pId, body)
 
     try {
-      const existingDbPat = db.getPatient(pId) || db.getPatientByUmr(pId)
+      const existingDbPat = db.getPatientByUmr(pId)
       if (existingDbPat) {
-        db.updatePatient(existingDbPat.id, {
-          name: body.name || existingDbPat.name,
-          phone: body.phone || existingDbPat.phone,
-          gender: body.gender || existingDbPat.gender,
-          age: body.age ? Number(body.age) : existingDbPat.age,
-          address: body.address || existingDbPat.address,
-          blood_group: body.blood_group || existingDbPat.blood_group,
-          emergency_contact: body.emergency_contact || existingDbPat.emergency_contact,
-        })
+        const all = db.getPatients().map((p) =>
+          p.umr.toUpperCase() === pId.toUpperCase()
+            ? {
+                ...p,
+                name: body.name || p.name,
+                phone: body.phone || p.phone,
+                gender: body.gender || p.gender,
+                age: body.age ? Number(body.age) : p.age,
+                address: body.address || p.address,
+                bloodGroup: body.blood_group || p.bloodGroup,
+                emergency_contact: body.emergency_contact || (p as any).emergency_contact,
+              }
+            : p
+        )
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("hospai_db_patients_v1", JSON.stringify(all))
+        }
       }
     } catch {}
 
@@ -1006,7 +1014,7 @@ async function handleLocalErMock<T = any>(
     const patientAdmissionsCount = new Map<string, { name: string; count: number }>()
 
     for (const d of discharged) {
-      const pid = d.patientId || d.umr || String(d.id)
+      const pid = d.patientId || (d as any).umr || String(d.id)
       const current = patientAdmissionsCount.get(pid) || { name: d.patientName || "Patient", count: 0 }
       current.count += 1
       patientAdmissionsCount.set(pid, current)
@@ -1016,14 +1024,14 @@ async function handleLocalErMock<T = any>(
       )
       if (readmittedBed && d.dischargeDate) {
         const dDate = new Date(d.dischargeDate).getTime()
-        const admitDate = readmittedBed.admitted_at ? new Date(readmittedBed.admitted_at).getTime() : Date.now()
+        const admitDate = (readmittedBed as any).admitted_at || readmittedBed.admission_date || readmittedBed.allocated_at ? new Date(((readmittedBed as any).admitted_at || readmittedBed.admission_date || readmittedBed.allocated_at)!).getTime() : Date.now()
         const gapDays = Math.max(0, Math.round((admitDate - dDate) / 86400000))
         if (gapDays <= windowDays) {
           readmissionEvents.push({
             patient_id: d.patientId || String(d.id),
             patient_name: d.patientName,
             index_discharge_date: d.dischargeDate,
-            readmission_date: readmittedBed.admitted_at || new Date().toISOString(),
+            readmission_date: (readmittedBed as any).admitted_at || readmittedBed.admission_date || readmittedBed.allocated_at || new Date().toISOString(),
             gap_days: gapDays,
             readmission_admission_id: readmittedBed.allocation_id || 1001,
           })
@@ -1447,6 +1455,14 @@ async function handleLocalErMock<T = any>(
 
       created_at: new Date(Date.now() - (idx + 1) * 86400000).toISOString(),
     }))
+
+    const diagnoses = opEnc
+      .filter((e) => !!e.diagnosis)
+      .map((e, idx) => ({
+        id: idx + 1,
+        diagnosis: e.diagnosis,
+        created_at: new Date(Date.now() - (idx + 1) * 86400000).toISOString(),
+      }))
 
     let localEvals: any[] = []
     let localVits: any[] = []

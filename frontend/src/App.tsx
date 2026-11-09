@@ -659,7 +659,7 @@ function NotificationPanel({
     let alive = true
     const load = () =>
       hr.get<typeof hrNotes>("/api/v1/me/notifications")
-        .then((rows) => alive && setHrNotes(rows.slice(0, 8)))
+        .then((rows) => alive && setHrNotes(Array.isArray(rows) ? rows.slice(0, 8) : []))
         .catch(() => alive && setHrNotes([])) // HR service down: the bell just shows the rest
     load()
     const t = setInterval(load, 60_000)

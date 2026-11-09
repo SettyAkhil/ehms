@@ -391,6 +391,16 @@ export default function QueueManagement({
   }
 
   const handleCallPatient = (enc: DBOPEncounter) => {
+    const hasVitals = !!(enc.timestamps?.vitalsRecorded || enc.vitals?.bp)
+    if (!hasVitals) {
+      const callNurseFirst = window.confirm(
+        `⚠️ Vitals Not Recorded!\n\nPatient "${enc.patientName}" (Token #${enc.queueToken || enc.opNumber}) has not completed vital triage at the Nurse Station.\n\nSend patient to Nurse Station first?\n\n• Click OK to Call Nurse Station (Standard Protocol)\n• Click Cancel to override and call doctor directly`,
+      )
+      if (callNurseFirst) {
+        handleCallToNurse(enc)
+        return
+      }
+    }
     playChime()
     const token = enc.queueToken || enc.opNumber
     const room = enc.room || "Room 107"
@@ -1072,8 +1082,16 @@ ${
                                   <button
                                     type="button"
                                     onClick={() => handleCallPatient(enc)}
-                                    className="px-2.5 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-none transition-colors flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap"
-                                    title="Call Patient to Doctor Chamber"
+                                    className={`px-2.5 py-1 text-[11px] font-bold rounded-none transition-colors flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap ${
+                                      !enc.timestamps?.vitalsRecorded && !enc.vitals?.bp
+                                        ? "text-blue-900 bg-blue-100 hover:bg-blue-200 border border-blue-300"
+                                        : "text-white bg-blue-600 hover:bg-blue-700"
+                                    }`}
+                                    title={
+                                      !enc.timestamps?.vitalsRecorded && !enc.vitals?.bp
+                                        ? "⚠️ Vitals not yet recorded at Nurse Station - will verify before calling"
+                                        : "Call Patient to Doctor Chamber"
+                                    }
                                   >
                                     <span>📢</span> Call Doctor
                                   </button>
