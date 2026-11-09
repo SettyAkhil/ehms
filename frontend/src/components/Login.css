@@ -1,0 +1,161 @@
+/* Login screen motion & accents. All classes are prefixed `login-` to stay scoped. */
+
+@keyframes login-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes login-slide-fwd {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes login-slide-back {
+  from { opacity: 0; transform: translateX(-18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes login-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
+@keyframes login-float {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(24px, -32px, 0) scale(1.08); }
+  66%      { transform: translate3d(-18px, 18px, 0) scale(0.95); }
+}
+
+@keyframes login-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
+
+@keyframes login-gradient-pan {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+/* Card entrance */
+.login-card {
+  animation: login-fade-up 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Animated accent stripe across the top of the card */
+.login-accent {
+  height: 3px;
+  background: linear-gradient(90deg, #1b4fd8, #4f46e5, #06b6d4, #1b4fd8);
+  background-size: 300% 100%;
+  animation: login-gradient-pan 8s ease-in-out infinite;
+}
+
+/* Step transitions */
+.login-step-fwd  { animation: login-slide-fwd 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.login-step-back { animation: login-slide-back 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* Staggered role list: set --i on each item */
+.login-stagger {
+  animation: login-fade-up 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 32ms);
+}
+
+/* Error shake */
+.login-shake { animation: login-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+
+/* Progress fill for step 2 */
+.login-progress-fill {
+  background: linear-gradient(90deg, #1b4fd8, #4f46e5);
+  transition: width 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Skeleton shimmer while roles load */
+.login-skeleton {
+  background: linear-gradient(90deg, #eef2f7 0%, #f8fafc 40%, #eef2f7 80%);
+  background-size: 200% 100%;
+  animation: login-shimmer 1.4s linear infinite;
+}
+
+/* Floating glow orbs on the brand panel */
+.login-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  pointer-events: none;
+  animation: login-float 16s ease-in-out infinite;
+}
+
+/* Role cards */
+.login-role {
+  transition: border-color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+.login-role:hover {
+  transform: translateX(2px);
+  box-shadow: 0 6px 18px -10px rgba(27, 79, 216, 0.45);
+}
+.login-role:active { transform: translateX(2px) scale(0.995); }
+
+/* Primary button: gradient that pans on hover plus a light sweep */
+.login-btn {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #1b4fd8 0%, #2563eb 45%, #4f46e5 100%);
+  background-size: 200% 200%;
+  background-position: 0% 50%;
+  transition: background-position 0.5s ease, transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 8px 20px -10px rgba(37, 99, 235, 0.6);
+}
+.login-btn:hover:not(:disabled) {
+  background-position: 100% 50%;
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px -12px rgba(79, 70, 229, 0.65);
+}
+.login-btn:active:not(:disabled) { transform: translateY(0); }
+.login-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.7s ease;
+}
+.login-btn:hover:not(:disabled)::after { transform: translateX(120%); }
+.login-btn:disabled {
+  background: #94a3b8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Brand panel feature tiles */
+.login-feature {
+  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+.login-feature:hover {
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card,
+  .login-step-fwd,
+  .login-step-back,
+  .login-stagger,
+  .login-shake,
+  .login-orb,
+  .login-accent,
+  .login-skeleton {
+    animation: none !important;
+  }
+  .login-role,
+  .login-btn,
+  .login-btn::after,
+  .login-feature,
+  .login-progress-fill {
+    transition: none !important;
+  }
+  .login-role:hover,
+  .login-feature:hover,
+  .login-btn:hover:not(:disabled) {
+    transform: none;
+  }
+}
