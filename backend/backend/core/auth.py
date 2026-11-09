@@ -680,8 +680,16 @@ def seed_initial_access_roles(hospital_id: Optional[int] = None):
 
 
 def create_default_users():
-    """Seed only the first System Admin; never create demo staff accounts."""
+    """Create the first System Admin on an empty database.
+
+    Never creates demo staff, and never modifies an existing account: the admin's
+    password is only set here when the account is first created, so a password
+    changed by the administrator survives restarts. The first-boot password comes
+    from INITIAL_ADMIN_PASSWORD (default "Admin@123" for local installs) and must
+    be changed after the first sign-in.
+    """
     hospital_id = resolve_hospital_id()
+    initial_password = os.getenv("INITIAL_ADMIN_PASSWORD", "").strip() or "Admin@123"
     with get_connection() as conn:
         cursor = conn.cursor()
 
@@ -689,7 +697,7 @@ def create_default_users():
             {
                 "username": "admin",
                 "email": "admin@hospital.com",
-                "password_hash": hash_password("Admin@123"),
+                "password_hash": hash_password(initial_password),
                 "role": "employee",
                 "access_role": "owner",
                 "user_type": "admin",
@@ -705,31 +713,20 @@ def create_default_users():
         ]
 
         for user in defaults:
-            # Only touches login-usability fields (password/email/active status) on an
-            # already-existing row -- NOT role/access_role/user_type/module_access.
-            # The sole local bootstrap account keeps its existing role grants.
-            # Re-seeding only restores its known password/email/active status;
-            # templates and all staff identities are handled separately.
+            # Existing account (any hospital row with this username/email): leave
+            # it exactly as the administrator configured it.
             cursor.execute(
                 """
-                UPDATE users
-                SET password_hash = ?,
-                    email = ?,
-                    status = 'active'
+                SELECT 1 FROM users
                 WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)
                 """,
-                (
-                    user["password_hash"],
-                    user["email"],
-                    user["username"],
-                    user["email"],
-                ),
+                (user["username"], user["email"]),
             )
-            # Commit before add_employee(), which opens its own connection --
-            # otherwise this connection's still-open UPDATE transaction
-            # self-deadlocks against it ("database is locked").
+            exists = cursor.fetchone() is not None
+            # Close this connection's read transaction before add_employee(),
+            # which opens its own connection.
             conn.commit()
-            if cursor.rowcount == 0:
+            if not exists:
                 user["employee_id"] = generate_employee_id(hospital_id=hospital_id)
                 try:
                     add_employee(user, hospital_id=hospital_id)

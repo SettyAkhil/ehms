@@ -1,0 +1,22 @@
+# Keep build contexts small and free of local state/secrets.
+.git
+.vite
+**/node_modules
+**/dist
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/.hms-*.log
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+backend/uploads
+backend/backend/rag_workspaces
+ocr-backend/uploads
+**/.pytest_cache
+**/.DS_Store
