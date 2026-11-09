@@ -1,10 +1,12 @@
 import {
   ACTIVE_DOCTORS,
   ACTIVE_SPECIALTIES,
+  getActiveSpecialties,
   getDoctorMaster,
   INITIAL_DOCTOR_MASTER,
   type MasterDoctor,
 } from "./doctorMaster"
+import { RoleDatabase } from "./roleDb"
 /**
  * Doctor Portal store.
  *
@@ -69,7 +71,7 @@ export function isUnassignedDoctor(doc?: string | null): boolean {
   )
 }
 
-/** Builds the full roster dynamically from doctor master with complete fallback coverage. */
+/** Builds the full roster dynamically from doctor master and RBAC users with complete fallback coverage. */
 export function getAllDoctorAccounts(): DoctorAccount[] {
   let master: MasterDoctor[] = []
   try {
@@ -84,13 +86,20 @@ export function getAllDoctorAccounts(): DoctorAccount[] {
   const seenIds = new Set<string>()
   const accounts: DoctorAccount[] = []
 
+  // 1. Doctors from authoritative Doctor Master
   for (const d of master) {
-    if (!d || !d.id || seenIds.has(d.id)) continue
-    seenIds.add(d.id)
+    if (!d || !d.id) continue
+    const idKey = String(d.id).trim().toLowerCase()
+    if (seenIds.has(idKey)) continue
+    seenIds.add(idKey)
+    if (d.staffId) seenIds.add(String(d.staffId).trim().toLowerCase())
+    if (d.username) seenIds.add(String(d.username).trim().toLowerCase())
+
+    const docName = (d.name || "").trim()
     accounts.push({
       id: d.id,
       username: (d.username || d.id.toLowerCase().replace(/[^a-z0-9]/g, "")).toLowerCase(),
-      name: d.name || `Dr. ${d.id}`,
+      name: docName.startsWith("Dr.") ? docName : `Dr. ${docName || d.id}`,
       specialty: d.specialty || "General Medicine",
       room: d.room || "Room 101",
       staffId: d.staffId || d.id,
@@ -98,20 +107,101 @@ export function getAllDoctorAccounts(): DoctorAccount[] {
     })
   }
 
-  // Include any ACTIVE_DOCTORS that weren't captured
+  // 2. Doctors registered in RBAC RoleDatabase users (Hospital Staff & Users)
+  try {
+    const users = RoleDatabase.getUsers()
+    for (const u of users) {
+      if (!u || !u.id) continue
+      const roleUpper = (u.roleId || "").toUpperCase()
+      const isDoc =
+        roleUpper === "ROLE_DOCTOR" ||
+        roleUpper.includes("DOCTOR") ||
+        roleUpper.includes("SURGEON") ||
+        roleUpper.includes("PHYSICIAN") ||
+        roleUpper.includes("CLINICIAN") ||
+        (u.name || "").toLowerCase().startsWith("dr.") ||
+        (u.department &&
+          [
+            "cardiology",
+            "neurology",
+            "pediatrics",
+            "orthopedics",
+            "general surgery",
+            "general medicine",
+            "oncology",
+            "gastroenterology",
+            "ent",
+            "ophthalmology",
+            "dermatology",
+            "urology",
+            "pulmonology",
+            "emergency medicine",
+          ].includes(u.department.toLowerCase()))
+
+      if (!isDoc) continue
+
+      const idKey = String(u.staffId || u.id).trim().toLowerCase()
+      const userKey = String(u.username || "").trim().toLowerCase()
+
+      if (seenIds.has(idKey) || (userKey && seenIds.has(userKey))) {
+        // Upgrade specialty if existing had default "General Medicine" but user has specific department
+        const existing = accounts.find(
+          (a) =>
+            a.id.toLowerCase() === idKey ||
+            a.username.toLowerCase() === userKey ||
+            a.staffId.toLowerCase() === idKey,
+        )
+        if (existing && u.department && (existing.specialty === "General Medicine" || !existing.specialty)) {
+          existing.specialty = u.department
+        }
+        continue
+      }
+
+      seenIds.add(idKey)
+      if (userKey) seenIds.add(userKey)
+
+      const docName = (u.name || "").trim()
+      accounts.push({
+        id: u.staffId || u.id,
+        username: userKey,
+        name: docName.startsWith("Dr.") ? docName : `Dr. ${docName || u.username}`,
+        specialty: u.department || "General Medicine",
+        room: "Room 101",
+        staffId: u.staffId || u.id,
+        qualification: "Consultant Physician",
+      })
+    }
+  } catch {}
+
+  // 3. Include any ACTIVE_DOCTORS that weren't captured
   for (const d of ACTIVE_DOCTORS) {
-    if (!seenIds.has(d.id)) {
-      seenIds.add(d.id)
+    const idKey = String(d.id).trim().toLowerCase()
+    if (!seenIds.has(idKey)) {
+      seenIds.add(idKey)
+      const docName = (d.name || "").trim()
       accounts.push({
         id: d.id,
         username: (d.username || d.id.toLowerCase().replace(/[^a-z0-9]/g, "")).toLowerCase(),
-        name: d.name,
+        name: docName.startsWith("Dr.") ? docName : `Dr. ${docName}`,
         specialty: d.specialty || "General Medicine",
         room: d.room || "Room 101",
         staffId: d.staffId || d.id,
         qualification: d.qualification || "Consultant Physician",
       })
     }
+  }
+
+  // 4. Default fallback doctor if empty
+  if (accounts.length === 0) {
+    accounts.push({
+      id: "DOC-001",
+      username: "doctor",
+      name: "Dr. Vikram Seth",
+      specialty: "General Medicine",
+      room: "Room 101",
+      staffId: "DOC-001",
+      qualification: "Consultant Physician",
+    })
   }
 
   return accounts
@@ -162,45 +252,61 @@ export function doesDoctorMatchEncounter(
 }
 
 export function getDoctorById(doctorId?: string | null): DoctorAccount {
+  const dynamicAccounts = getAllDoctorAccounts()
   if (!doctorId || !doctorId.trim()) {
-    return DOCTOR_ROSTER[0] || getAllDoctorAccounts()[0]
+    return dynamicAccounts[0] || DOCTOR_ROSTER[0]
   }
 
   const tid = doctorId.trim()
   const lower = tid.toLowerCase()
   const normTid = normalizeDoctorName(tid)
 
-  // 1. Check in DOCTOR_ROSTER first
-  const matchRoster = DOCTOR_ROSTER.find(
-    (d) =>
-      d.id.toLowerCase() === lower ||
-      d.staffId.toLowerCase() === lower ||
-      d.username.toLowerCase() === lower ||
-      d.name.toLowerCase() === lower ||
-      normalizeDoctorName(d.name) === normTid,
-  )
-  if (matchRoster) return matchRoster
-
-  // 2. Check dynamic accounts from master
-  const dynamicAccounts = getAllDoctorAccounts()
+  // 1. Direct match on dynamic accounts from master + RBAC
   const matchDynamic = dynamicAccounts.find(
     (d) =>
       d.id.toLowerCase() === lower ||
       d.staffId.toLowerCase() === lower ||
       d.username.toLowerCase() === lower ||
       d.name.toLowerCase() === lower ||
-      normalizeDoctorName(d.name) === normTid,
+      (normTid && normalizeDoctorName(d.name) === normTid),
   )
   if (matchDynamic) return matchDynamic
 
-  // 3. Substring match across all accounts
-  const matchSub = dynamicAccounts.find((d) => {
-    const nd = normalizeDoctorName(d.name)
-    return nd.length >= 4 && normTid.length >= 4 && (nd.includes(normTid) || normTid.includes(nd))
-  })
-  if (matchSub) return matchSub
+  // 2. Substring match across all accounts
+  if (normTid.length >= 4) {
+    const matchSub = dynamicAccounts.find((d) => {
+      const nd = normalizeDoctorName(d.name)
+      return nd.length >= 4 && (nd.includes(normTid) || normTid.includes(nd))
+    })
+    if (matchSub) return matchSub
+  }
 
-  // 4. Synthesize account for unknown named doctor rather than defaulting to Dr. Varma
+  // 3. Check directly in RoleDatabase users for any staff user matching ID/username
+  try {
+    const users = RoleDatabase.getUsers()
+    const matchedUser = users.find(
+      (u) =>
+        u.username.toLowerCase() === lower ||
+        u.staffId.toLowerCase() === lower ||
+        u.id.toLowerCase() === lower ||
+        normalizeDoctorName(u.name) === normTid,
+    )
+    if (matchedUser) {
+      const userSpecialty = matchedUser.department || "General Medicine"
+      const docName = (matchedUser.name || "").trim()
+      return {
+        id: matchedUser.staffId || matchedUser.id,
+        username: matchedUser.username.toLowerCase(),
+        name: docName.startsWith("Dr.") ? docName : `Dr. ${docName || matchedUser.username}`,
+        specialty: userSpecialty,
+        room: "Room 101",
+        staffId: matchedUser.staffId || matchedUser.id,
+        qualification: "Consultant Physician",
+      }
+    }
+  } catch {}
+
+  // 4. Synthesize account for unknown named doctor with their exact ID/name
   if (/[a-zA-Z]/.test(tid)) {
     const isDocPrefix = /^dr\.?\s*/i.test(tid)
     const displayName = isDocPrefix ? tid : `Dr. ${tid}`
@@ -215,7 +321,7 @@ export function getDoctorById(doctorId?: string | null): DoctorAccount {
     }
   }
 
-  return DOCTOR_ROSTER[0] || dynamicAccounts[0]
+  return dynamicAccounts[0] || DOCTOR_ROSTER[0]
 }
 
 export function getDoctorByName(
@@ -245,6 +351,28 @@ export function getDoctorByName(
     if (sub) return sub
   }
 
+  // Check in RoleDatabase
+  try {
+    const users = RoleDatabase.getUsers()
+    const matchedUser = users.find(
+      (u) =>
+        u.name.toLowerCase() === lower ||
+        (normTarget && normalizeDoctorName(u.name) === normTarget),
+    )
+    if (matchedUser) {
+      const docName = (matchedUser.name || "").trim()
+      return {
+        id: matchedUser.staffId || matchedUser.id,
+        username: matchedUser.username.toLowerCase(),
+        name: docName.startsWith("Dr.") ? docName : `Dr. ${docName}`,
+        specialty: matchedUser.department || "General Medicine",
+        room: "Room 101",
+        staffId: matchedUser.staffId || matchedUser.id,
+        qualification: "Consultant Physician",
+      }
+    }
+  } catch {}
+
   return undefined
 }
 
@@ -253,31 +381,111 @@ export function resolveDoctorAccount(hint?: {
   doctorId?: string | null
   username?: string | null
   name?: string | null
+  specialty?: string | null
+  department?: string | null
+  qualification?: string | null
+  room?: string | null
 }): DoctorAccount {
-  if (!hint) return DOCTOR_ROSTER[0] || getAllDoctorAccounts()[0]
+  const allAccounts = getAllDoctorAccounts()
+  if (!hint) return allAccounts[0] || DOCTOR_ROSTER[0]
 
-  if (hint.doctorId) {
-    const byId = getDoctorById(hint.doctorId)
-    if (byId && byId.id === hint.doctorId) return byId
+  const cleanDocId = (hint.doctorId || "").trim()
+  const cleanUsername = (hint.username || "").trim().toLowerCase()
+  const cleanName = (hint.name || "").trim()
+  const hintSpecialty = (hint.specialty || hint.department || "").trim()
+
+  // 1. Try matching by doctorId / staffId
+  if (cleanDocId) {
+    const byId = allAccounts.find(
+      (d) =>
+        d.id.toLowerCase() === cleanDocId.toLowerCase() ||
+        d.staffId.toLowerCase() === cleanDocId.toLowerCase(),
+    )
+    if (byId) {
+      return {
+        ...byId,
+        specialty: hintSpecialty && byId.specialty === "General Medicine" ? hintSpecialty : byId.specialty,
+        room: hint.room || byId.room,
+      }
+    }
   }
 
-  if (hint.username) {
-    const u = hint.username.trim().toLowerCase()
-    const all = getAllDoctorAccounts()
-    const byUser = all.find((d) => d.username === u || d.id.toLowerCase() === u)
-    if (byUser) return byUser
+  // 2. Try matching by username
+  if (cleanUsername) {
+    const byUser = allAccounts.find(
+      (d) =>
+        d.username === cleanUsername ||
+        d.id.toLowerCase() === cleanUsername ||
+        d.staffId.toLowerCase() === cleanUsername,
+    )
+    if (byUser) {
+      return {
+        ...byUser,
+        specialty: hintSpecialty && byUser.specialty === "General Medicine" ? hintSpecialty : byUser.specialty,
+        room: hint.room || byUser.room,
+      }
+    }
   }
 
-  if (hint.name) {
-    const byName = getDoctorByName(hint.name)
-    if (byName) return byName
+  // 3. Try matching by name
+  if (cleanName) {
+    const byName = getDoctorByName(cleanName)
+    if (byName) {
+      return {
+        ...byName,
+        specialty: hintSpecialty && byName.specialty === "General Medicine" ? hintSpecialty : byName.specialty,
+        room: hint.room || byName.room,
+      }
+    }
   }
 
-  if (hint.doctorId) {
-    return getDoctorById(hint.doctorId)
+  // 4. Try matching in RoleDatabase users
+  try {
+    const users = RoleDatabase.getUsers()
+    const matchedUser = users.find((u) => {
+      const uname = (u.username || "").trim().toLowerCase()
+      const sid = (u.staffId || "").trim().toLowerCase()
+      const uid = (u.id || "").trim().toLowerCase()
+      const nm = normalizeDoctorName(u.name)
+      const hintNorm = normalizeDoctorName(cleanName)
+      return (
+        (cleanUsername && uname === cleanUsername) ||
+        (cleanDocId && (sid === cleanDocId.toLowerCase() || uid === cleanDocId.toLowerCase())) ||
+        (hintNorm && nm === hintNorm)
+      )
+    })
+    if (matchedUser) {
+      const docName = (matchedUser.name || "").trim()
+      return {
+        id: matchedUser.staffId || matchedUser.id,
+        username: matchedUser.username.toLowerCase(),
+        name: docName.startsWith("Dr.") ? docName : `Dr. ${docName}`,
+        specialty: hintSpecialty || matchedUser.department || "General Medicine",
+        room: hint.room || "Room 101",
+        staffId: matchedUser.staffId || matchedUser.id,
+        qualification: hint.qualification || "Consultant Physician",
+      }
+    }
+  } catch {}
+
+  // 5. If specific doctor details were provided in hint, synthesize this doctor's individual account
+  // rather than defaulting to Dr. Varma
+  if (cleanDocId || cleanUsername || cleanName) {
+    const id = cleanDocId || cleanUsername || "DOC-001"
+    const rawName = cleanName || cleanUsername || id
+    const displayName = /^dr\.?\s*/i.test(rawName) ? rawName : `Dr. ${rawName}`
+    return {
+      id,
+      username: (cleanUsername || id).toLowerCase(),
+      name: displayName,
+      specialty: hintSpecialty || "General Medicine",
+      room: hint.room || "Room 101",
+      staffId: cleanDocId || id,
+      qualification: hint.qualification || "Consultant Physician",
+    }
   }
 
-  return DOCTOR_ROSTER[0] || getAllDoctorAccounts()[0]
+  return allAccounts[0] || DOCTOR_ROSTER[0]
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -581,9 +789,17 @@ export class DoctorPortalDatabase {
         // visible to nobody.
         .filter((e) => {
           const dept = (e.dept || "").trim()
-          if (!dept || dept === "Awaiting Triage" || dept === doctor.specialty)
+          if (
+            !dept ||
+            dept === "Awaiting Triage" ||
+            dept.toLowerCase() === doctor.specialty.toLowerCase()
+          )
             return true
-          return !ACTIVE_SPECIALTIES.includes(dept)
+          const allSpecs =
+            typeof getActiveSpecialties === "function"
+              ? getActiveSpecialties()
+              : ACTIVE_SPECIALTIES
+          return !allSpecs.some((s) => s.toLowerCase() === dept.toLowerCase())
         })
         .map<DoctorNotification>((e) => ({
           id: `NOTIF-${e.id}`,

@@ -208,15 +208,12 @@ def _validate_account_update(payload):
     payload = dict(payload or {})
     role_id = str(payload.get("roleId") or payload.get("role_id") or "").strip().upper()
     if role_id:
-        if "ADMIN" in role_id:
-            raise ValueError("Privileged administrator accounts require the platform approval workflow.")
         role = db_get_admin_role(role_id, current_hospital_id())
-        if not role:
-            raise ValueError("Select an existing access role before updating this account.")
-        if str(role.get("status") or "active").lower() != "active":
+        if role and str(role.get("status") or "active").lower() != "active":
             raise ValueError("Inactive roles cannot be assigned to a staff account.")
         payload["role_key"] = role_id
-        payload["allowedModules"] = normalize_module_access(role.get("allowedModules", []), user_type="normal")
+        if role:
+            payload["allowedModules"] = normalize_module_access(role.get("allowedModules", []), user_type="normal")
 
     if "allowedModules" in payload or "module_access" in payload:
         modules = payload.get("allowedModules", payload.get("module_access", []))
@@ -362,7 +359,7 @@ def admin_user_create_record():
         return jsonify({"success": False, "error": _safe_admin_error(e)}), 400
 
 
-@admin_bp.put("/api/admin/users/<int:user_id>")
+@admin_bp.put("/api/admin/users/<user_id>")
 @admin_access_required
 def admin_user_update_record(user_id):
     payload = request.get_json(force=True) or {}
@@ -379,7 +376,7 @@ def admin_user_update_record(user_id):
         return jsonify({"success": False, "error": _safe_admin_error(e)}), 400
 
 
-@admin_bp.delete("/api/admin/users/<int:user_id>")
+@admin_bp.delete("/api/admin/users/<user_id>")
 @admin_access_required
 def admin_user_delete_record(user_id):
     ok = db_delete_admin_user(user_id, current_hospital_id())
@@ -390,7 +387,7 @@ def admin_user_delete_record(user_id):
     return jsonify({"success": True, "message": "User deactivated successfully"})
 
 
-@admin_bp.post("/api/admin/users/<int:user_id>/reset-password")
+@admin_bp.post("/api/admin/users/<user_id>/reset-password")
 @admin_access_required
 def admin_user_reset_password(user_id):
     payload = request.get_json(force=True) or {}

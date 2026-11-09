@@ -246,118 +246,238 @@ export class RadiologyWorkflowDb {
   }
 
   /**
+   * Deterministically parses any date/time string, ISO string, combined string, or time-only string into a valid epoch ms timestamp.
+   * Handles "2026-11-09 · 02:30 PM", "09/11/2026 · 14:30", "02:30 PM", "Today · 02:30 PM", ISO timestamps, etc.
+   */
+  static parseDateToEpoch(val?: any, fallbackDateStr?: string | null): number {
+    if (!val) return 0
+    if (typeof val === "number" && !isNaN(val) && val > 0) return val
+    if (val instanceof Date) {
+      const t = val.getTime()
+      return !isNaN(t) && t > 0 ? t : 0
+    }
+    if (typeof val !== "string") return 0
+    const raw = val.trim()
+    if (!raw) return 0
+
+    // Direct ISO / standard parse attempt (avoid if starts with time like "02:30 PM")
+    if (!/^\d{1,2}:\d{2}/.test(raw)) {
+      const direct = new Date(raw).getTime()
+      if (!isNaN(direct) && direct > 0) return direct
+    }
+
+    // Clean delimiters (replace bullets, multiple spaces, "Today", "Yesterday")
+    let clean = raw.replace(/[·,]/g, " ").replace(/\s+/g, " ").trim()
+    const todayStr = fallbackDateStr || new Date().toISOString().split("T")[0]
+
+    if (clean.toLowerCase().startsWith("today")) {
+      clean = clean.replace(/today/i, todayStr).trim()
+    } else if (clean.toLowerCase().startsWith("yesterday")) {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0]
+      clean = clean.replace(/yesterday/i, yesterday).trim()
+    }
+
+    // Time-only format (e.g. "02:30 PM", "14:30", "09:15:20")
+    if (/^\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?$/i.test(clean)) {
+      const t = new Date(`${todayStr} ${clean}`).getTime()
+      if (!isNaN(t) && t > 0) return t
+    }
+
+    // Combined Date and Time where date is DD/MM/YYYY or DD-MM-YYYY
+    const dmyMatch = clean.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(.*)$/)
+    if (dmyMatch) {
+      const isoLike = `${dmyMatch[3]}-${dmyMatch[2].padStart(2, "0")}-${dmyMatch[1].padStart(2, "0")}${dmyMatch[4]}`
+      const t = new Date(isoLike).getTime()
+      if (!isNaN(t) && t > 0) return t
+    }
+
+    // YYYY-MM-DD followed by time
+    const ymdMatch = clean.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(.*)$/)
+    if (ymdMatch) {
+      const isoLike = `${ymdMatch[1]}-${ymdMatch[2].padStart(2, "0")}-${ymdMatch[3].padStart(2, "0")}${ymdMatch[4]}`
+      const t = new Date(isoLike).getTime()
+      if (!isNaN(t) && t > 0) return t
+    }
+
+    // General cleaned parse
+    const tClean = new Date(clean).getTime()
+    if (!isNaN(tClean) && tClean > 0) return tClean
+
+    return 0
+  }
+
+  /**
    * Deterministically resolves the examination order creation timestamp (in ms)
-   * for Examination Worklist ordering (Newest orders strictly first).
+   * for Examination Worklist ordering (Newest orders strictly first at the top).
    * Does NOT generate new timestamps on page refresh.
    */
   static getOrderCreationTimestamp(study: Partial<ExtendedRadiologyRecord>): number {
+    if (!study) return 0
+
+    // 1. Explicit orderedAt ISO timestamp
     if (study.orderedAt) {
-      const t = new Date(study.orderedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.orderedAt)
+      if (t > 0) return t
     }
+
+    // 2. Explicit createdAt ISO timestamp
     if (study.createdAt) {
-      const t = new Date(study.createdAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.createdAt)
+      if (t > 0) return t
     }
+
+    // 3. First action in study history (initial registration / order created event)
     if (study.history && Array.isArray(study.history) && study.history.length > 0) {
       const firstLog = study.history[0]
       if (firstLog && firstLog.timestamp) {
-        const t = new Date(firstLog.timestamp).getTime()
-        if (!isNaN(t) && t > 0) return t
+        const t = this.parseDateToEpoch(firstLog.timestamp)
+        if (t > 0) return t
       }
     }
+
+    // 4. Combined orderDate and ordered
     if (study.orderDate && study.ordered) {
-      const combined = `${study.orderDate.slice(0, 10)} ${study.ordered.replace(/·/g, " ")}`.trim()
-      const tComb = new Date(combined).getTime()
-      if (!isNaN(tComb) && tComb > 0) return tComb
+      const ord = String(study.ordered).trim()
+      const d = String(study.orderDate).trim()
+      if (ord.includes(d)) {
+        const t = this.parseDateToEpoch(ord, d)
+        if (t > 0) return t
+      } else {
+        const t = this.parseDateToEpoch(`${d} ${ord}`, d)
+        if (t > 0) return t
+      }
     }
+
+    // 5. Study ordered field
     if (study.ordered) {
-      const clean = study.ordered.replace(/·/g, " ").trim()
-      const t = new Date(clean).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.ordered, study.orderDate)
+      if (t > 0) return t
     }
+
+    // 6. Study orderDate field
+    if (study.orderDate) {
+      const t = this.parseDateToEpoch(study.orderDate)
+      if (t > 0) return t
+    }
+
+    // 7. Payment or clearance timestamps
     if (study.paidAt) {
-      const t = new Date(study.paidAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.paidAt)
+      if (t > 0) return t
     }
-    // Stable deterministic fallback: parse numeric suffix from ID (e.g. RAD-1030 -> 1030)
-    const num = parseInt((study.id || "").replace(/\D/g, ""), 10)
-    return !isNaN(num) && num > 0 ? num : 0
+    if (study.billingClearedAt) {
+      const t = this.parseDateToEpoch(study.billingClearedAt)
+      if (t > 0) return t
+    }
+    if (study.eligibleAt) {
+      const t = this.parseDateToEpoch(study.eligibleAt)
+      if (t > 0) return t
+    }
+
+    // 8. General date field
+    if ((study as any).date) {
+      const t = this.parseDateToEpoch((study as any).date)
+      if (t > 0) return t
+    }
+
+    // 9. Scan or completion timestamps as fallback
+    if (study.scanStartedAt) {
+      const t = this.parseDateToEpoch(study.scanStartedAt)
+      if (t > 0) return t
+    }
+    if (study.completedAt) {
+      const t = this.parseDateToEpoch(study.completedAt)
+      if (t > 0) return t
+    }
+
+    return 0
   }
 
   /**
    * Deterministically resolves the scanning eligibility timestamp (in ms)
-   * for Scanning Operations FIFO queue (Oldest eligible first).
-   * Newly eligible examinations have larger timestamps and appear at the bottom.
+   * for Scanning Operations queue (Newest eligible examinations appear at the top).
    */
   static getScanningEligibilityTimestamp(study: Partial<ExtendedRadiologyRecord>): number {
+    if (!study) return 0
+    if (study.scanStartedAt) {
+      const t = this.parseDateToEpoch(study.scanStartedAt)
+      if (t > 0) return t
+    }
     if (study.eligibleAt) {
-      const t = new Date(study.eligibleAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.eligibleAt)
+      if (t > 0) return t
     }
     if (study.billingClearedAt) {
-      const t = new Date(study.billingClearedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.billingClearedAt)
+      if (t > 0) return t
     }
     if (study.authorizedException?.timestamp) {
-      const t = new Date(study.authorizedException.timestamp).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.authorizedException.timestamp)
+      if (t > 0) return t
     }
     if (study.paidAt) {
-      const t = new Date(study.paidAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.paidAt)
+      if (t > 0) return t
     }
     if (study.history && Array.isArray(study.history)) {
-      for (const log of study.history) {
+      for (let i = study.history.length - 1; i >= 0; i--) {
+        const log = study.history[i]
         if (
+          log.action?.includes("Scan Started") ||
           log.action?.includes("Payment") ||
           log.action?.includes("Cleared") ||
           log.action?.includes("Exception Authorized")
         ) {
-          const t = new Date(log.timestamp).getTime()
-          if (!isNaN(t) && t > 0) return t
+          const t = this.parseDateToEpoch(log.timestamp)
+          if (t > 0) return t
         }
       }
     }
-    // If study was paid/cleared at order time, fallback to order creation time
+    // Fallback to order creation time
     return this.getOrderCreationTimestamp(study)
   }
 
   /**
    * Deterministically resolves the reporting queue transfer timestamp (in ms)
-   * for Reporting Workspace FIFO queue (Oldest transferred first).
-   * Preserves original queue position across draft saves, review submissions, and corrections.
+   * for Reporting Workspace queue (Newest transferred cases at the top).
    */
   static getReportingQueueTimestamp(study: Partial<ExtendedRadiologyRecord>): number {
+    if (!study) return 0
     if (study.transferredToReportingAt) {
-      const t = new Date(study.transferredToReportingAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.transferredToReportingAt)
+      if (t > 0) return t
     }
     if (study.reportingQueuedAt) {
-      const t = new Date(study.reportingQueuedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.reportingQueuedAt)
+      if (t > 0) return t
     }
     if (study.sentToReportingAt) {
-      const t = new Date(study.sentToReportingAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.sentToReportingAt)
+      if (t > 0) return t
     }
     if (study.scanningCompletedAt) {
-      const t = new Date(study.scanningCompletedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.scanningCompletedAt)
+      if (t > 0) return t
     }
     if (study.completedAt) {
-      const t = new Date(study.completedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.completedAt)
+      if (t > 0) return t
+    }
+    if (study.draftSavedAt) {
+      const t = this.parseDateToEpoch(study.draftSavedAt)
+      if (t > 0) return t
     }
     if (study.history && Array.isArray(study.history)) {
-      for (const log of study.history) {
+      for (let i = study.history.length - 1; i >= 0; i--) {
+        const log = study.history[i]
         if (
           log.action?.includes("Sent for Reporting") ||
           log.action?.includes("Marked as DONE") ||
-          log.action?.includes("Completed")
+          log.action?.includes("Completed") ||
+          log.action?.includes("Draft")
         ) {
-          const t = new Date(log.timestamp).getTime()
-          if (!isNaN(t) && t > 0) return t
+          const t = this.parseDateToEpoch(log.timestamp)
+          if (t > 0) return t
         }
       }
     }
@@ -367,29 +487,34 @@ export class RadiologyWorkflowDb {
 
   /**
    * Deterministically resolves the report finalization timestamp (in ms)
-   * for Finalized Reports ordering (Newest finalized reports strictly first).
-   * Does NOT use updatedAt or amendment timestamps, so amendments preserve the original position.
+   * for Finalized Reports ordering (Newest finalized reports strictly first at the top).
    */
   static getReportFinalizedTimestamp(study: Partial<ExtendedRadiologyRecord>): number {
+    if (!study) return 0
     if (study.finalizedAt) {
-      const t = new Date(study.finalizedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.finalizedAt)
+      if (t > 0) return t
     }
     if (study.signedAt) {
-      const t = new Date(study.signedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.signedAt)
+      if (t > 0) return t
     }
     if (study.history && Array.isArray(study.history)) {
-      for (const log of study.history) {
-        if (log.action?.includes("Report Finalized") || log.action?.includes("Finalized")) {
-          const t = new Date(log.timestamp).getTime()
-          if (!isNaN(t) && t > 0) return t
+      for (let i = study.history.length - 1; i >= 0; i--) {
+        const log = study.history[i]
+        if (
+          log.action?.includes("Report Finalized") ||
+          log.action?.includes("Finalized") ||
+          log.action?.includes("Signed")
+        ) {
+          const t = this.parseDateToEpoch(log.timestamp)
+          if (t > 0) return t
         }
       }
     }
     if (study.completedAt) {
-      const t = new Date(study.completedAt).getTime()
-      if (!isNaN(t) && t > 0) return t
+      const t = this.parseDateToEpoch(study.completedAt)
+      if (t > 0) return t
     }
     return this.getOrderCreationTimestamp(study)
   }

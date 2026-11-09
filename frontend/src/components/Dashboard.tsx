@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from "react"
-import WorkforcePanel from "./hr/WorkforcePanel"
 import {
   Users,
   Calendar,
@@ -882,9 +881,6 @@ export default function Dashboard({
           </button>
         </div>
       </div>
-
-      {/* Workforce (HR service): hidden for users without HR access */}
-      <WorkforcePanel onOpen={() => navigate("hrms")} />
 
       {/* ── 4. MIDDLE SECTION: CENSUS & CAPACITY + APPOINTMENTS ─────────── */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">

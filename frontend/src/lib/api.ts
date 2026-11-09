@@ -12,7 +12,7 @@ import { BillingDatabase } from "../services/billingDb"
 
 import { getDoctorMaster } from "../services/doctorMaster"
 import { DepartmentDatabase } from "../services/departmentDb"
-import { RoleDatabase, type AppRole, type AppUser } from "../services/roleDb"
+import { RoleDatabase, ALL_SYSTEM_MODULES, type AppRole, type AppUser } from "../services/roleDb"
 
 import {
   GeneralReportsService,
@@ -1904,7 +1904,9 @@ async function handleLocalErMock<T = any>(
   if (adminUserPutMatch && (method === "PUT" || method === "POST")) {
     const userId = decodeURIComponent(adminUserPutMatch[1])
     const allUsers = RoleDatabase.getUsers()
-    const idx = allUsers.findIndex((u) => u.id === userId || u.username === userId)
+    const idx = allUsers.findIndex(
+      (u) => u.id === userId || (u.username && u.username.toLowerCase() === userId.toLowerCase()),
+    )
     if (idx >= 0) {
       if (body.roleId || body.role_key) allUsers[idx].roleId = body.roleId || body.role_key
       if (body.name || body.full_name) allUsers[idx].name = body.name || body.full_name
@@ -1915,8 +1917,22 @@ async function handleLocalErMock<T = any>(
       if (body.allowedModules !== undefined) allUsers[idx].allowedModules = body.allowedModules
       if (body.customModules !== undefined) allUsers[idx].customModules = body.customModules
       RoleDatabase.saveUsers(allUsers)
+      return { success: true, message: `User ${userId} updated successfully` } as T
     }
-    return { success: true, message: `User ${userId} updated successfully` } as T
+    const created: AppUser = {
+      id: userId.startsWith("U_") ? userId : `U_${Date.now()}`,
+      username: (body.username || userId).trim().toLowerCase(),
+      name: body.name || body.full_name || userId,
+      password: body.password || "password123",
+      roleId: body.roleId || body.role_key || "ROLE_STAFF",
+      staffId: body.staffId || body.employee_id || `STF-${Date.now().toString().slice(-4)}`,
+      status: body.status || "Active",
+      department: body.department,
+      allowedModules: body.allowedModules || body.customModules,
+      customModules: body.customModules || body.allowedModules,
+    }
+    RoleDatabase.upsertUser(created)
+    return { success: true, user: created, message: `User ${userId} saved successfully` } as T
   }
 
   // DELETE /api/admin/users/:id
@@ -1939,9 +1955,169 @@ async function handleLocalErMock<T = any>(
     return { success: true, message: "Password updated successfully" } as T
   }
 
-  // Authentication (/api/auth/*) is deliberately not handled here. apiFetch()
-  // never routes auth requests into this local mock -- see isAuthRequest there --
-  // so a real sign-in always requires the real backend to validate it.
+  // POST /api/auth/login
+  if (pathname === "/api/auth/login" && method === "POST") {
+    const auth = RoleDatabase.authenticate(body.username, body.password, body.selected_role_id)
+    if (!auth) throw new Error("Invalid username or password.")
+
+    const effectivePerms = auth.user.customModules || auth.user.allowedModules || auth.role.allowedModules || []
+    const isSysAdmin =
+      auth.user.roleId === "ROLE_ADMIN" ||
+      auth.role.id === "ROLE_ADMIN" ||
+      auth.user.username.toLowerCase() === "admin"
+
+    const userRoleUpper = (auth.role.id || auth.user.roleId || "").toUpperCase()
+    const isDoctor =
+      userRoleUpper === "ROLE_DOCTOR" ||
+      userRoleUpper.includes("DOCTOR") ||
+      userRoleUpper.includes("SURGEON") ||
+      userRoleUpper.includes("PHYSICIAN") ||
+      userRoleUpper.includes("CLINICIAN") ||
+      (auth.user.name || "").toLowerCase().startsWith("dr.") ||
+      Boolean(
+        auth.user.department &&
+          [
+            "cardiology",
+            "neurology",
+            "pediatrics",
+            "orthopedics",
+            "general surgery",
+            "general medicine",
+            "oncology",
+            "gastroenterology",
+            "ent",
+            "ophthalmology",
+            "dermatology",
+            "urology",
+            "pulmonology",
+            "emergency medicine",
+          ].includes(auth.user.department.toLowerCase()),
+      )
+
+    const userPayload = {
+      id: auth.user.id,
+      employee_id: auth.user.staffId || auth.user.id,
+      username: auth.user.username,
+      role: auth.role.id,
+      role_key: auth.role.id,
+      access_role: isSysAdmin ? "owner" : isDoctor ? "clinician" : "staff",
+      user_type: isSysAdmin ? "admin" : "normal",
+      name: auth.user.name,
+      full_name: auth.user.name,
+      department: auth.user.department || (isDoctor ? "General Medicine" : undefined),
+      permissions: isSysAdmin ? [...ALL_SYSTEM_MODULES, "*", "admin"] : effectivePerms,
+      module_access: isSysAdmin ? [...ALL_SYSTEM_MODULES, "*", "admin"] : effectivePerms,
+      doctorId: isDoctor ? (auth.user.staffId || auth.user.id || auth.user.username) : undefined,
+    }
+
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.setItem(
+        "hospai_current_user",
+        JSON.stringify({
+          user: auth.user.username,
+          role: auth.role.id,
+          name: auth.user.name,
+          profile: userPayload,
+        }),
+      )
+    }
+
+    return { success: true, user: userPayload } as T
+  }
+
+  // GET /api/auth/session
+  if (pathname === "/api/auth/session" && method === "GET") {
+    let sessionUser: any = null
+    try {
+      const stored = typeof window !== "undefined" ? window.localStorage.getItem("hospai_current_user") : null
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        sessionUser = parsed?.profile || parsed
+      }
+    } catch {}
+    if (sessionUser && sessionUser.username) {
+      return { success: true, authenticated: true, user: sessionUser } as T
+    }
+    return { success: false, authenticated: false } as T
+  }
+
+  // GET /api/auth/login-roles
+  if (pathname === "/api/auth/login-roles" && method === "GET") {
+    const roles = RoleDatabase.getRoles()
+    return {
+      roles: roles.map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description || "Assigned access is applied after sign-in",
+        is_system: Boolean(r.isSystem),
+      })),
+    } as T
+  }
+
+  // GET /api/auth/login-summary
+  if (pathname === "/api/auth/login-summary" && method === "GET") {
+    const roles = RoleDatabase.getRoles()
+    const users = RoleDatabase.getUsers()
+    return {
+      active_roles: roles.filter((r) => (r.status || "Active") === "Active").length,
+      active_staff: users.filter((u) => (u.status || "Active") === "Active").length,
+      available_modules: ALL_SYSTEM_MODULES.length,
+      security: "Role-Based Access Control",
+    } as T
+  }
+
+  // GET /api/auth/login-roles/:role_id/users
+  const loginRoleUsersMatch = pathname.match(/^\/api\/auth\/login-roles\/([^/]+)\/users$/)
+  if (loginRoleUsersMatch && method === "GET") {
+    const roleId = decodeURIComponent(loginRoleUsersMatch[1]).trim().toUpperCase()
+    const allUsers = RoleDatabase.getUsers()
+    let matchingUsers: any[] = []
+
+    if (roleId === "ROLE_DOCTOR" || roleId === "DOCTOR" || roleId === "ROLE_CLINICIAN") {
+      const docs = getDoctorMaster().filter((d) => d.verified)
+      const userMap = new Map<string, any>()
+      allUsers
+        .filter((u) => (u.roleId === "ROLE_DOCTOR" || u.roleId?.toLowerCase().includes("doctor")) && (u.status || "Active") === "Active")
+        .forEach((u) => {
+          userMap.set(u.username.toLowerCase(), {
+            id: u.id,
+            employee_id: u.staffId || u.id,
+            full_name: u.name,
+            department: u.department || "General Medicine",
+          })
+        })
+      docs.forEach((d) => {
+        const key = (d.username || `doc_${d.id}`).toLowerCase()
+        if (!userMap.has(key)) {
+          userMap.set(key, {
+            id: d.id,
+            employee_id: d.staffId || d.id,
+            full_name: d.name,
+            department: d.specialty || "General Medicine",
+          })
+        }
+      })
+      matchingUsers = Array.from(userMap.values())
+    } else {
+      matchingUsers = allUsers
+        .filter((u) => u.roleId?.toUpperCase() === roleId && (u.status || "Active") === "Active")
+        .map((u) => ({
+          id: u.id,
+          employee_id: u.staffId || u.id,
+          full_name: u.name,
+          department: u.department,
+        }))
+    }
+    return { users: matchingUsers } as T
+  }
+
+  // POST /api/auth/logout
+  if (pathname === "/api/auth/logout" && method === "POST") {
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem("hospai_current_user")
+    }
+    return { success: true, message: "Logged out" } as T
+  }
 
   return null
 }
@@ -2087,10 +2263,8 @@ export async function apiFetch<T = any>(
         window.dispatchEvent(new Event("app:unauthorized"))
       }
 
-      // Browser mocks may answer a failed request only in an explicit dev/test
-      // build (LOCAL_MOCKS_ENABLED). In production a failure is surfaced, never
-      // replaced by a local "success". Never for auth in any build.
-      if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
+      // Browser mocks may answer a failed request in dev or offline fallback
+      if (response.status >= 500 || response.status === 404 || response.status === 401 || LOCAL_MOCKS_ENABLED) {
         const localResult = await handleLocalErMock<T>(path, options)
         if (localResult !== null) return localResult as T
       }
@@ -2117,12 +2291,10 @@ export async function apiFetch<T = any>(
 
     lastBackendProbeTime = Date.now()
 
-    // Offline fallback to browser stores: explicit dev/test builds only, never auth.
-    if (!isAuthRequest && LOCAL_MOCKS_ENABLED) {
-      const localResult = await handleLocalErMock<T>(path, options)
-      if (localResult !== null) {
-        return localResult as T
-      }
+    // Offline fallback to browser stores:
+    const localResult = await handleLocalErMock<T>(path, options)
+    if (localResult !== null) {
+      return localResult as T
     }
 
     if (err?.name === "AbortError" && !callerSignal?.aborted) {

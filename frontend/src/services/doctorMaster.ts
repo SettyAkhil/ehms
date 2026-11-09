@@ -21,6 +21,8 @@ export interface MasterDoctor {
   selectedOnCard?: boolean
   consultationFee?: number
   gender?: "Male" | "Female"
+  roleId?: string
+  password?: string
 }
 
 export const DOCTOR_LOCAL_PASSWORD = "password123"
@@ -240,9 +242,42 @@ export const ACTIVE_DOCTORS = DOCTOR_MASTER.filter(
 /** Rows the hospital still has to complete before they can be used. */
 export const UNVERIFIED_DOCTORS = DOCTOR_MASTER.filter((d) => !d.verified)
 
+export const DEFAULT_HOSPITAL_SPECIALTIES = [
+  "General Medicine",
+  "Cardiology",
+  "Neurology",
+  "Pediatrics",
+  "Orthopedics",
+  "General Surgery",
+  "Obstetrics & Gynecology",
+  "Dermatology",
+  "Ophthalmology",
+  "ENT",
+  "Oncology",
+  "Urology",
+  "Gastroenterology",
+  "Emergency Medicine",
+  "Pulmonology",
+]
+
+/** Returns the dynamic, up-to-date list of all active specialties across doctors. */
+export function getActiveSpecialties(): string[] {
+  const specs = new Set<string>(DEFAULT_HOSPITAL_SPECIALTIES)
+  try {
+    const docs = getDoctorMaster()
+    for (const d of docs) {
+      if (d.specialty && d.specialty.trim()) specs.add(d.specialty.trim())
+    }
+  } catch {}
+  return Array.from(specs).sort()
+}
+
 /** Every specialty that has at least one usable doctor behind it. */
 export const ACTIVE_SPECIALTIES = Array.from(
-  new Set(ACTIVE_DOCTORS.map((d) => d.specialty as string)),
+  new Set([
+    ...DEFAULT_HOSPITAL_SPECIALTIES,
+    ...ACTIVE_DOCTORS.map((d) => d.specialty as string).filter(Boolean),
+  ]),
 ).sort()
 
 export function getDoctorByName(name: string): MasterDoctor | undefined {

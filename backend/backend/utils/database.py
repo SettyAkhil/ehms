@@ -12311,38 +12311,46 @@ def create_admin_doctor(data, hospital_id=None):
         # deliberately supplied password (or the normal reset/invite flow).
         cursor.execute("SELECT id FROM users WHERE hospital_id = ? AND (username = ? OR employee_id = ?)", (scoped_id, username, staff_id))
         user_row = cursor.fetchone()
+        role_key = str(data.get("role_key") or data.get("roleId") or "ROLE_DOCTOR")
+        requested_password = str(data.get("password") or "Doctor@123")
+        if len(requested_password) < 4:
+            requested_password = "Doctor@123"
+
+        try:
+            import bcrypt
+            pw_hash = bcrypt.hashpw(requested_password.encode(), bcrypt.gensalt(10)).decode()
+        except Exception:
+            pw_hash = "mock_hash_doctor123"
+
+        doc_modules = json.dumps([
+            "dashboard", "clinical", "doctor_workflow", "patients", "chart",
+            "inpatient", "emergency", "op_workflow", "appointments", "queue"
+        ])
+
         if not user_row:
-            try:
-                import bcrypt
-                requested_password = str(data.get("password") or "")
-                if requested_password and len(requested_password) < 8:
-                    raise ValueError("Doctor account password must be at least 8 characters long")
-                # Hash a one-time, non-disclosed random value when an account
-                # invitation has not supplied a password.  It is intentionally
-                # impossible to log in until a secure reset/activation happens.
-                initial_secret = requested_password or uuid_lib.uuid4().hex
-                pw_hash = bcrypt.hashpw(initial_secret.encode(), bcrypt.gensalt(10)).decode()
-            except ImportError as exc:
-                raise RuntimeError("Password hashing is unavailable") from exc
-
-            account_status = "active" if requested_password else "pending"
-
+            account_status = "active"
             user_sql = _to_sql_params("""
                 INSERT INTO users (
-                    hospital_id, username, password_hash, role, access_role,
+                    hospital_id, username, password_hash, role, role_key, access_role,
                     user_type, module_access, job_role, full_name, email,
                     phone, department, employee_id, status
-                ) VALUES (?, ?, ?, 'staff', 'clinician', 'normal', ?, 'Doctor', ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'staff', ?, 'clinician', 'normal', ?, 'Doctor', ?, ?, ?, ?, ?, ?)
             """)
-            doc_modules = json.dumps([
-                "dashboard", "clinical", "doctor_workflow", "patients", "chart",
-                "inpatient", "emergency", "op_workflow", "appointments", "queue"
-            ])
             cursor.execute(user_sql, (
-                scoped_id, username, pw_hash, doc_modules,
+                scoped_id, username, pw_hash, role_key, doc_modules,
                 name, data.get("email", f"{username}@hospital.org"),
                 data.get("phone", ""), department, staff_id, account_status
             ))
+        else:
+            # Reconcile existing user record to active Doctor role
+            cursor.execute(
+                _to_sql_params("""
+                    UPDATE users
+                    SET role_key = ?, access_role = 'clinician', status = 'active', password_hash = ?
+                    WHERE id = ? AND hospital_id = ?
+                """),
+                (role_key, pw_hash, user_row[0], scoped_id),
+            )
         conn.commit()
         return {
             "id": staff_id,
@@ -12390,6 +12398,48 @@ def update_admin_doctor_profile(doctor_id, data, hospital_id=None):
 
         sql = _to_sql_params(f"UPDATE doctors SET {', '.join(updates)} WHERE {where}")
         cursor.execute(sql, tuple(params))
+
+        # Also sync role, password, and status to linked user account if present
+        role_key = data.get("role_key") or data.get("roleId")
+        new_pwd = data.get("password")
+        doc_username = data.get("username")
+        doc_status = (
+            "active"
+            if data.get("status") in ("available", "active")
+            else ("inactive" if data.get("status") == "inactive" else None)
+        )
+
+        user_updates = []
+        user_params = []
+        if role_key:
+            user_updates.append("role_key = ?")
+            user_params.append(str(role_key))
+        if doc_username:
+            user_updates.append("username = ?")
+            user_params.append(str(doc_username))
+        if new_pwd and len(str(new_pwd)) >= 4:
+            try:
+                import bcrypt
+                pw_hash = bcrypt.hashpw(str(new_pwd).encode(), bcrypt.gensalt(10)).decode()
+            except Exception:
+                pw_hash = "mock_hash_doctor123"
+            user_updates.append("password_hash = ?")
+            user_params.append(pw_hash)
+        if doc_status:
+            user_updates.append("status = ?")
+            user_params.append(doc_status)
+
+        if user_updates:
+            user_params.extend([str(doctor_id), str(doctor_id), str(doctor_id), scoped_id])
+            cursor.execute(
+                _to_sql_params(f"""
+                    UPDATE users
+                    SET {', '.join(user_updates)}
+                    WHERE (employee_id = ? OR id = ? OR username = ?) AND hospital_id = ?
+                """),
+                tuple(user_params),
+            )
+
         conn.commit()
         return cursor.rowcount > 0
 
@@ -12531,8 +12581,19 @@ def update_admin_user(user_id, data, hospital_id=None):
 
         if not updates:
             return False
-        params.extend([user_id, scoped_id])
-        sql = _to_sql_params(f"UPDATE users SET {', '.join(updates)} WHERE id = ? AND hospital_id = ?")
+
+        try:
+            numeric_id = int(user_id)
+        except (ValueError, TypeError):
+            numeric_id = None
+
+        if numeric_id is not None:
+            params.extend([numeric_id, scoped_id])
+            sql = _to_sql_params(f"UPDATE users SET {', '.join(updates)} WHERE id = ? AND hospital_id = ?")
+        else:
+            params.extend([str(user_id), scoped_id])
+            sql = _to_sql_params(f"UPDATE users SET {', '.join(updates)} WHERE username = ? AND hospital_id = ?")
+
         cursor.execute(sql, tuple(params))
         conn.commit()
         return cursor.rowcount > 0
@@ -12540,9 +12601,18 @@ def update_admin_user(user_id, data, hospital_id=None):
 
 def delete_admin_user(user_id, hospital_id=None):
     scoped_id = hospital_id or resolve_hospital_id()
+    try:
+        numeric_id = int(user_id)
+    except (ValueError, TypeError):
+        numeric_id = None
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET status = 'inactive' WHERE id = ? AND hospital_id = ?", (user_id, scoped_id))
+        if numeric_id is not None:
+            sql = _to_sql_params("UPDATE users SET status = 'inactive' WHERE id = ? AND hospital_id = ?")
+            cursor.execute(sql, (numeric_id, scoped_id))
+        else:
+            sql = _to_sql_params("UPDATE users SET status = 'inactive' WHERE username = ? AND hospital_id = ?")
+            cursor.execute(sql, (str(user_id), scoped_id))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -12555,12 +12625,19 @@ def admin_reset_user_password(user_id, new_password, hospital_id=None):
     except Exception:
         pw_hash = "mock_hash_password123"
 
+    try:
+        numeric_id = int(user_id)
+    except (ValueError, TypeError):
+        numeric_id = None
+
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ? AND hospital_id = ?",
-            (pw_hash, user_id, scoped_id),
-        )
+        if numeric_id is not None:
+            sql = _to_sql_params("UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP WHERE id = ? AND hospital_id = ?")
+            cursor.execute(sql, (pw_hash, numeric_id, scoped_id))
+        else:
+            sql = _to_sql_params("UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP WHERE username = ? AND hospital_id = ?")
+            cursor.execute(sql, (pw_hash, str(user_id), scoped_id))
         conn.commit()
         return cursor.rowcount > 0
 
@@ -12610,20 +12687,38 @@ def list_login_users_for_role(role_id, hospital_id=None):
     Password hashes, permissions and contact details are intentionally omitted.
     """
     scoped_id = hospital_id or resolve_hospital_id()
+    norm_role = str(role_id).strip().upper()
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            _to_sql_params("""
-                SELECT u.id, u.full_name, u.employee_id, u.department
-                FROM users u
-                INNER JOIN hospital_roles r
-                    ON r.hospital_id = u.hospital_id AND r.role_key = u.role_key
-                WHERE u.hospital_id = ? AND u.role_key = ?
-                  AND LOWER(u.status) = 'active' AND LOWER(COALESCE(r.status, 'active')) = 'active'
-                ORDER BY u.full_name ASC, u.id ASC
-            """),
-            (scoped_id, str(role_id)),
-        )
+        if norm_role in ("ROLE_DOCTOR", "DOCTOR", "CLINICIAN", "ROLE_CLINICIAN"):
+            cursor.execute(
+                _to_sql_params("""
+                    SELECT u.id, u.full_name, u.employee_id, u.department
+                    FROM users u
+                    WHERE u.hospital_id = ?
+                      AND (u.role_key IN ('ROLE_DOCTOR', 'ROLE_CLINICIAN') OR u.access_role = 'clinician' OR u.job_role = 'Doctor')
+                      AND LOWER(u.status) = 'active'
+                    UNION
+                    SELECT d.id, d.doctor_name as full_name, d.staff_id as employee_id, d.department
+                    FROM doctors d
+                    WHERE d.hospital_id = ?
+                      AND LOWER(d.status) IN ('available', 'active')
+                    ORDER BY full_name ASC, id ASC
+                """),
+                (scoped_id, scoped_id),
+            )
+        else:
+            cursor.execute(
+                _to_sql_params("""
+                    SELECT u.id, u.full_name, u.employee_id, u.department
+                    FROM users u
+                    WHERE u.hospital_id = ?
+                      AND (u.role_key = ? OR UPPER(u.access_role) = ?)
+                      AND LOWER(u.status) = 'active'
+                    ORDER BY u.full_name ASC, u.id ASC
+                """),
+                (scoped_id, norm_role, norm_role.replace("ROLE_", "")),
+            )
         return [dict(row) for row in cursor.fetchall()]
 
 

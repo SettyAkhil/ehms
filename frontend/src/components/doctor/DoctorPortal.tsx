@@ -155,14 +155,20 @@ const EMPTY_MEDICATION: ParsedMedication = {
 export default function DoctorPortal({
   doctor: initialDoctor,
   onOpenErVisit,
+  isSuperAdmin = false,
+  onBackToOverview,
+  onSwitchDoctor,
 }: {
   doctor: DoctorAccount
   onOpenErVisit?: (visitId: number) => void
+  isSuperAdmin?: boolean
+  onBackToOverview?: () => void
+  onSwitchDoctor?: (doctorId: string) => void
 }) {
   const [doctor, setDoctor] = useState<DoctorAccount>(initialDoctor)
   useEffect(() => {
     setDoctor(initialDoctor)
-  }, [initialDoctor?.id])
+  }, [initialDoctor?.id, initialDoctor?.name, initialDoctor?.specialty])
   // One clock and one data revision for the whole portal: `revision` covers
   // changes made here, on another screen, or in another tab (reception billing,
   // the pharmacy, the lab); `now` ticks every second for the waiting timers.
@@ -802,8 +808,28 @@ export default function DoctorPortal({
 
   return (
     <div className="flex-1 flex flex-col lg:h-full bg-[#F0F2F5] lg:overflow-hidden">
+      {isSuperAdmin && onBackToOverview && (
+        <div className="bg-[#0F172A] text-white px-4 lg:px-6 py-2 flex items-center justify-between border-b border-slate-700 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10.5px] uppercase tracking-wider">
+              Super Admin Mode
+            </span>
+            <span className="text-[12px] text-slate-300">
+              Inspecting consultation workspace for <strong className="text-white">{doctor.name}</strong> ({doctor.specialty} · {doctor.room})
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onBackToOverview}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-[#1E293B] hover:bg-[#334155] text-white text-[12px] font-semibold transition-colors cursor-pointer border border-slate-600 shadow-sm"
+          >
+            <span>← Back to Complete Doctors Oversight & Patient Assignment</span>
+          </button>
+        </div>
+      )}
       <PortalHeader
         doctor={doctor}
+        isSuperAdmin={isSuperAdmin}
         unreadCount={unreadCount}
         waitingCount={notifications.filter((n) => n.status !== "Under Consultation").length}
         inRoomCount={notifications.filter((n) => n.status === "Under Consultation").length}
@@ -818,10 +844,14 @@ export default function DoctorPortal({
             openPatient(notifications[0])
         }}
         onSwitchDoctor={(newDocId) => {
-          const nextDoc = getDoctorById(newDocId)
-          if (nextDoc) {
-            setDoctor(nextDoc)
-            setSelectedEncounterId(null)
+          if (onSwitchDoctor) {
+            onSwitchDoctor(newDocId)
+          } else {
+            const nextDoc = getDoctorById(newDocId)
+            if (nextDoc) {
+              setDoctor(nextDoc)
+              setSelectedEncounterId(null)
+            }
           }
         }}
       />
@@ -1123,6 +1153,7 @@ const doctorInitials = (name: string) =>
 
 function PortalHeader({
   doctor,
+  isSuperAdmin = false,
   unreadCount,
   waitingCount,
   inRoomCount,
@@ -1135,6 +1166,7 @@ function PortalHeader({
   onSwitchDoctor,
 }: {
   doctor: DoctorAccount
+  isSuperAdmin?: boolean
   unreadCount: number
   waitingCount: number
   inRoomCount: number
@@ -1147,7 +1179,13 @@ function PortalHeader({
   onSwitchDoctor?: (doctorId: string) => void
 }) {
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false)
-  const allDoctors = useMemo(() => getAllDoctorAccounts(), [])
+  const allDoctors = useMemo(() => {
+    const list = getAllDoctorAccounts()
+    if (doctor && !list.some((d) => d.id === doctor.id || d.username === doctor.username)) {
+      return [doctor, ...list]
+    }
+    return list
+  }, [doctor])
   const stats: { label: string ;value: number ;tone: string }[] = [
     { label: "Waiting", value: waitingCount, tone: waitingCount ? "text-[#C2410C]" : "text-[#0F172A]" },
     { label: "In room", value: inRoomCount, tone: inRoomCount ? "text-[#1D4ED8]" : "text-[#0F172A]" },
@@ -1164,20 +1202,28 @@ function PortalHeader({
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-[15.5px] font-bold text-[#0F172A] leading-tight truncate">{doctor.name}</h1>
-            <select
-              value={doctor.id}
-              onChange={(e) => onSwitchDoctor?.(e.target.value)}
-              aria-label="Switch Doctor Workspace"
-              className="h-6 px-2 text-[11px] font-semibold border border-[#CBD5E1] rounded-none bg-[#F8FAFC] hover:bg-white text-[#1E293B] cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#1B4FD8]"
-            >
-              <optgroup label="Switch Doctor Workspace">
-                {allDoctors.map((doc) => (
-                  <option key={doc.id} value={doc.id}>
-                    {doc.name} ({doc.specialty} · {doc.room})
-                  </option>
-                ))}
-              </optgroup>
-            </select>
+            {isSuperAdmin && onSwitchDoctor ? (
+              <select
+                value={doctor.id}
+                onChange={(e) => onSwitchDoctor(e.target.value)}
+                aria-label="Switch Doctor Workspace"
+                className="h-6 px-2 text-[11px] font-semibold border border-[#CBD5E1] rounded-none bg-[#F8FAFC] hover:bg-white text-[#1E293B] cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#1B4FD8]"
+                title="Super Admin: Switch Doctor Workspace"
+              >
+                <optgroup label="Switch Doctor Workspace (Super Admin)">
+                  {allDoctors.map((doc) => (
+                    <option key={doc.id} value={doc.id}>
+                      {doc.name} ({doc.specialty} · {doc.room})
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[4px] text-[10.5px] font-bold bg-[#EEF2FF] text-[#4338CA] border border-[#C7D2FE]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#4F46E5]" />
+                Individual Doctor Workspace
+              </span>
+            )}
           </div>
           <p className="text-[12px] text-[#64748B] truncate mt-0.5">
             {doctor.specialty} · {doctor.room} · {doctor.qualification}

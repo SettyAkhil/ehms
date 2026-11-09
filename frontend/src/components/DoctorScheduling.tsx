@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react"
 import { HrmsDatabase, StaffMember, LeaveRequest } from "../services/hrmsDb"
+import { getDoctorMaster } from "../services/doctorMaster"
 import {
   Calendar,
   User,
@@ -67,8 +68,27 @@ export default function DoctorScheduling({
   const [formError, setFormError] = useState<string | null>(null)
 
   const loadData = () => {
-    const docs = HrmsDatabase.getStaffList().filter((s) => s.category === "Doctor")
-    setRegisteredDoctors(docs)
+    const masterDocs = getDoctorMaster()
+    const hrmsDocs = HrmsDatabase.getStaffList().filter((s) => s.category === "Doctor")
+    const combinedMap = new Map<string, StaffMember>()
+    hrmsDocs.forEach((d) => combinedMap.set(d.id, d))
+    masterDocs.forEach((d) => {
+      if (!combinedMap.has(d.id)) {
+        combinedMap.set(d.id, {
+          id: d.id,
+          name: d.name,
+          category: "Doctor",
+          department: d.specialty || "General Medicine",
+          designation: d.qualification || "Consultant Doctor",
+          phone: "",
+          email: d.username ? `${d.username}@hospital.org` : "",
+          dutyStatus: "On Duty",
+          shift: "General",
+          dateOfJoining: "2024-01-01",
+        })
+      }
+    })
+    setRegisteredDoctors(Array.from(combinedMap.values()))
     setAllLeaves(HrmsDatabase.getLeaves())
   }
 

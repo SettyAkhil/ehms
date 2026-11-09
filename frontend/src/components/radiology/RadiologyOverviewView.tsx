@@ -43,8 +43,8 @@ export default function RadiologyOverviewView({
   const suites = useMemo(() => UniversalRadiologyDb.getSuites(), [tick])
   const exceptions = useMemo(() => {
     return UniversalRadiologyDb.getExceptions().sort((a, b) => {
-      const timeA = new Date(a.timestamp || 0).getTime()
-      const timeB = new Date(b.timestamp || 0).getTime()
+      const timeA = RadiologyWorkflowDb.parseDateToEpoch(a.timestamp)
+      const timeB = RadiologyWorkflowDb.parseDateToEpoch(b.timestamp)
       if (timeA !== timeB) return timeB - timeA // Newest first
       return (b.id || "").localeCompare(a.id || "")
     })
@@ -55,12 +55,24 @@ export default function RadiologyOverviewView({
   // Stable secondary sort: Event ID descending.
   const auditEvents = useMemo(() => {
     return UniversalRadiologyDb.getAuditEvents().sort((a, b) => {
-      const timeA = new Date(a.timestamp || 0).getTime()
-      const timeB = new Date(b.timestamp || 0).getTime()
+      const timeA = RadiologyWorkflowDb.parseDateToEpoch(a.timestamp)
+      const timeB = RadiologyWorkflowDb.parseDateToEpoch(b.timestamp)
       if (timeA !== timeB) return timeB - timeA // Latest department activity first
       return (b.id || "").localeCompare(a.id || "")
     })
   }, [tick])
+
+  // 6 Most Recent Patient Cases strictly ordered newest-first (top-to-bottom)
+  const recentStudies = useMemo(() => {
+    return [...studies]
+      .sort((a, b) => {
+        const timeA = RadiologyWorkflowDb.getOrderCreationTimestamp(a)
+        const timeB = RadiologyWorkflowDb.getOrderCreationTimestamp(b)
+        if (timeA !== timeB) return timeB - timeA // Newest on top
+        return (b.id || "").localeCompare(a.id || "")
+      })
+      .slice(0, 6)
+  }, [studies])
 
   // Single-pass computation for summary counters
   const summary = useMemo(() => {
@@ -259,6 +271,114 @@ export default function RadiologyOverviewView({
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Recent Patient Examinations & Orders (Strictly Newest on Top) */}
+          <div className="bg-white border border-[#DDE2EC] rounded-lg p-5 shadow-2xs">
+            <div className="flex items-center justify-between pb-3 border-b border-[#F1F5F9] mb-3">
+              <div>
+                <h3 className="text-[14px] font-bold text-[#0F172A] flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-[#1B4FD8]" />
+                  Recent Patient Examinations & Orders (Newest on Top)
+                </h3>
+                <p className="text-[12px] text-[#64748B]">Real-time patient intake and recent study orders (top-to-bottom order)</p>
+              </div>
+              <button
+                onClick={() => onNavigateToView("worklist")}
+                className="text-[12px] font-bold text-[#1B4FD8] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <span>Full Worklist</span>
+                <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+
+            {recentStudies.length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-[12px]">
+                No recent examinations recorded yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px] border-collapse">
+                  <thead>
+                    <tr className="bg-[#F8FAFC] text-[#64748B] font-bold text-[10.5px] uppercase tracking-wider border-b border-[#E2E8F0]">
+                      <th className="py-2 px-2.5">Order Time</th>
+                      <th className="py-2 px-2.5">Patient Name</th>
+                      <th className="py-2 px-2.5">UMR</th>
+                      <th className="py-2 px-2.5">Examination & Modality</th>
+                      <th className="py-2 px-2.5">Priority</th>
+                      <th className="py-2 px-2.5">Status</th>
+                      <th className="py-2 px-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {recentStudies.map((study, idx) => (
+                      <tr
+                        key={study.id}
+                        onClick={() => onNavigateToView("worklist", study.id)}
+                        className="hover:bg-blue-50/40 transition-colors cursor-pointer group"
+                      >
+                        <td className="py-2 px-2.5 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                          {study.ordered || "—"}
+                        </td>
+                        <td className="py-2 px-2.5 font-bold text-[#0F172A] group-hover:text-[#1B4FD8]">
+                          {study.patient}
+                        </td>
+                        <td className="py-2 px-2.5 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                          {study.umr || study.mrn || "—"}
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <span className="font-semibold text-slate-800">{study.study}</span>
+                          <span className="ml-1.5 px-1.5 py-0.2 rounded bg-slate-100 text-[#0F172A] text-[9.5px] font-bold border border-slate-200">
+                            {study.modality}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5 whitespace-nowrap">
+                          <span
+                            className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded uppercase font-mono ${
+                              study.priority === "STAT"
+                                ? "bg-red-100 text-red-800 border border-red-200"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {study.priority || "Routine"}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2.5 whitespace-nowrap">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              study.normalizedReportStatus === "Finalized"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : study.normalizedStatus === "IN PROGRESS"
+                                ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                : study.normalizedStatus === "DONE"
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
+                                : study.isPaid
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}
+                          >
+                            {study.normalizedReportStatus === "Finalized"
+                              ? "Finalized"
+                              : study.normalizedStatus === "IN PROGRESS"
+                              ? "Scanning"
+                              : study.normalizedStatus === "DONE"
+                              ? "Awaiting Report"
+                              : study.isPaid
+                              ? "Ready to Scan"
+                              : "Verify / Pending"}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          <span className="text-[11px] font-semibold text-[#1B4FD8] group-hover:underline">
+                            Open →
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
 

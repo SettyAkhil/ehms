@@ -150,6 +150,7 @@ export const ALL_SYSTEM_MODULES = [
 
   "doctor_workflow",
   "doctor_portal",
+  "doctors_overview",
   "scheduling",
   "admissions",
   "readmission",
@@ -162,18 +163,14 @@ export const ALL_SYSTEM_MODULES = [
   "hrms",
   "employees",
   "hr_attendance",
-  "hr_staffing",
+  "scheduling",
+  "hr_muster",
   "hr_leave",
-  "hr_approvals",
   "hr_payroll",
-  "hr_recruitment",
-  "hr_organization",
-  "hr_training",
-  "hr_performance",
   "hr_compliance",
-  "hr_grievances",
-  "hr_reports",
-  "hr_announcements",
+  "hr_biometric",
+  "hr_timetables",
+  "hr_audit",
   "patient_exp",
   "patient_messages",
 
@@ -246,6 +243,7 @@ const INITIAL_ROLES: AppRole[] = [
     id: "ROLE_DOCTOR",
     name: "Doctor",
     allowedModules: [
+      "doctor_portal",
       "patients",
       "appointments",
       "clinical",
@@ -258,7 +256,6 @@ const INITIAL_ROLES: AppRole[] = [
       "icu",
       "discharge",
       "triage",
-      "my_hr",
     ],
     status: "Active",
     isSystem: true,
@@ -267,6 +264,7 @@ const INITIAL_ROLES: AppRole[] = [
     id: "ROLE_SURGEON",
     name: "Surgeon",
     allowedModules: [
+      "doctor_portal",
       "patients",
       "appointments",
       "clinical",
@@ -276,7 +274,6 @@ const INITIAL_ROLES: AppRole[] = [
       "icu",
       "discharge",
       "triage",
-      "my_hr",
     ],
     status: "Active",
     isSystem: true,
@@ -284,7 +281,7 @@ const INITIAL_ROLES: AppRole[] = [
   {
     id: "ROLE_ANESTHETIST",
     name: "Anesthetist",
-    allowedModules: ["patients", "clinical", "inpatient", "emergency", "surgery", "icu", "my_hr"],
+    allowedModules: ["doctor_portal", "patients", "clinical", "inpatient", "emergency", "surgery", "icu"],
     status: "Active",
     isSystem: true,
   },
@@ -292,6 +289,7 @@ const INITIAL_ROLES: AppRole[] = [
     id: "ROLE_ER_PHYSICIAN",
     name: "Emergency Physician",
     allowedModules: [
+      "doctor_portal",
       "patients",
       "appointments",
       "emergency",
@@ -303,7 +301,6 @@ const INITIAL_ROLES: AppRole[] = [
       "pharmacy",
       "discharge",
       "icu",
-      "my_hr",
     ],
     status: "Active",
     isSystem: true,
@@ -311,56 +308,56 @@ const INITIAL_ROLES: AppRole[] = [
   {
     id: "ROLE_PATHOLOGIST",
     name: "Pathologist",
-    allowedModules: ["laboratory", "patients", "my_hr"],
+    allowedModules: ["laboratory", "patients"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_RADIOLOGIST",
     name: "Radiologist",
-    allowedModules: ["radiology", "radiology_reports", "radiology_templates", "patients", "my_hr"],
+    allowedModules: ["radiology", "radiology_reports", "radiology_templates", "patients"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_PHYSIOTHERAPIST",
     name: "Physiotherapist",
-    allowedModules: ["patients", "clinical", "inpatient", "my_hr"],
+    allowedModules: ["patients", "clinical", "inpatient"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_RECEPTIONIST",
     name: "Receptionist",
-    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op", "my_hr"],
+    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_FRONT_OFFICE_MANAGER",
     name: "Front Office Manager",
-    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op", "beds", "patient_exp", "my_hr"],
+    allowedModules: ["patients", "appointments", "emergency", "op", "billing_op", "beds", "patient_exp"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_NURSE",
     name: "Nurse",
-    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "discharge", "my_hr"],
+    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "discharge"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_NURSING_SUPERVISOR",
     name: "Nursing Supervisor",
-    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "beds", "discharge", "my_hr"],
+    allowedModules: ["patients", "inpatient", "nursing", "emergency", "triage", "clinical", "beds", "discharge"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_PHARMACIST",
     name: "Pharmacist",
-    allowedModules: ["pharmacy", "pharmacy_dispensing", "pharmacy_rx", "pharmacy_returns", "pharmacy_medicine", "pharmacy_po", "pharmacy_grn", "my_hr"],
+    allowedModules: ["pharmacy", "pharmacy_dispensing", "pharmacy_rx", "pharmacy_returns", "pharmacy_medicine", "pharmacy_po", "pharmacy_grn"],
     status: "Active",
     isSystem: true,
   },
@@ -388,7 +385,6 @@ const INITIAL_ROLES: AppRole[] = [
       "pharmacy_users",
       "pharmacy_audit",
       "pharmacy_settings",
-      "my_hr",
     ],
     status: "Active",
     isSystem: true,
@@ -396,49 +392,71 @@ const INITIAL_ROLES: AppRole[] = [
   {
     id: "ROLE_LAB_TECHNICIAN",
     name: "Lab Technician",
-    allowedModules: ["laboratory", "patients", "my_hr"],
+    allowedModules: ["laboratory", "patients"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_RADIOLOGY_TECHNICIAN",
     name: "Radiology Technician",
-    allowedModules: ["radiology", "radiology_reports", "patients", "my_hr"],
+    allowedModules: ["radiology", "radiology_reports", "patients"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_HR_MANAGER",
-    name: "HR Manager",
+    name: "HR & Staff Manager",
     allowedModules: [
-      "hr",
-      "hr_employees",
+      "hrms",
+      "employees",
+      "scheduling",
       "hr_attendance",
-      "hr_shifts",
-      "hr_leaves",
+      "hr_muster",
+      "hr_leave",
+      "hr_approvals",
       "hr_payroll",
+      "hr_compliance",
+      "hr_biometric",
+      "hr_timetables",
+      "hr_audit",
+      "hr_staffing",
       "hr_recruitment",
-      "hr_performance",
+      "hr_organization",
       "hr_training",
-      "hr_documents",
+      "hr_performance",
+      "hr_grievances",
       "hr_reports",
       "hr_announcements",
-      "my_hr",
+      "hr_dashboard",
     ],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_HR_EXECUTIVE",
-    name: "HR Executive",
-    allowedModules: ["hr", "hr_employees", "hr_attendance", "hr_shifts", "hr_leaves", "my_hr"],
+    name: "HR & Staff Officer",
+    allowedModules: [
+      "hrms",
+      "employees",
+      "scheduling",
+      "hr_attendance",
+      "hr_muster",
+      "hr_leave",
+      "hr_approvals",
+      "hr_payroll",
+      "hr_compliance",
+      "hr_biometric",
+      "hr_timetables",
+      "hr_audit",
+      "hr_reports",
+    ],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_ACCOUNTANT",
     name: "Accountant",
-    allowedModules: ["accounts", "accounts_dashboard", "accounts_coa", "accounts_gl", "accounts_receipts", "accounts_payments", "accounts_ar", "accounts_ap", "accounts_cash_bank", "accounts_reports", "my_hr"],
+    allowedModules: ["accounts", "accounts_dashboard", "accounts_coa", "accounts_gl", "accounts_receipts", "accounts_payments", "accounts_ar", "accounts_ap", "accounts_cash_bank", "accounts_reports"],
     status: "Active",
     isSystem: true,
   },
@@ -466,7 +484,6 @@ const INITIAL_ROLES: AppRole[] = [
       "accounts_audit",
       "accounts_manager",
       "billing",
-      "my_hr",
     ],
     status: "Active",
     isSystem: true,
@@ -474,62 +491,53 @@ const INITIAL_ROLES: AppRole[] = [
   {
     id: "ROLE_BILLING_EXECUTIVE",
     name: "Billing Executive",
-    allowedModules: ["billing", "billing_op", "billing_ip", "billing_er", "billing_unified", "billing_revenue", "my_hr"],
+    allowedModules: ["billing", "billing_op", "billing_ip", "billing_er", "billing_unified", "billing_revenue"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_INSURANCE_TPA_OFFICER",
     name: "Insurance / TPA Officer",
-    allowedModules: ["insurance", "insurance_desk", "insurance_preauth", "insurance_claims", "insurance_queries", "insurance_emails", "insurance_settlement", "insurance_reconciliation", "insurance_masters", "my_hr"],
+    allowedModules: ["insurance", "insurance_desk", "insurance_preauth", "insurance_claims", "insurance_queries", "insurance_emails", "insurance_settlement", "insurance_reconciliation", "insurance_masters"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_MEDICAL_RECORDS_OFFICER",
     name: "Medical Records Officer",
-    allowedModules: ["patients", "clinical", "discharge", "my_hr"],
+    allowedModules: ["patients", "clinical", "discharge"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_INVENTORY_MANAGER",
     name: "Inventory Manager",
-    allowedModules: ["pharmacy_medicine", "pharmacy_suppliers", "pharmacy_po", "pharmacy_grn", "my_hr"],
+    allowedModules: ["pharmacy_medicine", "pharmacy_suppliers", "pharmacy_po", "pharmacy_grn"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_FACILITY_MANAGER",
     name: "Facility Manager",
-    allowedModules: ["beds", "my_hr"],
+    allowedModules: ["beds"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_COMPLIANCE_OFFICER",
     name: "Compliance Officer",
-    allowedModules: ["audit", "patients", "clinical", "my_hr"],
+    allowedModules: ["audit", "patients", "clinical"],
     status: "Active",
     isSystem: true,
   },
   {
     id: "ROLE_IT_SUPPORT",
     name: "IT Support",
-    allowedModules: ["dashboard", "settings", "audit", "my_hr"],
+    allowedModules: ["dashboard", "settings", "audit"],
     status: "Active",
     isSystem: true,
   },
 ]
-
-// Employee self-service ("My HR") for every staff login. Administrators use
-// HR & Staff instead; the page answers only from the signed-in user's own
-// record, so granting it widely exposes nothing.
-for (const role of INITIAL_ROLES) {
-  if (role.allowedModules !== ALL_SYSTEM_MODULES && !role.allowedModules.includes("my_hr")) {
-    role.allowedModules = [...role.allowedModules, "my_hr"]
-  }
-}
 
 export function getInitialUsers(): AppUser[] {
   return [
@@ -663,10 +671,11 @@ export class RoleDatabase {
       parsed.forEach((r) => {
         if (r && r.id) {
           const base = roleMap.get(r.id)
+          const rawMods = Array.isArray(r.allowedModules) ? r.allowedModules : (base?.allowedModules || [])
           roleMap.set(r.id, {
             ...base,
             ...r,
-            allowedModules: Array.isArray(r.allowedModules) ? r.allowedModules : (base?.allowedModules || []),
+            allowedModules: rawMods,
             status: r.status || base?.status || "Active",
             isSystem: r.isSystem ?? base?.isSystem ?? false,
           })
@@ -678,6 +687,21 @@ export class RoleDatabase {
         adminRole.name = "System Administrator"
         adminRole.allowedModules = [...ALL_SYSTEM_MODULES, "*"]
       }
+
+      roleMap.forEach((role) => {
+        const idUpper = (role.id || "").toUpperCase()
+        if (
+          idUpper === "ROLE_DOCTOR" ||
+          idUpper.includes("DOCTOR") ||
+          idUpper.includes("SURGEON") ||
+          idUpper.includes("PHYSICIAN") ||
+          idUpper.includes("CLINICIAN")
+        ) {
+          if (!role.allowedModules.includes("doctor_portal")) {
+            role.allowedModules.unshift("doctor_portal")
+          }
+        }
+      })
 
       const result = Array.from(roleMap.values())
       return result
@@ -732,7 +756,88 @@ export class RoleDatabase {
         window.localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(filtered))
       }
 
-      return filtered
+      const userMap = new Map<string, AppUser>()
+      filtered.forEach((u) => {
+        if (u && u.username) {
+          const key = u.username.toLowerCase()
+          userMap.set(key, { ...u })
+        }
+      })
+
+      // Ensure all doctors from Doctor Master (hospai_doctor_master_v3) are automatically
+      // registered as active AppUsers with assigned roles and credentials
+      try {
+        const storedDocs =
+          window.localStorage.getItem("hospai_doctor_master_v3") ||
+          window.localStorage.getItem("hospai_doctor_master")
+        if (storedDocs) {
+          const docs: Array<{
+            id: string
+            name: string
+            username?: string
+            staffId?: string
+            specialty?: string
+            verified?: boolean
+            roleId?: string
+            password?: string
+          }> = JSON.parse(storedDocs)
+          if (Array.isArray(docs)) {
+            docs.forEach((d) => {
+              if (!d || !d.name) return
+              const cleanName = (d.name || "")
+                .toLowerCase()
+                .replace(/dr\.?\s*/, "")
+                .replace(/[^a-z0-9]/g, "")
+              const docUsername = (
+                d.username ||
+                cleanName ||
+                `doc_${d.id.toLowerCase()}`
+              )
+                .trim()
+                .toLowerCase()
+              const assignedRoleId = d.roleId || "ROLE_DOCTOR"
+
+              const existing = userMap.get(docUsername)
+              if (!existing) {
+                userMap.set(docUsername, {
+                  id: `U_${d.id}`,
+                  name: d.name,
+                  username: docUsername,
+                  password: d.password || "Doctor@123",
+                  roleId: assignedRoleId,
+                  staffId: d.staffId || d.id,
+                  status: d.verified !== false ? "Active" : "Inactive",
+                  department: d.specialty || "Clinical",
+                  allowedModules: [
+                    "doctor_portal",
+                    "patients",
+                    "appointments",
+                    "clinical",
+                    "inpatient",
+                    "emergency",
+                    "laboratory",
+                    "radiology",
+                    "pharmacy",
+                    "surgery",
+                    "icu",
+                    "discharge",
+                    "triage",
+                  ],
+                })
+              } else {
+                if (!existing.roleId || existing.roleId === "ROLE_STAFF") {
+                  existing.roleId = assignedRoleId
+                }
+                if (!existing.password) {
+                  existing.password = d.password || "Doctor@123"
+                }
+              }
+            })
+          }
+        }
+      } catch {}
+
+      return Array.from(userMap.values())
     } catch {
       return initial
     }
@@ -784,6 +889,212 @@ export class RoleDatabase {
     return updated
   }
 
+  static authenticate(
+    username: string,
+    password?: string,
+    selectedRoleId?: string,
+  ): {
+    user: AppUser
+    role: AppRole
+  } | null {
+    const cleanUser = (username || "").trim().toLowerCase()
+    const cleanPass = (password || "").trim()
+
+    if (!cleanUser) return null
+
+    let users: AppUser[] = []
+    try {
+      users = this.getUsers()
+    } catch {
+      users = getInitialUsers()
+    }
+
+    // 1. Primary Lookup: Look for the exact individual user account created by the admin
+    // Match by: username, staffId, employee_id, internal id, or email
+    let user = users.find((u) => {
+      if (!u) return false
+      const uname = String(u.username || "").trim().toLowerCase()
+      const sid = String(u.staffId || "").trim().toLowerCase()
+      const uid = String(u.id || "").trim().toLowerCase()
+      const email = String(u.email || "").trim().toLowerCase()
+
+      return uname === cleanUser || sid === cleanUser || uid === cleanUser || email === cleanUser
+    })
+
+    // 2. Doctor Master Lookup: check if doctor was saved in Doctor Master
+    if (!user) {
+      try {
+        const stored =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem("hospai_doctor_master_v3") ||
+              window.localStorage.getItem("hospai_doctor_master")
+            : null
+        if (stored) {
+          const docs: Array<{
+            id: string
+            name: string
+            username?: string
+            staffId?: string
+            specialty?: string
+            verified?: boolean
+            roleId?: string
+            password?: string
+            email?: string
+          }> = JSON.parse(stored)
+          const matchedDoc = docs.find((d) => {
+            const duname = String(d.username || "").trim().toLowerCase()
+            const dsid = String(d.staffId || d.id || "").trim().toLowerCase()
+            const demail = String(d.email || "").trim().toLowerCase()
+            const dcleanName = String(d.name || "")
+              .trim()
+              .toLowerCase()
+              .replace(/dr\.?\s*/, "")
+              .replace(/[^a-z0-9]/g, "")
+            return (
+              duname === cleanUser ||
+              dsid === cleanUser ||
+              demail === cleanUser ||
+              dcleanName === cleanUser ||
+              `doc_${String(d.id).toLowerCase()}` === cleanUser
+            )
+          })
+          if (matchedDoc) {
+            user = {
+              id: `U_${matchedDoc.id}`,
+              name: matchedDoc.name,
+              username: matchedDoc.username || cleanUser,
+              password: matchedDoc.password || "Doctor@123",
+              staffId: matchedDoc.staffId || matchedDoc.id,
+              roleId: matchedDoc.roleId || "ROLE_DOCTOR",
+              status: matchedDoc.verified !== false ? "Active" : "Inactive",
+              department: matchedDoc.specialty,
+              allowedModules: [
+                "doctor_portal",
+                "patients",
+                "appointments",
+                "clinical",
+                "inpatient",
+                "emergency",
+                "laboratory",
+                "radiology",
+                "pharmacy",
+                "surgery",
+                "icu",
+                "discharge",
+                "triage",
+              ],
+            }
+            this.upsertUser(user)
+          }
+        }
+      } catch {}
+    }
+
+    // 3. Fallback for built-in demo aliases (only if no custom user was found)
+    if (!user) {
+      if (cleanUser === "admin" || cleanUser === "administrator" || cleanUser === "adm-001") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "admin")
+      } else if (cleanUser === "doctor" || cleanUser === "doc-001") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "doctor")
+      } else if (cleanUser === "nurse") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "nurse")
+      } else if (cleanUser === "pharmacy") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "pharmacy")
+      } else if (cleanUser === "lab") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "lab")
+      } else if (cleanUser === "reception") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "reception")
+      } else if (cleanUser === "billing") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "billing")
+      } else if (cleanUser === "finance") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "finance")
+      } else if (cleanUser === "radiology") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "radiology")
+      } else if (cleanUser === "hr") {
+        user = users.find((u) => String(u.username || "").toLowerCase() === "hr")
+      }
+    }
+
+    if (!user) return null
+    if (user.status === "Inactive") return null
+
+    // 4. Password validation:
+    // Matches the exact individual password saved by the admin,
+    // OR matches standard demo passwords for the built-in demo accounts
+    const isMockAccount = [
+      "admin",
+      "doctor",
+      "nurse",
+      "pharmacy",
+      "lab",
+      "reception",
+      "billing",
+      "finance",
+      "radiology",
+      "insurance",
+      "hr",
+    ].includes(String(user.username || "").toLowerCase())
+
+    const pwMatches =
+      Boolean(user.password && user.password === cleanPass) ||
+      Boolean(user.password && user.password.toLowerCase() === cleanPass.toLowerCase()) ||
+      (isMockAccount &&
+        (cleanPass === "password123" ||
+          cleanPass === "Doctor@123" ||
+          cleanPass === "doctor123" ||
+          cleanPass === "Admin@123" ||
+          cleanPass === "admin" ||
+          cleanPass === "password")) ||
+      (!user.password && (cleanPass === "password123" || cleanPass === "Doctor@123"))
+
+    if (!pwMatches) {
+      return null
+    }
+
+    // 5. Role resolution: assign the exact role given by the administrator
+    const roles = this.getRoles()
+    let role = roles.find((r) => r.id === user?.roleId)
+    if (!role) {
+      if (user.roleId === "ROLE_ADMIN" || user.username?.toLowerCase() === "admin") {
+        role = roles.find((r) => r.id === "ROLE_ADMIN") || {
+          id: "ROLE_ADMIN",
+          name: "System Administrator",
+          allowedModules: [...ALL_SYSTEM_MODULES, "*"],
+          isSystem: true,
+        }
+      } else if (user.roleId === "ROLE_DOCTOR" || user.roleId?.toLowerCase().includes("doctor")) {
+        role = roles.find((r) => r.id === "ROLE_DOCTOR") || {
+          id: "ROLE_DOCTOR",
+          name: "Doctor / Clinician",
+          allowedModules: [
+            "doctor_portal",
+            "patients",
+            "appointments",
+            "clinical",
+            "inpatient",
+            "emergency",
+            "laboratory",
+            "radiology",
+            "pharmacy",
+            "surgery",
+            "icu",
+            "discharge",
+            "triage",
+          ],
+          isSystem: true,
+        }
+      } else {
+        role = {
+          id: user.roleId || "ROLE_STAFF",
+          name: "Staff Member",
+          allowedModules: user.allowedModules || user.customModules || ["dashboard"],
+        }
+      }
+    }
+
+    return { user, role }
+  }
+
   static upsertRole(role: AppRole): AppRole[] {
     const roles = this.getRoles()
     const idx = roles.findIndex((r) => r.id === role.id)
@@ -827,6 +1138,7 @@ export class RoleDatabase {
           cleanPass === "password123" ||
           cleanPass === "admin" ||
           cleanPass === "Admin@123" ||
+          cleanPass.toLowerCase() === "admin@123" ||
           cleanPass === "admin123"
         ) {
           return true

@@ -131,17 +131,27 @@ const UNCLAIMED = "__unclaimed__"
  */
 export default function DoctorsOverview({
   onOpenWorkspace,
+  onOpenAdminMaster,
 }: {
   onOpenWorkspace?: (doctor: DoctorAccount) => void
+  onOpenAdminMaster?: () => void
 } = {}) {
   const { revision, now } = useLiveClinic()
   const data = useMemo(() => getDoctorOversight(), [revision])
   const [query, setQuery] = useState("")
   const [specialty, setSpecialty] = useState("All")
-  const [show, setShow] = useState<"busy" | "all">("busy")
+  const [show, setShow] = useState<"busy" | "all">("all")
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>("patients")
   const [notice, setNotice] = useState<string | null>(null)
+
+  const totalRegisteredDoctors = useMemo(() => {
+    return getAllDoctorAccounts().length
+  }, [revision])
+
+  const totalAssignedPatients = useMemo(() => {
+    return data.doctors.reduce((sum, d) => sum + d.counts.patients, 0)
+  }, [data.doctors])
 
   const specialties = useMemo(
     () => ["All", ...Array.from(new Set(data.doctors.map((d) => d.specialty).filter(Boolean))).sort()],
@@ -171,24 +181,37 @@ export default function DoctorsOverview({
           <Stethoscope size={22} />
         </span>
         <div className="min-w-0">
-          <h1 className="text-[18px] font-bold tracking-[-0.01em]">Doctors</h1>
-          <p className="text-[12.5px] text-white/80">Every doctor's patients, consultations and orders, updated live.</p>
+          <h1 className="text-[18px] font-bold tracking-[-0.01em]">Complete Doctors Workspace & Patient Allocation</h1>
+          <p className="text-[12.5px] text-white/80">Super Admin oversight: View all {totalRegisteredDoctors} doctors, live patient queue assignments, and department workloads.</p>
         </div>
-        <div className="ml-auto flex items-center gap-2 text-[12px] text-white/90">
-          <span className="w-2 h-2 rounded-full bg-[#4ADE80] animate-pulse" />
-          Live · {new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        <div className="ml-auto flex items-center gap-3 text-[12px] text-white/90">
+          {onOpenAdminMaster && (
+            <button
+              type="button"
+              onClick={onOpenAdminMaster}
+              className="bg-white/15 hover:bg-white/25 text-white border border-white/25 px-3 py-1.5 rounded-lg text-[12px] font-semibold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              title="Open Doctor Master & Credentials in Admin Portal"
+            >
+              <Users size={14} />
+              <span>Doctor Master Directory</span>
+            </button>
+          )}
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#4ADE80] animate-pulse" />
+            Live · {new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </div>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden flex flex-col p-4 lg:p-5 gap-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3 shrink-0">
-          <Kpi label="Active doctors" value={data.totals.activeDoctors} icon={Stethoscope} hue={TONE.indigo} />
-          <Kpi label="Waiting" value={data.totals.waiting} icon={Users} hue={TONE.orange} />
-          <Kpi label="In consultation" value={data.totals.inConsultation} icon={Activity} hue={TONE.blue} />
+          <Kpi label="Total doctors" value={totalRegisteredDoctors} icon={Stethoscope} hue={TONE.indigo} />
+          <Kpi label="Assigned patients" value={totalAssignedPatients} icon={Users} hue={TONE.blue} />
+          <Kpi label="Waiting in OPD" value={data.totals.waiting} icon={Activity} hue={TONE.orange} />
+          <Kpi label="In consultation" value={data.totals.inConsultation} icon={Activity} hue={TONE.teal} />
           <Kpi label="Seen today" value={data.totals.seenToday} icon={ClipboardList} hue={TONE.green} />
-          <Kpi label="Unclaimed" value={data.totals.unclaimed} icon={Inbox} hue={TONE.amber} />
+          <Kpi label="Unclaimed queue" value={data.totals.unclaimed} icon={Inbox} hue={TONE.amber} />
           <Kpi label="Lab pending" value={data.totals.labPending} icon={FlaskConical} hue={TONE.violet} />
-          <Kpi label="Critical results" value={data.totals.labCritical} icon={AlertTriangle} hue={TONE.red} />
           <Kpi label="At pharmacy" value={data.totals.rxAtPharmacy} icon={Pill} hue={TONE.teal} />
         </div>
 
@@ -312,10 +335,13 @@ export default function DoctorsOverview({
                           {d.room && <span className="text-[#64748B] font-semibold text-[11px] bg-slate-100 px-1 py-0.2 rounded">R: {d.room}</span>}
                         </span>
                         <span className="flex flex-wrap gap-1 mt-1.5">
+                          <Chip hue={d.counts.patients > 0 ? TONE.indigo : TONE.slate}>
+                            {d.counts.patients} {d.counts.patients === 1 ? "patient" : "patients"} assigned
+                          </Chip>
                           {d.counts.open > 0 && <Chip hue={TONE.amber}>{d.counts.open} in queue</Chip>}
                           {d.counts.labPending > 0 && <Chip hue={TONE.violet}>{d.counts.labPending} lab</Chip>}
                           {d.counts.rxAtPharmacy > 0 && <Chip hue={TONE.teal}>{d.counts.rxAtPharmacy} Rx</Chip>}
-                          {d.counts.patients > 0 && d.counts.open === 0 && <Chip hue={TONE.green}>{d.counts.patients} seen today</Chip>}
+                          {d.counts.seenToday > 0 && d.counts.open === 0 && <Chip hue={TONE.green}>{d.counts.seenToday} seen today</Chip>}
                           {!d.account && <span className="text-[10px] text-[#94A3B8] italic">Unlinked</span>}
                         </span>
                       </span>
