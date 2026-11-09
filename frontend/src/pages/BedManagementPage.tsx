@@ -1083,23 +1083,126 @@ export default function BedManagementPage({
     if (!selectedBed) return
     setReleasing(true)
     try {
-      const roomChargeTotal = roomChargeSegments.reduce(
+      const occupantName = bedOccupantName(selectedBed)
+      const patientName =
+        occupantName !== "-"
+          ? occupantName
+          : [selectedBed.patient_name, selectedBed.patient_last_name].filter(Boolean).join(" ").trim() || "Inpatient Patient"
+      const patientId =
+        selectedBed.patient_id ||
+        (selectedBed.admission_id ? `UMR-ADM-${selectedBed.admission_id}` : `UMR-${100000 + selectedBed.id}`)
+
+      let roomChargeTotal = roomChargeSegments.reduce(
         (sum, s) => sum + s.days * s.daily_rate,
         0,
       )
+      if (roomChargeTotal <= 0) {
+        const rate = selectedBed.daily_rate || 1500
+        const days = roomChargeSegments[0]?.days || 1
+        roomChargeTotal = rate * days
+      }
+
+      // Generate Inpatient Bill and dispatch to Billing module
+      if (selectedBed.status === "Occupied" || selectedBed.patient_id || occupantName !== "-") {
+        const dept: DepartmentType =
+          selectedBed.bed_type === "ICU" || selectedBed.ward.toUpperCase().includes("ICU")
+            ? "ICU"
+            : "Inpatient"
+
+        const items =
+          roomChargeSegments.length > 0
+            ? roomChargeSegments.map((seg, idx) => ({
+                id: `ITEM-BED-${selectedBed.id}-${Date.now()}-${idx}`,
+                description: `Room & Bed Charges: ${seg.ward} (Room ${seg.room_no} / Bed ${seg.bed_no}) [${seg.days} Day${seg.days > 1 ? "s" : ""} @ ₹${seg.daily_rate}/day]`,
+                category: "Room / Bed Charges" as const,
+                cptCode: "99231",
+                quantity: seg.days,
+                unitPrice: seg.daily_rate,
+                total: seg.days * seg.daily_rate,
+                insuranceCovered: 0,
+                patientPayable: seg.days * seg.daily_rate,
+              }))
+            : [
+                {
+                  id: `ITEM-BED-${selectedBed.id}-${Date.now()}-0`,
+                  description: `Inpatient Room Charges: ${selectedBed.ward} (Room ${selectedBed.room_no} / Bed ${selectedBed.bed_no})`,
+                  category: "Room / Bed Charges" as const,
+                  cptCode: "99231",
+                  quantity: 1,
+                  unitPrice: roomChargeTotal,
+                  total: roomChargeTotal,
+                  insuranceCovered: 0,
+                  patientPayable: roomChargeTotal,
+                },
+              ]
+
+        const encId = selectedBed.admission_id
+          ? `ADM-${selectedBed.admission_id}`
+          : `BED-${selectedBed.id}`
+
+        const claim = BillingDatabase.createClaim({
+          patientId,
+          patientName,
+          mrn: patientId.replace(/\D/g, "") || String(100000 + selectedBed.id),
+          age: selectedBed.patient_age || 45,
+          gender: (selectedBed.patient_gender as any) || "Other",
+          phone: selectedBed.patient_phone || "+91 98765 43210",
+          department: dept,
+          carePathway: `Inpatient Admission & Discharge (${selectedBed.ward} - Room ${selectedBed.room_no} / Bed ${selectedBed.bed_no})`,
+          encounterId: encId,
+          hospitalStayId: `STAY-${selectedBed.id}-${Date.now().toString().slice(-4)}`,
+          dateOfService: new Date().toISOString().split("T")[0],
+          insuranceProvider: "Self-Pay",
+          status: "Accepted",
+          items,
+          amountPaid: 0,
+          balanceDue: roomChargeTotal,
+          totalAmount: roomChargeTotal,
+          patientPortion: roomChargeTotal,
+        })
+
+        try {
+          BillingDatabase.createDepartmentCharge({
+            patientId,
+            patientName,
+            mrn: patientId.replace(/\D/g, "") || String(100000 + selectedBed.id),
+            department: dept,
+            encounterId: encId,
+            items,
+            status: "Invoiced in Central Billing",
+            invoiceId: claim.invoiceNo || claim.id,
+            totalAmount: roomChargeTotal,
+          })
+        } catch {
+          // best-effort
+        }
+
+        BillingDatabase.setPreselectedClaimForBilling(claim.id || claim.invoiceNo)
+        BillingDatabase.emitUpdate()
+      }
+
       await apiFetch(`/api/beds/${selectedBed.id}/release`, {
         method: "POST",
         body: JSON.stringify({
           discharge_override_reason: dischargeReason.trim() || undefined,
-          room_charge_total:
-            roomChargeSegments.length > 0 ? roomChargeTotal : undefined,
+          room_charge_total: roomChargeTotal,
+          room_charge_segments:
+            roomChargeSegments.length > 0
+              ? roomChargeSegments
+              : [
+                  {
+                    ward: selectedBed.ward,
+                    room_no: selectedBed.room_no,
+                    bed_no: selectedBed.bed_no,
+                    days: 1,
+                    daily_rate: roomChargeTotal,
+                    amount: roomChargeTotal,
+                  },
+                ],
         }),
       })
 
-      // Compile everything recorded during this stay (doctor/nurse notes,
-      // vitals, diagnoses, medications, lab results) into a permanent
-      // discharge summary -- best-effort: the bed is already released above,
-      // so a summary failure here shouldn't look like the discharge failed.
+      // Compile everything recorded during this stay into a discharge summary
       let summaryFailed = false
       if (selectedBed.patient_id) {
         try {
@@ -1115,9 +1218,7 @@ export default function BedManagementPage({
       setNotice({
         type: summaryFailed ? "warning" : "success",
         message:
-          (roomChargeSegments.length > 0
-            ? `Bed ${selectedBed.bed_no} released. Room charges bill: ${formatINR(roomChargeTotal)}.`
-            : `Bed ${selectedBed.bed_no} released and patient discharged.`) +
+          `Bed ${selectedBed.bed_no} released. Inpatient bill of ${formatINR(roomChargeTotal)} sent to Inpatient Billing.` +
           (summaryFailed
             ? " (Discharge summary could not be generated — add it manually from the patient's chart.)"
             : ""),
@@ -2185,7 +2286,23 @@ export default function BedManagementPage({
                                 {segment.ward} / Room {segment.room_no} / Bed{" "}
                                 {segment.bed_no}
                               </TableCell>
-                              <TableCell>{segment.days}</TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  style={{ width: "70px" }}
+                                  value={segment.days}
+                                  aria-label={`Days for ${segment.ward} segment`}
+                                  onChange={(e) => {
+                                    const next = [...roomChargeSegments]
+                                    next[idx] = {
+                                      ...next[idx],
+                                      days: Math.max(1, parseInt(e.target.value, 10) || 1),
+                                    }
+                                    setRoomChargeSegments(next)
+                                  }}
+                                />
+                              </TableCell>
                               <TableCell>
                                 <Input
                                   type="number"

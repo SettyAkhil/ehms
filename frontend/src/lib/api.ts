@@ -525,7 +525,7 @@ async function handleLocalErMock<T = any>(
 
     const d = ErDatabase.recordDisposition(visitId, body)
 
-    return { disposition: d } as T
+    return { disposition: d, bed_request_id: (d as any).er_bed_request_id || 1 } as T
   }
 
   // POST /api/er/patients/:id or PUT /api/patients/:id (Update patient info & allergies)
@@ -720,6 +720,99 @@ async function handleLocalErMock<T = any>(
 
   if (releaseBedMatch && method === "POST") {
     const bedId = parseInt(releaseBedMatch[1])
+    const bedBeforeRelease = BedDatabase.getBed(bedId)
+
+    if (bedBeforeRelease) {
+      const occupantName = `${bedBeforeRelease.patient_name || ""} ${bedBeforeRelease.patient_last_name || ""}`.trim()
+      const patientName = occupantName || "Inpatient Patient"
+      const patientId =
+        bedBeforeRelease.patient_id ||
+        (bedBeforeRelease.admission_id ? `UMR-ADM-${bedBeforeRelease.admission_id}` : `UMR-${100000 + bedId}`)
+
+      let roomChargeTotal = body.room_charge_total || 0
+      if (roomChargeTotal <= 0) {
+        roomChargeTotal = (bedBeforeRelease.daily_rate || 1500) * (body.room_charge_segments?.[0]?.days || 1)
+      }
+      const segments = body.room_charge_segments || []
+
+      const existingClaims = BillingDatabase.getClaims()
+      const encId = bedBeforeRelease.admission_id ? `ADM-${bedBeforeRelease.admission_id}` : `BED-${bedBeforeRelease.id}`
+      const alreadyInvoiced = existingClaims.some((c) => c.encounterId === encId && (c.balanceDue || 0) > 0)
+
+      if (!alreadyInvoiced && roomChargeTotal > 0 && (bedBeforeRelease.patient_id || occupantName)) {
+        const dept: DepartmentType =
+          bedBeforeRelease.bed_type === "ICU" || bedBeforeRelease.ward.toUpperCase().includes("ICU")
+            ? "ICU"
+            : "Inpatient"
+
+        const items =
+          segments.length > 0
+            ? segments.map((seg: any, idx: number) => ({
+                id: `ITEM-BED-${bedBeforeRelease.id}-${Date.now()}-${idx}`,
+                description: `Room & Bed Charges: ${seg.ward} (Room ${seg.room_no} / Bed ${seg.bed_no}) [${seg.days} Day${seg.days > 1 ? "s" : ""} @ ₹${seg.daily_rate}/day]`,
+                category: "Room / Bed Charges" as const,
+                cptCode: "99231",
+                quantity: seg.days || 1,
+                unitPrice: seg.daily_rate || roomChargeTotal,
+                total: (seg.days || 1) * (seg.daily_rate || roomChargeTotal),
+                insuranceCovered: 0,
+                patientPayable: (seg.days || 1) * (seg.daily_rate || roomChargeTotal),
+              }))
+            : [
+                {
+                  id: `ITEM-BED-${bedBeforeRelease.id}-${Date.now()}-0`,
+                  description: `Inpatient Room Charges: ${bedBeforeRelease.ward} (Bed ${bedBeforeRelease.bed_no})`,
+                  category: "Room / Bed Charges" as const,
+                  cptCode: "99231",
+                  quantity: 1,
+                  unitPrice: roomChargeTotal,
+                  total: roomChargeTotal,
+                  insuranceCovered: 0,
+                  patientPayable: roomChargeTotal,
+                },
+              ]
+
+        const claim = BillingDatabase.createClaim({
+          patientId,
+          patientName,
+          mrn: patientId.replace(/\D/g, "") || String(100000 + bedId),
+          age: bedBeforeRelease.patient_age || 45,
+          gender: (bedBeforeRelease.patient_gender as any) || "Other",
+          phone: bedBeforeRelease.patient_phone || "+91 98765 43210",
+          department: dept,
+          carePathway: `Inpatient Stay & Discharge (${bedBeforeRelease.ward} - Room ${bedBeforeRelease.room_no} / Bed ${bedBeforeRelease.bed_no})`,
+          encounterId: encId,
+          hospitalStayId: `STAY-${bedBeforeRelease.id}-${Date.now().toString().slice(-4)}`,
+          dateOfService: new Date().toISOString().split("T")[0],
+          insuranceProvider: "Self-Pay",
+          status: "Accepted",
+          items,
+          amountPaid: 0,
+          balanceDue: roomChargeTotal,
+          totalAmount: roomChargeTotal,
+          patientPortion: roomChargeTotal,
+        })
+
+        try {
+          BillingDatabase.createDepartmentCharge({
+            patientId,
+            patientName,
+            mrn: patientId.replace(/\D/g, "") || String(100000 + bedId),
+            department: dept,
+            encounterId: encId,
+            items,
+            status: "Invoiced in Central Billing",
+            invoiceId: claim.invoiceNo || claim.id,
+            totalAmount: roomChargeTotal,
+          })
+        } catch {
+          // best-effort
+        }
+
+        BillingDatabase.setPreselectedClaimForBilling(claim.id || claim.invoiceNo)
+        BillingDatabase.emitUpdate()
+      }
+    }
 
     const bed = BedDatabase.releaseBed(
       bedId,
@@ -842,6 +935,19 @@ async function handleLocalErMock<T = any>(
       due_amount: p.dueAmount,
     }))
 
+    const admTime = bed?.admission_date || bed?.allocated_at
+    let calculatedDays = 1
+    if (admTime) {
+      const start = new Date(admTime)
+      const now = new Date()
+      const diffMs = Math.max(0, now.getTime() - start.getTime())
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+      calculatedDays = Math.max(1, diffDays)
+    }
+
+    const dailyRate = bed?.daily_rate || 1500
+    const totalRoomCharge = dailyRate * calculatedDays
+
     return {
       billing: { ok: billingOk, pending_invoices: pendingInvoices },
 
@@ -852,21 +958,21 @@ async function handleLocalErMock<T = any>(
       room_charges: {
         segments: [
           {
-            ward: bed?.ward || "3N Medical",
+            ward: bed?.ward || "General Ward",
 
-            room_no: bed?.room_no || "204",
+            room_no: bed?.room_no || "201",
 
-            bed_no: bed?.bed_no || "204-A",
+            bed_no: bed?.bed_no || "201-1",
 
-            days: 3,
+            days: calculatedDays,
 
-            daily_rate: bed?.daily_rate || 2500,
+            daily_rate: dailyRate,
 
-            amount: (bed?.daily_rate || 2500) * 3,
+            amount: totalRoomCharge,
           },
         ],
 
-        total: (bed?.daily_rate || 2500) * 3,
+        total: totalRoomCharge,
       },
 
       clear: billingOk,

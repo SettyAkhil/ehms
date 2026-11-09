@@ -20,6 +20,8 @@ import { LabLisService, LabDepartmentName, SpecimenRecord } from "../../services
 
 interface LabWorklistsViewProps {
   onOpenResultEntry?: (order: LabOrder, test?: LabOrderTest) => void
+  initialDepartment?: LabDepartmentName
+  initialOrderId?: string
 }
 
 const DEPARTMENTS: LabDepartmentName[] = [
@@ -31,8 +33,14 @@ const DEPARTMENTS: LabDepartmentName[] = [
   "Histopathology & Cytology",
 ]
 
-export default function LabWorklistsView({ onOpenResultEntry }: LabWorklistsViewProps) {
-  const [activeDept, setActiveDept] = useState<LabDepartmentName>("Hematology")
+export default function LabWorklistsView({ onOpenResultEntry, initialDepartment, initialOrderId }: LabWorklistsViewProps) {
+  const [activeDept, setActiveDept] = useState<LabDepartmentName>(initialDepartment || "Hematology")
+
+  useEffect(() => {
+    if (initialDepartment) {
+      setActiveDept(initialDepartment)
+    }
+  }, [initialDepartment])
   const [orders, setOrders] = useState<LabOrder[]>([])
   const [specimens, setSpecimens] = useState<SpecimenRecord[]>([])
   const [searchQuery, setSearchQuery] = useState("")

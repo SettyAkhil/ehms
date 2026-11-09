@@ -147,8 +147,14 @@ async function patientFor(id: string): Promise<ServerPatient | null> {
 
 const MODULE_DEPT: Record<string, DepartmentType> = {
   OP: "Outpatient",
+  OUTPATIENT: "Outpatient",
+  BILLING_OP: "Outpatient",
   IP: "Inpatient",
+  INPATIENT: "Inpatient",
+  BILLING_IP: "Inpatient",
+  IP_BILLING: "Inpatient",
   ER: "Emergency",
+  EMERGENCY: "Emergency",
   ICU: "ICU",
   LAB: "Laboratory",
   LABORATORY: "Laboratory",
